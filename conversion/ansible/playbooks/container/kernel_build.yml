@@ -1,0 +1,10 @@
+---
+
+# DESCRIPTION=Enable distro kernel package builds
+- name: Enable distro kernel package builds
+  hosts: all
+  remote_user: root
+  roles:
+    - dev_common
+    - src_repos
+    - kernel_build

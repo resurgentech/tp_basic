@@ -1,0 +1,9 @@
+---
+
+# DESCRIPTION=Enable rust builds
+- name: Enable rust builds
+  hosts: all
+  remote_user: root
+  roles:
+    - dev_common
+    - rust_build
