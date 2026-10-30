@@ -1,0 +1,35 @@
+[package]
+name = "tp-basic"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Playbooks and roles for resurgentech hosts and images, on telepatch"
+publish = false
+
+[[bin]]
+name = "tp-basic"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[workspace]
+
+[dependencies]
+# Intended: telepatch = { git = "https://github.com/resurgentech/telepatch.git", branch = "main" }
+# with the [patch] below for local work. The crates are not on GitHub yet
+# (unpushed), so a git dependency cannot resolve; path dependency until then.
+telepatch = { path = "../telepatch/crates/telepatch" }
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+
+[dev-dependencies]
+insta = "1"
+
+# Once the git dependency is in use, local work patches it to the sibling:
+# [patch."https://github.com/resurgentech/telepatch.git"]
+# telepatch = { path = "../telepatch/crates/telepatch" }
+# telepatch-macros = { path = "../telepatch/crates/telepatch-macros" }
+
+[profile.release]
+strip = true

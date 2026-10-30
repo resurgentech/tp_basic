@@ -1,0 +1,6 @@
+# Container image builds run as root; mirrors inventories/group_vars/all
+# with ansible_user=root (the docker_images ANSIBLE_HACKS).
+admin_users = ["root"]
+rustup_version = "1.29.0"
+cargo_version = "1.94.0"
+rustc_version = "1.94.0"
