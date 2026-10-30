@@ -39,39 +39,28 @@ check_originals() {
 check_originals
 
 # --- Section: understanding docs (conversion/*.md) -------------------------
-# Every doc must carry each level heading below as an exact line. Nothing is
-# required inside "## Port notes" (filled by a later step). A "source line" is
-# any line containing http:// or https://; each must also carry a YYYY-MM-DD
-# access date on the same line.
-UNDERSTANDING_HEADINGS=(
-    "## Purpose"
-    "## Outcomes"
-    "## Current method"
-    "## Preserved knowledge"
-    "## Is the method current"
-    "## Recommendation and decision"
-    "## Port notes"
-    "## Review"
-    "## skill-feedback"
-)
+# Delegated to `tp check-understanding` (levels, dated sources, hedge words,
+# a Decision: line). tp_basic sits next to telepatch; override with
+# TP="path/to/tp" to use an installed binary.
+tp_check() {
+    if [[ -n ${TP:-} ]]; then
+        $TP check-understanding "$@"
+    else
+        cargo run -q --manifest-path ../telepatch/Cargo.toml -p tp -- check-understanding "$@"
+    fi
+}
 check_understanding_docs() {
     local -a docs=()
-    local f h n line
+    local f out
     shopt -s nullglob
     docs=(conversion/*.md)
     shopt -u nullglob
     if [[ ${#docs[@]} -eq 0 ]]; then note "no understanding docs: conversion/*.md"; return; fi
     for f in "${docs[@]}"; do
-        for h in "${UNDERSTANDING_HEADINGS[@]}"; do
-            grep -qxF -- "$h" "$f" || note "$f: missing heading '$h'"
-        done
-        n=0
-        while IFS= read -r line; do
-            n=$((n + 1))
-            if [[ $line =~ https?:// ]] && ! [[ $line =~ (^|[^0-9])[0-9]{4}-[0-9]{2}-[0-9]{2}($|[^0-9]) ]]; then
-                note "$f:$n: source line without a YYYY-MM-DD date"
-            fi
-        done < "$f"
+        if ! out=$(tp_check "$f" 2>&1); then
+            note "$f: tp check-understanding failed"
+            printf '%s\n' "$out" >&2
+        fi
     done
 }
 check_understanding_docs
