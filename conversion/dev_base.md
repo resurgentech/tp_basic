@@ -452,6 +452,63 @@ agent (agent-alone); not yet reviewed by the user.
 
 ## Port notes
 
+Port of Option 1 (1:1). Code: `src/roles/dev_common.rs` (role),
+`src/playbooks/container.rs` (`container/dev_base`, registered in
+`src/lib.rs`). Plan snapshots for all 13 images: `tests/plans.rs`, files in
+`tests/plans/snapshots/`. Citations are against `conversion/ansible/`.
+
+What each task became:
+
+- `playbooks/container/dev_base.yml:5-8` (all hosts, root, role `dev_common`):
+  the playbook fn `dev_base` calls `dev_common`. Root is the run's user.
+- `main.yml:4-22` (five `include_tasks` on flags): one if/else chain in the
+  role. The flags are small fns reproducing `group_vars/all:4-6,10`.
+  `redhat_based` is distro Fedora/Rocky/Alma (or ID `centos`/`rhel`, which
+  telepatch parses as `Distro::Other`). `debian_based` is distro
+  Debian/Ubuntu/Pop!_OS (a Debian-family distro outside that list, such as
+  Mint, gets no branch, as in the YAML). `arch_based` is family Arch (omarchy
+  parses as Arch). `amazonlinux2023_based` is distro Amazon with major 2023.
+  Amazon is family RedHat in telepatch but stays out of `redhat_based`.
+- `debian.yml:1-5` (`apt` python3-apt, python3-pip), `:7-41` (tools),
+  `:43-50` (python libs): three `h.pkg([..])` calls in YAML order. The
+  optimizer merges them into one apt install ("merged from dev_common #1, #2,
+  #3" in the snapshots), which also does the one apt cache refresh (item 8).
+  The duplicate `rsync` (`debian.yml:34`) is not repeated (item 13). The
+  third task runs on the whole Debian family, as before; its misleading name
+  is gone.
+- `redhat.yml:1-31`: one `h.pkg`, names and order as written, including
+  `"@Development Tools"`.
+- `amazonlinux2023.yml:1-25`: one `h.pkg`, names as written, in its own
+  branch (Amazon 2023 only).
+- `archlinux.yml:1-24`: one `h.pkg` (pacman), names as written.
+- `main.yml:26-32` (pip, `when: not (debian_based or arch_based)`):
+  `h.pip(["jinja2", "GitPython", "pyaml"])` under the same condition, so a
+  host no flag matches also gets it, as in the YAML. pip comes from
+  `python3-pip` in the RedHat and Amazon package lists; the plan orders the
+  pip op after the dnf op (snapshots rockylinux10, amazonlinux2023).
+- `main.yml:34-37` (uv installer): left as `sh!`. telepatch has no
+  installer primitive and the decision keeps it unguarded, so it runs every
+  time. The command is wrapped in `( ... )` so `set -o pipefail` does not
+  leak into the persistent shell later ops share; Ansible ran it in its own
+  `/bin/bash`. The op declares `writes [*]`, so on Debian it runs after the
+  merged apt op that installs `curl` (snapshot ubuntu2404). Other bases ship
+  curl (probes).
+
+Dropped (as decided): `amazonlinux2.yml` and `main.yml:12-14` (Amazon Linux
+2); the Debian 10 and Ubuntu 20.04/22.04 flags. Consequence: an Amazon Linux
+2 host gets no package branch but would still take the pip step (the YAML's
+flags say pip runs there). No image reaches it.
+
+Left as the YAML has it, for after equivalence: `python3-hvac` and
+`python3-apt`, the unguarded and unpinned uv installer, `@Development Tools`
+by display name. On fedora43 and fedora44 the probes show the dnf5 CLI
+rejects `Development Tools` ("No match for argument"), so the port may fail
+there where the Ansible `dnf` module may not. Fedora is not in the oracle's
+acceptance set; T18 settles it. telepatch's own installed-group check
+(`dnf group list --installed | grep`) is also not the module's.
+
+Equivalence result (T18): not yet run.
+
 ## Review
 
 2026-10-30: second pass, re-read against the YAML and the Dockerfiles line

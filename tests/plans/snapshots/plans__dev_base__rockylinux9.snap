@@ -1,0 +1,46 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host rockylinux9 (os: RedHat/Rocky 9.8)
+blocking reads: 0
+
+window 1 (final)
+role dev_common
+  #1 pkg as shell:root reads [] writes [pkg:@Development Tools, pkg:bc, pkg:bison, pkg:clang, pkg:cmake, pkg:dpkg, pkg:dpkg-dev, pkg:dpkg-devel, pkg:flex, pkg:gcc, pkg:git, pkg:gnupg, pkg:lld, pkg:llvm, pkg:net-tools, pkg:newt, pkg:python3, pkg:python3-devel, pkg:python3-docutils, pkg:python3-pip, pkg:rpm-build, pkg:rsync, pkg:slang, pkg:xmlto, pkg:zlib-devel, pkg:zstd] post [pkg:@Development Tools=Installed, pkg:bc=Installed, pkg:bison=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:dpkg=Installed, pkg:dpkg-dev=Installed, pkg:dpkg-devel=Installed, pkg:flex=Installed, pkg:gcc=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:net-tools=Installed, pkg:newt=Installed, pkg:python3=Installed, pkg:python3-devel=Installed, pkg:python3-docutils=Installed, pkg:python3-pip=Installed, pkg:rpm-build=Installed, pkg:rsync=Installed, pkg:slang=Installed, pkg:xmlto=Installed, pkg:zlib-devel=Installed, pkg:zstd=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('@Development Tools' 'cmake' 'clang' 'llvm' 'lld' 'bison' 'flex' 'git' 'rsync' 'gcc' 'zlib-devel' 'gnupg' 'bc' 'newt' 'slang' 'xmlto' 'net-tools' 'rpm-build' 'dpkg-devel' 'dpkg' 'dpkg-dev' 'zstd' 'python3' 'python3-devel' 'python3-docutils' 'python3-pip')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+  #2 pkg as shell:root reads [] writes [pkg:pip:GitPython, pkg:pip:jinja2, pkg:pip:pyaml] post [pkg:pip:GitPython=Installed, pkg:pip:jinja2=Installed, pkg:pip:pyaml=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('jinja2' 'GitPython' 'pyaml')
+      | tp_missing=()
+      | if python3 -m pip --version >/dev/null 2>&1; then tp_pip=(python3 -m pip)
+      | elif command -v pip3 >/dev/null 2>&1; then tp_pip=(pip3)
+      | else echo 'telepatch: pip not found' >&2; rc=127; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   for tp_n in "${tp_want[@]}"; do
+      |     "${tp_pip[@]}" show "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n")
+      |   done
+      |   if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |     "${tp_pip[@]}" install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi
+  #3 sh as shell:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
