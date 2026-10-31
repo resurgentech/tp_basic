@@ -1,0 +1,39 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host omarchy (os: Arch/Arch 20261025.0.616225)
+blocking reads: 0
+
+window 1 (final)
+role dev_common
+  #1 pkg as shell:root reads [] writes [pkg:base-devel, pkg:bc, pkg:clang, pkg:cmake, pkg:cpio, pkg:git, pkg:gnupg, pkg:lld, pkg:llvm, pkg:python, pkg:python-gitpython, pkg:python-jinja, pkg:python-pip, pkg:python-pytest, pkg:python-yaml, pkg:rsync, pkg:wget, pkg:xmlto, pkg:zstd] post [pkg:base-devel=Installed, pkg:bc=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:cpio=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:python=Installed, pkg:python-gitpython=Installed, pkg:python-jinja=Installed, pkg:python-pip=Installed, pkg:python-pytest=Installed, pkg:python-yaml=Installed, pkg:rsync=Installed, pkg:wget=Installed, pkg:xmlto=Installed, pkg:zstd=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('base-devel' 'cmake' 'clang' 'llvm' 'lld' 'git' 'rsync' 'gnupg' 'bc' 'cpio' 'xmlto' 'zstd' 'wget' 'python' 'python-pip' 'python-yaml' 'python-jinja' 'python-gitpython' 'python-pytest')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   if [ -z "$(pacman -T "$tp_n" 2>/dev/null)" ] || [ -n "$(pacman -Qqg "$tp_n" 2>/dev/null)" ]; then :; else tp_missing+=("$tp_n"); fi
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   pacman -S --needed --noconfirm "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+  #2 sh as shell:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+role kernel_build
+  #7 pkg as shell:root reads [] writes [pkg:bc, pkg:devtools, pkg:pacman-contrib, pkg:pahole, pkg:rust, pkg:rust-bindgen, pkg:rust-src] post [pkg:bc=Installed, pkg:devtools=Installed, pkg:pacman-contrib=Installed, pkg:pahole=Installed, pkg:rust=Installed, pkg:rust-bindgen=Installed, pkg:rust-src=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('devtools' 'pacman-contrib' 'bc' 'pahole' 'rust' 'rust-bindgen' 'rust-src')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   if [ -z "$(pacman -T "$tp_n" 2>/dev/null)" ] || [ -n "$(pacman -Qqg "$tp_n" 2>/dev/null)" ]; then :; else tp_missing+=("$tp_n"); fi
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   pacman -S --needed --noconfirm "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi

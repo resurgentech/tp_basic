@@ -726,6 +726,73 @@ agent (agent-alone); not yet reviewed by the user.
 
 ## Port notes
 
+Port of Option 1 (1:1). Code: `src/roles/src_repos.rs`,
+`src/roles/kernel_build.rs` (roles), `src/playbooks/container.rs`
+(`container/kernel_build`). `dev_common` is reused from `dev_base`. Plan
+snapshots for all 13 images: `tests/plans.rs` (`kernel_build_plans`), files
+`tests/plans/snapshots/plans__kernel_build__*.snap`. Citations are against
+`conversion/ansible/`. The equivalence run is not recorded here yet.
+
+What each task became:
+
+- `playbooks/container/kernel_build.yml:5-10` (all hosts, root, roles
+  `dev_common`, `src_repos`, `kernel_build`): the playbook fn
+  `kernel_build_playbook` calls the three roles in that order. `dev_common`
+  appears once, as in the YAML; the "second run" in this doc is the one
+  after the `dev_base` image's own run.
+- `src_repos/tasks/main.yml:4-9` (find `*.sources`) and `:11-15` (the two
+  `include_tasks`): no glob fact exists, so the dispatch is a guard on the
+  op that ports `apt_sources_deb822.yml:7-15`. The role returns early
+  outside Debian, Ubuntu and Pop!_OS (`debian_based`, `group_vars/all:6`).
+- `apt_sources_deb822.yml:7-15` (shell, `SOURCES_CHANGED`): kept as `sh!`,
+  because no primitive edits a set of files by pattern. `unless` skips when
+  no `*.sources` file exists (the YAML's other branch) or when any file has
+  a `deb-src` type (`:9-11`). The sed line is the YAML's, exact `Types: deb`
+  only (`:12`). `changed_if = "SOURCES_CHANGED"` is the YAML's
+  `changed_when`. The op's `writes` is narrowed from `*` to
+  `file:/etc/apt/sources.list.d/*.sources`: that still marks the apt cache
+  stale for the next apt op and does not fence the unrelated installs
+  around it.
+- `apt_sources_deb822.yml:17-22` (cache update when changed): the apt cache
+  rule of T6. The plan runs `apt-get update` in the first apt op after the
+  sources op: the `build-dep` on ubuntu2404 and ubuntu2604, the extras
+  install that precedes the `build-dep` on debian12 and debian13. One
+  difference: the rule is static, so the refresh runs on every play, not
+  only when the sed changed the files (an oracle-invisible cost of one
+  `apt-get update`).
+- `apt_sources_list.yml:1-22` and `main.yml:14-15`: dropped (legacy
+  branch, Preserved knowledge 2 and 3). The never-created `.ansible-src`
+  file at `:8-10` is not ported.
+- `kernel_build/tasks/main.yml:4-30`: one if/else chain; the flag fns
+  repeat `group_vars/all:4-6,8,10` (copies of `dev_common`'s private fns).
+  `debian10`, `amazonlinux2` and `debian_long.yml` are not ported.
+- `ubuntu.yml:1-5`: `h.pkg(["linux"]).build_dep()`, first. `:7-24`: one
+  `h.pkg` of the extras without the four names `dev_common` already
+  installed (`python3-pip`, `python3-jinja2`, `python3-yaml`,
+  `python3-git`); `python3-lxml` stays.
+- `debian.yml:2-14`: one `h.pkg` of the nine extras, then `:16-19`
+  `build_dep()` last. The plan keeps that order: the build-dep op writes
+  `*`, so no later install merges above it.
+- `redhat.yml:2-5`: `h.pip(["pip"]).latest()`, before the dnf op
+  (snapshots fedora43, rockylinux10: the pip op precedes the dnf op).
+  `:7-40`: one `h.pkg`, 30 names as written. `:42-48` (python libs again):
+  dropped, `dev_common` installs them.
+- `amazonlinux2023.yml:2-30`: one `h.pkg`, 25 names, its own branch (not
+  RedHat's list). `:32-38`: dropped as above. No pip upgrade, as in the
+  YAML.
+- `archlinux.yml:4-14`: one `h.pkg`, 7 names (`bc` repeats `dev_common` and
+  is requested again, as written).
+
+Snapshots read against Outcomes: ubuntu2404 (`build-dep linux`, then the 10
+extras, `apt-get update` before the build-dep), debian12 (9 extras with the
+refresh, then `build-dep`), rockylinux10 and fedora43 (pip latest, then 30
+dnf names), amazonlinux2023 (25 names, no pip), arch (7 names). omarchy
+matches arch, debian13 matches debian12, ubuntu2604 matches ubuntu2404.
+
+`sh!` kept: only the sources edit (above); `repo` would replace it when
+built. Dropped: the branches under Dropped branches and the repeated Python
+library installs (item 11). "After equivalence" items are not made.
+
 ## Review
 
 2026-10-30: first pass, agent-alone. Read against the mirrored originals at

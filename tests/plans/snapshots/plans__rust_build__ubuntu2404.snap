@@ -1,0 +1,87 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host ubuntu2404 (os: Debian/Ubuntu 24.04)
+blocking reads: 2
+
+window 1 (implicit barrier)
+role dev_common
+  #1 pkg as shell:root reads [] writes [pkg:acl, pkg:asciidoc, pkg:autoconf, pkg:bc, pkg:bison, pkg:btop, pkg:build-essential, pkg:clang, pkg:cmake, pkg:cpio, pkg:cppcheck, pkg:curl, pkg:diffstat, pkg:flex, pkg:gawk, pkg:gcc, pkg:gettext, pkg:git, pkg:gnupg, pkg:gzip, pkg:hostname, pkg:lld, pkg:llvm, pkg:m4, pkg:net-tools, pkg:openssl, pkg:python3-apt, pkg:python3-git, pkg:python3-hvac, pkg:python3-jinja2, pkg:python3-pip, pkg:python3-yaml, pkg:rpm, pkg:rsync, pkg:sshpass, pkg:xmlto, pkg:zstd] post [pkg:acl=Installed, pkg:asciidoc=Installed, pkg:autoconf=Installed, pkg:bc=Installed, pkg:bison=Installed, pkg:btop=Installed, pkg:build-essential=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:cpio=Installed, pkg:cppcheck=Installed, pkg:curl=Installed, pkg:diffstat=Installed, pkg:flex=Installed, pkg:gawk=Installed, pkg:gcc=Installed, pkg:gettext=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:gzip=Installed, pkg:hostname=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:m4=Installed, pkg:net-tools=Installed, pkg:openssl=Installed, pkg:python3-apt=Installed, pkg:python3-git=Installed, pkg:python3-hvac=Installed, pkg:python3-jinja2=Installed, pkg:python3-pip=Installed, pkg:python3-yaml=Installed, pkg:rpm=Installed, pkg:rsync=Installed, pkg:sshpass=Installed, pkg:xmlto=Installed, pkg:zstd=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('python3-apt' 'python3-pip' 'build-essential' 'cmake' 'clang' 'llvm' 'lld' 'git' 'rsync' 'gcc' 'gnupg' 'rpm' 'cppcheck' 'autoconf' 'asciidoc' 'bc' 'cpio' 'bison' 'flex' 'gawk' 'gettext' 'gzip' 'hostname' 'm4' 'net-tools' 'openssl' 'xmlto' 'zstd' 'diffstat' 'sshpass' 'btop' 'acl' 'curl' 'python3-jinja2' 'python3-git' 'python3-yaml' 'python3-hvac')
+      | tp_missing=()
+      | export DEBIAN_FRONTEND=noninteractive
+      | for tp_n in "${tp_want[@]}"; do
+      |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$tp_n" 2>/dev/null)" = installed ] || tp_missing+=("$tp_n")
+      | done
+      | if [ "$rc" -eq 0 ] && [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   if ! find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock 2>/dev/null | grep -q .; then apt-get -q update || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi
+      merged from dev_common #1, dev_common #2, dev_common #3
+  #4 sh as shell:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+role rust_build
+  #7 pkg as shell:root reads [] writes [pkg:clang, pkg:g++, pkg:libssl-dev, pkg:musl-tools, pkg:pkg-config] post [pkg:clang=Installed, pkg:g++=Installed, pkg:libssl-dev=Installed, pkg:musl-tools=Installed, pkg:pkg-config=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('g++' 'libssl-dev' 'pkg-config' 'clang' 'musl-tools')
+      | tp_missing=()
+      | export DEBIAN_FRONTEND=noninteractive
+      | apt-get -q update || rc=$?
+      | for tp_n in "${tp_want[@]}"; do
+      |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$tp_n" 2>/dev/null)" = installed ] || tp_missing+=("$tp_n")
+      | done
+      | if [ "$rc" -eq 0 ] && [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   if [ "$rc" -eq 0 ]; then
+      |     apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi
+
+window 3 (final)
+role rust_build
+  #10 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { command -v cargo; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | (set -o pipefail && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y)
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+  #11 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { command -v cargo-deb; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | cargo install cargo-deb
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+  #12 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { command -v cargo-generate-rpm; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | cargo install cargo-generate-rpm
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+  #13 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { rustup target list --installed | grep -qx x86_64-unknown-linux-musl; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | rustup target add x86_64-unknown-linux-musl
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi

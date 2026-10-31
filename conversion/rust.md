@@ -631,6 +631,94 @@ yet reviewed by the user.
 
 ## Port notes
 
+Port of Option 2. Code: `src/roles/rust_build.rs` (role),
+`src/playbooks/container.rs` (`container/rust_build`: `dev_common` then
+`rust_build`, as `rust.yml:8-9`; the docker container is named `rust_build`).
+Plan snapshots for all 13 images, plus two fixture variants on ubuntu2404:
+`tests/plans.rs`, files `tests/plans/snapshots/plans__rust_build__*.snap`.
+Citations are against `conversion/ansible/`.
+
+What each task became:
+
+- `playbooks/container/rust.yml:5-9` (all hosts, root, `dev_common`,
+  `rust_build`): the playbook fn `rust_build_playbook` calls the two roles in
+  order.
+- `main.yml:4-14` (four `include_tasks` on flags): one if/else chain; the flag
+  fns are copies of the ones in `dev_common.rs` (private there).
+- `debian.yml:2-10`, `redhat.yml:2-8`, `amazonlinux2023.yml:3-10`,
+  `archlinux.yml:2-9`: one `h.pkg([..])` each, names as written.
+- `redhat.yml:13-17` (musl-gcc): `h.pkg(["musl-gcc"])` when the major version
+  is at least 10 (item 8). Snapshots: musl-gcc on fedora43, fedora44,
+  rockylinux10, almalinux10; absent on rockylinux9, almalinux9 and on
+  amazonlinux2023 (own branch).
+- `main.yml:17-21` (two loops): one `for u in users(..)` over `admin_users`
+  plus root, deduplicated (item 1). Ops go through `h.as_user(u)`.
+- `per_user.yml:4-11` (getent, parse shell): dropped. The login shell is
+  telepatch's (`bash -l` inside the persistent shell), not the passwd shell.
+  The repair op reads the home from `getent passwd` at run time.
+- `per_user.yml:13-55` (cargo check, three version reads, broken flag):
+  `s.bin_exists("cargo").await` and one `s.bin_version("rustc").await` per
+  user: cargo not on PATH is install, cargo present with no rustc version is
+  repair, else update. The rustup and cargo version reads are dropped with the
+  pin comparison.
+- `per_user.yml:57-71`, `:115-120` (debug, needs-update flags, update report):
+  dropped with the pins (item 5). The reporting is the plan and run output.
+- `per_user.yml:73-97` (repair block: remove, download, reinstall): two `sh!`
+  ops in the broken branch. The removal takes the home from
+  `getent passwd <u> | cut -d: -f6` and runs `rm -rf` on its `.rustup` and
+  `.cargo` (item 2). The script download and run is one `curl ... | sh -s -- -y`.
+- `per_user.yml:99-113` (`rustup self update`, `rustup update`): one
+  `sh!(s, "rustup update")` in the working branch. `rustup update` already
+  checks for a self-update (Is the method current).
+- `per_user.yml:122-134` (download script, run it): one `sh!` with
+  `unless = "command -v cargo"`, in the absent branch. The `/tmp/rustup.sh`
+  file is gone (item 10); the command is the documented
+  `curl --proto '=https' --tlsv1.2 -sSf <rustup script URL> | sh -s -- -y`
+  in a `( set -o pipefail && ... )` subshell, so a failed `curl` fails the op
+  and `pipefail` does not leak into the persistent shell. It is written as a
+  literal in the macro call, because `sh!` quotes every `{var}` it
+  interpolates.
+- `per_user.yml:137-168` (cargo-deb, cargo-generate-rpm check and install):
+  `sh!(s, "cargo install ..", unless = "command -v ..")` each. They run in all
+  three branches, so a repaired host gets them in the same run (item 3).
+- `per_user.yml:170-183` (musl target): `sh!(s, "rustup target add ..",
+  unless = "rustup target list --installed | grep -qx x86_64-unknown-linux-musl")`.
+
+`sh!` is kept for all of it: telepatch has no `fetch`, `git` or tool-install
+primitive. The `. ~/.cargo/env &&` prefix in the YAML (`:148`, `:165`, `:171`,
+`:180`) is not written: every `as_user` op runs in a fresh `bash -l`, and the
+installer adds `. "$HOME/.cargo/env"` to `~/.profile` (probes), which bash
+reads for a login shell. The equivalence run checks this; if it fails, the fix
+is to source `~/.cargo/env` in those ops.
+
+Reading the plans against Outcomes (ubuntu2404, rockylinux9, rockylinux10,
+fedora43, amazonlinux2023, arch, and the rest): the package sets are the
+Outcomes lists exactly (apt `g++ libssl-dev pkg-config clang musl-tools`;
+dnf `gcc-c++ openssl-devel pkgconf-pkg-config clang`, plus `musl-gcc` on
+fedora43 and rockylinux10 and not on rockylinux9 or amazonlinux2023; pacman
+`openssl pkgconf clang musl`). On a fresh host (every fact absent) the plan
+is: one window with the `dev_common` and `rust_build` packages, an implicit
+barrier because `bin_exists("cargo")` and `bin_version("rustc")` read `bin:`
+keys the pending packages overlap (two blocking reads, answered together),
+then one final window with four login ops for root: installer, `cargo install
+cargo-deb`, `cargo install cargo-generate-rpm`, `rustup target add`. The repair
+branch is not in the fresh plan. Working fixture (cargo and rustc present):
+`rustup update`, then the three guarded extras. Broken fixture (cargo present,
+no rustc version): the `rm -rf`, the installer, then the extras. Window 2 is
+the read round trip and lists no ops, so the snapshots number windows 1 and 3.
+
+Fixes made: root once, not twice (item 1); the repair path uses the passwd
+home (item 2); `command -v` replaces `which` (item 6); extras finish in the
+repair run (item 3); the apt cache refresh is the engine's (item 12).
+Dropped: the pins and all comparisons (item 5), the debug tasks,
+`rustup self update`, the shell parse, `/tmp/rustup.sh`, Amazon Linux 2 and
+the old Debian/Ubuntu flags (as decided). `rustup_version`, `cargo_version`
+and `rustc_version` stay in `Vars`, unread.
+
+Not done, on purpose: every item of "After equivalence".
+
+Equivalence result (T18): not yet run.
+
 ## Review
 
 2026-10-30: first pass, written in one run (agent-alone). Re-read against the

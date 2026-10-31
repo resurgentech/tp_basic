@@ -1,0 +1,78 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host arch (os: Arch/Arch 20261025.0.616225)
+blocking reads: 2
+
+window 1 (implicit barrier)
+role dev_common
+  #1 pkg as shell:root reads [] writes [pkg:base-devel, pkg:bc, pkg:clang, pkg:cmake, pkg:cpio, pkg:git, pkg:gnupg, pkg:lld, pkg:llvm, pkg:python, pkg:python-gitpython, pkg:python-jinja, pkg:python-pip, pkg:python-pytest, pkg:python-yaml, pkg:rsync, pkg:wget, pkg:xmlto, pkg:zstd] post [pkg:base-devel=Installed, pkg:bc=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:cpio=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:python=Installed, pkg:python-gitpython=Installed, pkg:python-jinja=Installed, pkg:python-pip=Installed, pkg:python-pytest=Installed, pkg:python-yaml=Installed, pkg:rsync=Installed, pkg:wget=Installed, pkg:xmlto=Installed, pkg:zstd=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('base-devel' 'cmake' 'clang' 'llvm' 'lld' 'git' 'rsync' 'gnupg' 'bc' 'cpio' 'xmlto' 'zstd' 'wget' 'python' 'python-pip' 'python-yaml' 'python-jinja' 'python-gitpython' 'python-pytest')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   if [ -z "$(pacman -T "$tp_n" 2>/dev/null)" ] || [ -n "$(pacman -Qqg "$tp_n" 2>/dev/null)" ]; then :; else tp_missing+=("$tp_n"); fi
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   pacman -S --needed --noconfirm "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+  #2 sh as shell:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+role rust_build
+  #5 pkg as shell:root reads [] writes [pkg:clang, pkg:musl, pkg:openssl, pkg:pkgconf] post [pkg:clang=Installed, pkg:musl=Installed, pkg:openssl=Installed, pkg:pkgconf=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('openssl' 'pkgconf' 'clang' 'musl')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   if [ -z "$(pacman -T "$tp_n" 2>/dev/null)" ] || [ -n "$(pacman -Qqg "$tp_n" 2>/dev/null)" ]; then :; else tp_missing+=("$tp_n"); fi
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   pacman -S --needed --noconfirm "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+
+window 3 (final)
+role rust_build
+  #8 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { command -v cargo; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | (set -o pipefail && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y)
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+  #9 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { command -v cargo-deb; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | cargo install cargo-deb
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+  #10 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { command -v cargo-generate-rpm; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | cargo install cargo-generate-rpm
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+  #11 sh as login:root reads [] writes [*]
+      | rc=0; changed=0; skipped=0
+      | if { rustup target list --installed | grep -qx x86_64-unknown-linux-musl; } >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      | rustup target add x86_64-unknown-linux-musl
+      | rc=$?
+      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
