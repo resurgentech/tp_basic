@@ -97,3 +97,13 @@ fn kernel_build_plans() {
         });
     }
 }
+
+#[test]
+fn latest_kernel_build_plans() {
+    for d in DISTROS {
+        let text = plan("container/latest_kernel_build", d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("latest_kernel_build__{d}"), text);
+        });
+    }
+}

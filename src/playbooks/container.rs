@@ -6,6 +6,7 @@ use telepatch::{Host, Playbook, PlaybookFuture, TraceError};
 use crate::roles::dev_common::dev_common;
 use crate::roles::kernel_build::kernel_build;
 use crate::roles::rust_build::rust_build;
+use crate::roles::rust_kernel::rust_kernel;
 use crate::roles::src_repos::src_repos;
 use crate::vars::Vars;
 
@@ -23,6 +24,10 @@ pub fn all() -> Vec<Playbook<Vars>> {
         Playbook {
             name: "container/rust_build",
             run: rust_build_entry,
+        },
+        Playbook {
+            name: "container/latest_kernel_build",
+            run: latest_kernel_build_entry,
         },
     ]
 }
@@ -57,4 +62,17 @@ async fn kernel_build_playbook(h: &Host<Vars>) -> Result<(), TraceError> {
     dev_common(h).await?;
     src_repos(h).await?;
     kernel_build(h).await
+}
+
+fn latest_kernel_build_entry(h: Host<Vars>) -> PlaybookFuture {
+    Box::pin(async move { latest_kernel_build(&h).await })
+}
+
+/// `playbooks/container/latest_kernel_build.yml:7-12`: roles in YAML order.
+async fn latest_kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
+    dev_common(h).await?;
+    src_repos(h).await?;
+    kernel_build(h).await?;
+    rust_build(h).await?;
+    rust_kernel(h).await
 }

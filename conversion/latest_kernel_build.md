@@ -500,6 +500,57 @@ Decision: Option 1. Decided by agent (agent-alone); not yet reviewed by the user
 
 ## Port notes
 
+Code: `src/roles/rust_kernel.rs` (role), `src/playbooks/container.rs`
+(`container/latest_kernel_build`: `dev_common`, `src_repos`, `kernel_build`,
+`rust_build`, `rust_kernel`, as `latest_kernel_build.yml:7-12`; the existing
+role fns are reused unchanged). Plan snapshots for all 13 images:
+`tests/plans.rs` (`latest_kernel_build_plans`), files
+`tests/plans/snapshots/plans__latest_kernel_build__*.snap`. Citations are
+against `conversion/ansible/`.
+
+What each task became:
+
+- `playbooks/container/latest_kernel_build.yml:5-12` (all hosts, root, five
+  roles): the playbook fn `latest_kernel_build` calls the five role fns in
+  order.
+- `roles/rust_kernel/tasks/main.yml:1-4` (header comment, `make rustavailable`):
+  kept as the module comment; nothing executed.
+- `main.yml:6-10` (apt `libclang-dev`, `when debian_based`):
+  `h.pkg(["libclang-dev"])` inside `if debian_based(&h.os)`. The flag fn is a
+  copy of the one in `rust_build.rs` (private there). Snapshots: present on
+  debian12, debian13, ubuntu2404, ubuntu2604; absent on the other nine
+  (Dropped branches).
+- `main.yml:12-16` (two `include_tasks` loops, `admin_users` then `[root]`):
+  one `for u in users(..)` over `admin_users` plus root, deduplicated (item 2).
+  `users` is a copy of the fn in `rust_build.rs` (private there). Ops go
+  through `h.as_user(u)`.
+- `per_user.yml:3-8` (rustup component add rust-src, `changed_when 'installing'
+  in stderr`): `sh!(s, ". ~/.cargo/env && rustup component add rust-src",
+  changed_if = "downloading")`. The regex is the word rustup 1.29.2 prints on
+  a real add (item 3); a repeat prints `is up to date` and reports unchanged.
+  This changes the reporting only (the Ansible task never reported changed);
+  the end state is the same.
+- `per_user.yml:10-13` (cargo install bindgen-cli, `creates`):
+  `sh!(s, ". ~/.cargo/env && cargo install --locked bindgen-cli", creates =
+  "~/.cargo/bin/bindgen")`. The tilde is not interpolated, so it stays
+  unquoted and the shell expands it in the user's own login environment; the
+  plan shows `[ -e ~/.cargo/bin/bindgen ]`. Same path as item 5's
+  `/root/.cargo/bin/bindgen` for root and the passwd home for other users,
+  without a `getent` op.
+- `per_user.yml:4,11` (`. ~/.cargo/env &&` prefix): kept (item 7).
+
+Dropped: the YAML's second pass for root (item 2); the `become` and
+`become_user` keys (replaced by `as_user`); the `register`. The role had no
+branch for RedHat, Amazon or Arch and none was added (Outcomes, Other
+families). `make rustavailable` stays a comment.
+
+Plans read: ubuntu2604 (the acceptance image) shows, after the `rust_build`
+ops in the final window, the `pkg libclang-dev` op and the two `rust_kernel`
+shell ops, as in the Outcomes table (libclang-dev, rust-src for root, bindgen
+for root); no pip, apt-source or `/usr/local/bin` op comes from this role.
+fedora44 shows only the two shell ops and no libclang package, as in the
+Other-families section.
+
 ## Review
 
 2026-10-30: pass 1, agent-alone. Read the playbook and both task files of
