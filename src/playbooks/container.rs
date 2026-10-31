@@ -22,7 +22,7 @@ pub fn all() -> Vec<Playbook<Vars>> {
             run: dev_base_entry,
         },
         Playbook {
-            name: "container/rust_build",
+            name: "container/rust",
             run: rust_build_entry,
         },
         Playbook {

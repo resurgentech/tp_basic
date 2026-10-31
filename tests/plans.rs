@@ -40,7 +40,7 @@ fn dev_base_plans() {
 #[test]
 fn rust_build_plans() {
     for d in DISTROS {
-        let text = plan("container/rust_build", d);
+        let text = plan("container/rust", d);
         insta::with_settings!({snapshot_path => "plans/snapshots"}, {
             insta::assert_snapshot!(format!("rust_build__{d}"), text);
         });
@@ -56,7 +56,7 @@ fn rust_build_with(rustc: Option<&str>) -> String {
     let pbs = playbooks();
     let pb = pbs
         .iter()
-        .find(|p| p.name == "container/rust_build")
+        .find(|p| p.name == "container/rust")
         .expect("playbook container/rust_build");
     let root = RunAs::login("root");
     let mut fake =
