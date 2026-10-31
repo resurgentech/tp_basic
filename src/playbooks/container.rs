@@ -47,8 +47,9 @@ fn rust_build_entry(h: Host<Vars>) -> PlaybookFuture {
     Box::pin(async move { rust_build_playbook(&h).await })
 }
 
-/// `playbooks/container/rust.yml:8-9`: roles in YAML order. The docker
-/// container is named `rust_build`.
+/// `playbooks/container/rust.yml:8-9`: roles in YAML order, `dev_common` then
+/// `rust_build`. Registered as `container/rust` (it mirrors `rust.yml`); the
+/// docker container is named `rust_build`. Equivalence: see `rust_build.rs`.
 async fn rust_build_playbook(h: &Host<Vars>) -> Result<(), TraceError> {
     dev_common(h).await?;
     rust_build(h).await
@@ -59,7 +60,9 @@ fn kernel_build_entry(h: Host<Vars>) -> PlaybookFuture {
 }
 
 /// `playbooks/container/kernel_build.yml:7-10`: roles in YAML order. The
-/// second `dev_common` run is the same role again.
+/// second `dev_common` run is the same role again (the first is the
+/// `dev_base` image's own); it adds no package name, and only `uv` and `uvx`
+/// are replaced in place. Equivalence: see `roles/kernel_build.rs`.
 async fn kernel_build_playbook(h: &Host<Vars>) -> Result<(), TraceError> {
     dev_common(h).await?;
     src_repos(h).await?;
