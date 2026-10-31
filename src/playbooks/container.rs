@@ -73,7 +73,16 @@ fn latest_kernel_build_entry(h: Host<Vars>) -> PlaybookFuture {
     Box::pin(async move { latest_kernel_build(&h).await })
 }
 
-/// `playbooks/container/latest_kernel_build.yml:7-12`: roles in YAML order.
+/// `playbooks/container/latest_kernel_build.yml:7-12`: roles in YAML order,
+/// all hosts, as root. Builds the `latest_kernel_build` image (parent
+/// `rust_build`, only for the `latest` distro set, which is ubuntu2604 alone)
+/// that can build the latest upstream kernel with the latest rustup
+/// toolchain, Rust-enabled. `dev_common`, `src_repos`, `kernel_build` and
+/// `rust_build` are applied again as their own playbooks apply them; only
+/// `rust_kernel` is specific to this one. Equivalence (2026-10-30): the
+/// docker oracle reported ubuntu2604 identical against ansible 79d1ca1,
+/// versions side too; the reasons and open items are in
+/// `roles/rust_kernel.rs`.
 async fn latest_kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
     dev_common(h).await?;
     src_repos(h).await?;

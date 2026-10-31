@@ -26,3 +26,22 @@ test-container distro container:
 # Self-test of the oracle's diff/exit logic (no docker needed).
 test-container-selftest:
     bash scripts/test-container.sh --self-test
+
+# The ansible commit the ports were made from (conversion/SOURCE at port
+# time). The oracle compares against it, not ansible master.
+ported_ansible := "79d1ca16bfdeb678496986e1d7a0d407b06f4b45"
+
+# Goal-1 gate: the acceptance set. ubuntu2404 and rockylinux10 for the
+# default set, plus ubuntu2604 for latest_kernel_build (the latest set).
+test-acceptance:
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 dev_base
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 dev_base
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 kernel_build
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 kernel_build
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 rust_build
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 rust_build
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2604 latest_kernel_build
+
+# Not a gate: every container of every distro's set; writes build/matrix.md.
+test-matrix jobs="3":
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-matrix.sh {{jobs}}

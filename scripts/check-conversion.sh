@@ -26,7 +26,8 @@ check_originals() {
         [[ $(sha256sum < "$root/$path" | cut -d' ' -f1) == "$hash" ]] || note "drifted: $root/$path"
     done < <(grep -Ev '^(repo|commit): |^$' "$source")
 
-    if [[ ${#listed[@]} -eq 0 ]]; then note "$source lists no files"; fi
+    # An empty list is the finished state: every ported role has left.
+    originals_count=${#listed[@]}
 
     local f rel
     if [[ -d $root ]]; then
@@ -55,7 +56,11 @@ check_understanding_docs() {
     shopt -s nullglob
     docs=(conversion/*.md)
     shopt -u nullglob
-    if [[ ${#docs[@]} -eq 0 ]]; then note "no understanding docs: conversion/*.md"; return; fi
+    # Originals are only kept while a doc still needs them.
+    if [[ ${#docs[@]} -eq 0 ]]; then
+        if [[ ${originals_count:-0} -gt 0 ]]; then note "originals under conversion/ansible but no understanding doc: conversion/*.md"; fi
+        return
+    fi
     for f in "${docs[@]}"; do
         if ! out=$(tp_check "$f" 2>&1); then
             note "$f: tp check-understanding failed"
