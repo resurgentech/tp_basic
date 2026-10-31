@@ -36,7 +36,9 @@ fn dev_base_entry(h: Host<Vars>) -> PlaybookFuture {
     Box::pin(async move { dev_base(&h).await })
 }
 
-/// `playbooks/container/dev_base.yml:7-8`: roles in YAML order.
+/// `container/dev_base`: runs against all hosts as root (the run's user) and
+/// applies the one role `dev_common`; the purpose and decisions are in that
+/// role's comments.
 async fn dev_base(h: &Host<Vars>) -> Result<(), TraceError> {
     dev_common(h).await
 }
