@@ -1,0 +1,8 @@
+---
+
+# DESCRIPTION=Installs some basic development tools
+- name: Installs some basic development tools
+  hosts: all
+  remote_user: root
+  roles:
+    - dev_common

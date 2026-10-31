@@ -21,9 +21,13 @@ role dev_common
       | fi
   #2 sh as shell:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
+      | if [ -e /usr/local/bin/uv ]; then
+      |   skipped=1
+      | else
       | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
       | rc=$?
       | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
 role rust_build
   #5 pkg as shell:root reads [] writes [pkg:clang, pkg:musl, pkg:openssl, pkg:pkgconf] post [pkg:clang=Installed, pkg:musl=Installed, pkg:openssl=Installed, pkg:pkgconf=Installed]
       | rc=0; changed=0; installed=()

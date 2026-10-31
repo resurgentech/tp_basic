@@ -21,9 +21,13 @@ role dev_common
       | fi
   #2 sh as shell:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
+      | if [ -e /usr/local/bin/uv ]; then
+      |   skipped=1
+      | else
       | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
       | rc=$?
       | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
 role kernel_build
   #7 pkg as shell:root reads [] writes [pkg:bc, pkg:clang, pkg:devtools, pkg:musl, pkg:openssl, pkg:pacman-contrib, pkg:pahole, pkg:pkgconf, pkg:rust, pkg:rust-bindgen, pkg:rust-src] post [pkg:bc=Installed, pkg:clang=Installed, pkg:devtools=Installed, pkg:musl=Installed, pkg:openssl=Installed, pkg:pacman-contrib=Installed, pkg:pahole=Installed, pkg:pkgconf=Installed, pkg:rust=Installed, pkg:rust-bindgen=Installed, pkg:rust-src=Installed]
       | rc=0; changed=0; installed=()

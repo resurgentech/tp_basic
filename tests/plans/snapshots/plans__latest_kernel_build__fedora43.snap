@@ -7,9 +7,9 @@ blocking reads: 2
 
 window 1 (implicit barrier)
 role dev_common
-  #1 pkg as shell:root reads [] writes [pkg:@Development Tools, pkg:bc, pkg:bison, pkg:clang, pkg:cmake, pkg:dpkg, pkg:dpkg-dev, pkg:dpkg-devel, pkg:flex, pkg:gcc, pkg:git, pkg:gnupg, pkg:lld, pkg:llvm, pkg:net-tools, pkg:newt, pkg:python3, pkg:python3-devel, pkg:python3-docutils, pkg:python3-pip, pkg:rpm-build, pkg:rsync, pkg:slang, pkg:xmlto, pkg:zlib-devel, pkg:zstd] post [pkg:@Development Tools=Installed, pkg:bc=Installed, pkg:bison=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:dpkg=Installed, pkg:dpkg-dev=Installed, pkg:dpkg-devel=Installed, pkg:flex=Installed, pkg:gcc=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:net-tools=Installed, pkg:newt=Installed, pkg:python3=Installed, pkg:python3-devel=Installed, pkg:python3-docutils=Installed, pkg:python3-pip=Installed, pkg:rpm-build=Installed, pkg:rsync=Installed, pkg:slang=Installed, pkg:xmlto=Installed, pkg:zlib-devel=Installed, pkg:zstd=Installed]
+  #1 pkg as shell:root reads [] writes [pkg:@development-tools, pkg:bc, pkg:bison, pkg:clang, pkg:cmake, pkg:dpkg, pkg:dpkg-dev, pkg:dpkg-devel, pkg:flex, pkg:gcc, pkg:git, pkg:gnupg, pkg:lld, pkg:llvm, pkg:net-tools, pkg:newt, pkg:python3, pkg:python3-devel, pkg:python3-docutils, pkg:python3-pip, pkg:rpm-build, pkg:rsync, pkg:slang, pkg:xmlto, pkg:zlib-devel, pkg:zstd] post [pkg:@development-tools=Installed, pkg:bc=Installed, pkg:bison=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:dpkg=Installed, pkg:dpkg-dev=Installed, pkg:dpkg-devel=Installed, pkg:flex=Installed, pkg:gcc=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:net-tools=Installed, pkg:newt=Installed, pkg:python3=Installed, pkg:python3-devel=Installed, pkg:python3-docutils=Installed, pkg:python3-pip=Installed, pkg:rpm-build=Installed, pkg:rsync=Installed, pkg:slang=Installed, pkg:xmlto=Installed, pkg:zlib-devel=Installed, pkg:zstd=Installed]
       | rc=0; changed=0; installed=()
-      | tp_want=('@Development Tools' 'cmake' 'clang' 'llvm' 'lld' 'bison' 'flex' 'git' 'rsync' 'gcc' 'zlib-devel' 'gnupg' 'bc' 'newt' 'slang' 'xmlto' 'net-tools' 'rpm-build' 'dpkg-devel' 'dpkg' 'dpkg-dev' 'zstd' 'python3' 'python3-devel' 'python3-docutils' 'python3-pip')
+      | tp_want=('@development-tools' 'cmake' 'clang' 'llvm' 'lld' 'bison' 'flex' 'git' 'rsync' 'gcc' 'zlib-devel' 'gnupg' 'bc' 'newt' 'slang' 'xmlto' 'net-tools' 'rpm-build' 'dpkg-devel' 'dpkg' 'dpkg-dev' 'zstd' 'python3' 'python3-devel' 'python3-docutils' 'python3-pip')
       | tp_missing=()
       | for tp_n in "${tp_want[@]}"; do
       |   case "$tp_n" in
@@ -41,9 +41,13 @@ role dev_common
       | fi
   #3 sh as shell:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
+      | if [ -e /usr/local/bin/uv ]; then
+      |   skipped=1
+      | else
       | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
       | rc=$?
       | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
 role kernel_build
   #8 pkg as shell:root reads [] writes [pkg:pip:pip] post [pkg:pip:pip=Installed]
       | rc=0; changed=0; installed=()

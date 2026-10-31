@@ -14,17 +14,25 @@
 //! upgrade there: Debian `apt-get upgrade`, RedHat `dnf update`, Arch
 //! `pacman -Syu` (Arch has no partial upgrade).
 //!
-//! The port is 1:1 with the Ansible role: every known fragility is carried
-//! over so the equivalence oracle can tell a port bug from a chosen change.
-//! Changes that alter what the oracle sees are listed at the end of this
-//! file under "After equivalence" and are not made yet.
+//! The port reaches the Ansible role's end state, with the bugs the oracle
+//! cannot see fixed: the uv installer is guarded (it reran on every run and
+//! on every layer), `rsync` is listed once, and the dnf group is given by
+//! the id dnf5 wants on Fedora. Changes that alter what the oracle sees are
+//! listed at the end of this file under "After equivalence" and are not
+//! made yet.
+//!
+//! Hacks (a `sh!` or a workaround standing in for a primitive; the marker
+//! is what a search for `HACK(` finds when the primitive lands):
+//! - `HACK(tool)`: the uv installer, shape sketched at the op.
+//! - `HACK(pkg: dnf5 group id)`: the per-manager group spec in the RedHat
+//!   branch; `pkg` should resolve a group's display name on dnf5.
 //!
 //! Equivalence (2026-10-30): the docker oracle (package names and arch,
 //! system pip names, rustup state, apt sources, `/usr/local/bin` names)
 //! reported ubuntu2404 and rockylinux10 identical against ansible
-//! 79d1ca16bfdeb678496986e1d7a0d407b06f4b45. The other 11 images were not
-//! run; fedora43 and fedora44 carry the open `@Development Tools` caveat
-//! below.
+//! 79d1ca16bfdeb678496986e1d7a0d407b06f4b45; the 2026-10-31 matrix had
+//! every distro identical except debian13 (`sq`, see src_repos) and
+//! fedora43/44, which failed on the group name fixed below.
 //!
 //! Dropped branches, which no image reaches and which are not ported:
 //! Amazon Linux 2 (its own task file), and the Debian 10 and Ubuntu 20.04
@@ -135,27 +143,39 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
             "python3-hvac",
         ]);
     } else if redhat_based(&h.os) {
-        // `@Development Tools` is a dnf group requested by display name. On EL
-        // the name is the group and the ID `development-tools` does not exist;
-        // on Fedora the ID is `development-tools`. The explicit `gcc`, `clang`,
-        // `bison`, `flex` beside the group keep a compiler present whatever the
-        // group holds. Names resolve through package provides, so the
-        // installed rpm name can differ from the requested one (`gnupg`); the
-        // oracle compares installed names. EPEL and CRB, enabled by `base.el`
-        // outside this repo, serve `dpkg`, `dpkg-dev`, `dpkg-devel` and the
-        // `*-devel` packages (observed 2026-10-30: epel on Rocky 9). Amazon
-        // below lacks the `dpkg*` names (the Amazon 2 task file says `dpkg-dev`
-        // was lost). Open: fedora43 and fedora44 run dnf5, whose CLI rejects
-        // the display name ("No match for argument: Development Tools",
-        // observed 2026-10-30), so this port can fail there where the Ansible
-        // `dnf` module may not; Fedora is outside the oracle's acceptance set
-        // and the capture from the existing images settles it. telepatch's own
-        // installed-group check (`dnf group list --installed | grep`) is not
-        // the module's either.
-        // Source: https://discussion.fedoraproject.org/t/cant-install-development-tools-on-fedora-linux-silverblue-41/134864 (accessed 2026-10-30)
-        // Source: https://docs.ansible.com/ansible/latest/collections/ansible/builtin/dnf_module.html (accessed 2026-10-30)
+        // `@Development Tools` is a dnf group requested by display name, and
+        // no single spelling works across the branch: dnf4 (EL9, EL10)
+        // resolves the display name and rejects `development-tools` (its id
+        // for the group is `development`); dnf5 (fedora43 5.2.18, fedora44
+        // 5.4.6) resolves group specs by id only, `development-tools`, and
+        // rejects the display name ("No match for argument: Development
+        // Tools"). Ansible's dnf and dnf5 modules both resolve by name through
+        // the library, which is why the YAML never noticed (probed 2026-10-31
+        // with `dnf install --assumeno` and `dnf group info -v` on fedora43,
+        // rockylinux9, rockylinux10, almalinux10).
+        // HACK(pkg: dnf5 group id): the port picks the spec per distro. The
+        // fix belongs in `pkg`: resolve a `@name` through `dnf group info`
+        // before rendering the install line.
+        // Source: https://dnf5.readthedocs.io/en/latest/commands/install.8.html (accessed 2026-10-31)
+        // Source: https://docs.ansible.com/ansible/latest/collections/ansible/builtin/dnf5_module.html (accessed 2026-10-31)
+        //
+        // The explicit `gcc`, `clang`, `bison`, `flex` beside the group keep a
+        // compiler present whatever the group holds. Names resolve through
+        // package provides, so the installed rpm name can differ from the
+        // requested one (`gnupg` -> `gnupg2`, `zlib-devel` ->
+        // `zlib-ng-compat-devel` on Fedora and EL10); the oracle compares
+        // installed names and both sides resolve alike. EPEL and CRB, enabled
+        // by `base.el` outside this repo, serve `dpkg`, `dpkg-dev`,
+        // `dpkg-devel` and the `*-devel` packages (observed 2026-10-30: epel
+        // on Rocky 9). Amazon below lacks the `dpkg*` names (the Amazon 2
+        // task file says `dpkg-dev` was lost).
+        let dev_tools = if h.os.distro == Distro::Fedora {
+            "@development-tools"
+        } else {
+            "@Development Tools"
+        };
         h.pkg([
-            "@Development Tools",
+            dev_tools,
             "cmake",
             "clang",
             "llvm",
@@ -259,26 +279,39 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
         h.pip(["jinja2", "GitPython", "pyaml"]);
     }
 
-    // The uv installer. Kept unguarded and unpinned as in the YAML: it
-    // re-downloads and replaces `uv` and `uvx` on every run (observed
-    // 2026-10-30: a second run on an identical version reinstalls both
-    // binaries), always reports changed, and is piped from the network with no
-    // checksum. Because three later playbooks re-apply this role, every later
-    // image re-installs uv. The version is whatever the script carries that
-    // day; the oracle compares names, not versions. `UV_INSTALL_DIR` is the
-    // documented way to pick `/usr/local/bin`, giving `uv` and `uvx` and
-    // nothing else. The installer edits no shell profile because that
-    // directory is already on `PATH`; it does create `~/.config/uv`. Needs
-    // curl: installed by the Debian branch above, shipped by the other bases
-    // (observed 2026-10-30); a port that stops relying on the base image must
-    // add `curl` to the other branches. The subshell keeps `pipefail` from
-    // leaking into the persistent shell (Ansible ran it in its own bash).
+    // The uv installer: intent is `uv` and `uvx` present in `/usr/local/bin`
+    // for every user. The YAML ran the one-liner unguarded and unpinned, so
+    // it re-downloaded and replaced both binaries on every run and on every
+    // layer (three later playbooks re-apply this role), reported changed each
+    // time, could not tell drift, and installed whatever version the source
+    // served that day (0.13.6 on 2026-10-31). The oracle compares names, not
+    // versions, so it never saw it; the `creates` guard fixes the rerun.
+    //
+    // HACK(tool): this is an installer, and telepatch has no `tool` primitive
+    // yet. The shape it needs, settled by probe on 2026-10-31: binary
+    // `/usr/local/bin/uv`; installed version from `uv self version --short`
+    // (prints `0.13.6`); wanted version a pin or latest from the GitHub
+    // releases of `astral-sh/uv`; install by the versioned URL
+    // `https://astral.sh/uv/<ver>/install.sh`; update `uv self update` or the
+    // pinned installer again. Until then this op has no key, no
+    // postcondition and no version.
+    //
+    // Run exactly as the YAML ran it so the oracle stays identical: with
+    // `UV_INSTALL_DIR` set and `UV_NO_MODIFY_PATH` unset the installer also
+    // writes `env` and `env.fish` beside the binaries (the oracle lists all
+    // four names in `/usr/local/bin`) and appends `. "/usr/local/bin/env"` to
+    // root's `.bashrc`, `.profile` and `.bash_profile`, which point at a
+    // directory already on PATH (probed 2026-10-31 in a rockylinux9
+    // container from the downloaded script). Needs curl: installed by the
+    // Debian branch above, shipped by the other bases (observed 2026-10-30).
+    // The subshell keeps `pipefail` from leaking into the persistent shell.
     // The op declares `writes [*]`, so it runs after the merged apt op.
-    // Source: https://docs.astral.sh/uv/reference/installer/ (accessed 2026-10-30)
-    // Source: https://astral.sh/uv/install.sh (accessed 2026-10-30)
+    // Source: https://docs.astral.sh/uv/getting-started/installation/ (accessed 2026-10-31)
+    // Source: https://docs.astral.sh/uv/reference/installer/ (accessed 2026-10-31)
     sh!(
         h,
-        "(set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)"
+        "(set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)",
+        creates = "/usr/local/bin/uv"
     );
     Ok(())
 }
@@ -288,9 +321,12 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
 // green:
 // - Remove `python3-hvac` and `python3-apt` from Debian-family images once
 //   the role no longer runs under Ansible there (package list changes).
-// - Make the uv install idempotent (guard on `/usr/local/bin/uv`) and pin its
-//   version; prefer `UV_UNMANAGED_INSTALL` for a system install
-//   (`/usr/local/bin` metadata and later images' uv version change).
+// - Set `UV_NO_MODIFY_PATH=1` on the uv installer: drops `env` and `env.fish`
+//   from `/usr/local/bin` and the three root profile edits.
+// - Pin uv to a version in `vars/container.toml` once the `tool` primitive
+//   exists (the non-gating versions diff shows it).
+// - Replace pip `pyaml` with `PyYAML`, matching the Debian and Arch branches
+//   (the pip section loses `pyaml`).
 // - Name the dnf group per family (ID `development-tools` on Fedora, the name
 //   "Development Tools" on EL and Amazon) and decide whether the RedHat
 //   group content is still wanted (package list changes on Fedora if the

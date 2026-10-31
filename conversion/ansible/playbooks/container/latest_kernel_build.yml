@@ -1,0 +1,12 @@
+---
+
+# DESCRIPTION=Enable builds of the latest upstream kernel tree, Rust from rustup
+- name: Enable builds of the latest upstream kernel tree, Rust from rustup
+  hosts: all
+  remote_user: root
+  roles:
+    - dev_common
+    - src_repos
+    - kernel_build
+    - rust_build
+    - rust_kernel

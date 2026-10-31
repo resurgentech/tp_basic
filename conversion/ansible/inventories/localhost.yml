@@ -1,0 +1,6 @@
+# DESCRIPTION=Run on localhost only with connection local
+all:
+  hosts:
+    localhost:
+      ansible_become: true
+      ansible_python_interpreter: /usr/bin/python3

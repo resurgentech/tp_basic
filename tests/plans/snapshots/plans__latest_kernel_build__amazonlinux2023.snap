@@ -41,9 +41,13 @@ role dev_common
       | fi
   #3 sh as shell:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
+      | if [ -e /usr/local/bin/uv ]; then
+      |   skipped=1
+      | else
       | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
       | rc=$?
       | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
 role kernel_build
   #8 pkg as shell:root reads [] writes [pkg:audit-libs-devel, pkg:binutils-devel, pkg:bpftool, pkg:clang, pkg:dwarves, pkg:elfutils-devel, pkg:elfutils-libelf-devel, pkg:gcc-c++, pkg:libbpf-devel, pkg:libcap-devel, pkg:libcap-ng-devel, pkg:libmnl-devel, pkg:ncurses-devel, pkg:newt-devel, pkg:numactl-devel, pkg:openssl-devel, pkg:pciutils-devel, pkg:perl(ExtUtils::Embed), pkg:perl-Carp, pkg:perl-devel, pkg:perl-generators, pkg:perl-interpreter, pkg:pkgconf-pkg-config, pkg:python3-sphinx, pkg:rpm-build, pkg:rpmdevtools, pkg:xz-devel, pkg:zlib-devel] post [pkg:audit-libs-devel=Installed, pkg:binutils-devel=Installed, pkg:bpftool=Installed, pkg:clang=Installed, pkg:dwarves=Installed, pkg:elfutils-devel=Installed, pkg:elfutils-libelf-devel=Installed, pkg:gcc-c++=Installed, pkg:libbpf-devel=Installed, pkg:libcap-devel=Installed, pkg:libcap-ng-devel=Installed, pkg:libmnl-devel=Installed, pkg:ncurses-devel=Installed, pkg:newt-devel=Installed, pkg:numactl-devel=Installed, pkg:openssl-devel=Installed, pkg:pciutils-devel=Installed, pkg:perl(ExtUtils::Embed)=Installed, pkg:perl-Carp=Installed, pkg:perl-devel=Installed, pkg:perl-generators=Installed, pkg:perl-interpreter=Installed, pkg:pkgconf-pkg-config=Installed, pkg:python3-sphinx=Installed, pkg:rpm-build=Installed, pkg:rpmdevtools=Installed, pkg:xz-devel=Installed, pkg:zlib-devel=Installed]
       | rc=0; changed=0; installed=()
