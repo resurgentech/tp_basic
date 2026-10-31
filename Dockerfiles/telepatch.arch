@@ -1,0 +1,12 @@
+# Telepatch twin of docker_images/Dockerfiles/ansible.arch; see
+# telepatch.debian for the conventions.
+FROM parent
+
+ARG PLAYBOOK_NAME
+RUN --mount=type=bind,source=build/tp-basic,target=/tmp/tp-basic \
+    --mount=type=bind,source=vars,target=/tmp/tp-vars \
+    pacman -Syu --noconfirm && \
+    /tmp/tp-basic run container/${PLAYBOOK_NAME} --local --vars /tmp/tp-vars/container.toml
+
+RUN pacman -Scc --noconfirm && \
+    rm -rf /tmp/* /var/tmp/*
