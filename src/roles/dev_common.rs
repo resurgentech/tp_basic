@@ -15,15 +15,15 @@
 //! `pacman -Syu` (Arch has no partial upgrade).
 //!
 //! The port reaches the Ansible role's end state, with the bugs the oracle
-//! cannot see fixed: the uv installer is guarded (it reran on every run and
-//! on every layer), `rsync` is listed once, and the dnf group is given by
+//! cannot see fixed: the uv installer is a `pkg` with a `Script` source,
+//! probed before it runs (it reran on every run and on every layer),
+//! `rsync` is listed once, and the dnf group is given by
 //! the id dnf5 wants on Fedora. Changes that alter what the oracle sees are
 //! listed at the end of this file under "After equivalence" and are not
 //! made yet.
 //!
 //! Hacks (a `sh!` or a workaround standing in for a primitive; the marker
 //! is what a search for `HACK(` finds when the primitive lands):
-//! - `HACK(tool)`: the uv installer, shape sketched at the op.
 //! - `HACK(pkg: dnf5 group id)`: the per-manager group spec in the RedHat
 //!   branch; `pkg` should resolve a group's display name on dnf5.
 //!
@@ -42,7 +42,8 @@
 //! as the Ansible flags say.
 
 use telepatch::facts::os::{Distro, Family, Os};
-use telepatch::{Host, TraceError, role, sh};
+use telepatch::ops::pkg::{Latest, ScriptSpec};
+use telepatch::{Host, TraceError, role};
 
 use crate::vars::Vars;
 
@@ -285,16 +286,15 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // layer (three later playbooks re-apply this role), reported changed each
     // time, could not tell drift, and installed whatever version the source
     // served that day (0.13.6 on 2026-10-31). The oracle compares names, not
-    // versions, so it never saw it; the `creates` guard fixes the rerun.
+    // versions, so it never saw it; the `pkg` probe fixes the rerun.
     //
-    // HACK(tool): this is an installer, and telepatch has no `tool` primitive
-    // yet. The shape it needs, settled by probe on 2026-10-31: binary
-    // `/usr/local/bin/uv`; installed version from `uv self version --short`
-    // (prints `0.13.6`); wanted version a pin or latest from the GitHub
-    // releases of `astral-sh/uv`; install by the versioned URL
-    // `https://astral.sh/uv/<ver>/install.sh`; update `uv self update` or the
-    // pinned installer again. Until then this op has no key, no
-    // postcondition and no version.
+    // A `pkg` with a `Script` source, its five parts settled by probe on
+    // 2026-10-31: binary `/usr/local/bin/uv`; installed version from
+    // `uv self version --short` (prints `0.13.6`); latest from the GitHub
+    // releases of `astral-sh/uv` (resolved on the host, only for
+    // `.latest()`); install the YAML's one-liner; update `uv self update`.
+    // Wanted is `Present` (any version), as the YAML had no pin. The op
+    // posts `pkg:script:root:uv` and `file:/usr/local/bin/uv`.
     //
     // Run exactly as the YAML ran it so the oracle stays identical: with
     // `UV_INSTALL_DIR` set and `UV_NO_MODIFY_PATH` unset the installer also
@@ -305,13 +305,20 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // container from the downloaded script). Needs curl: installed by the
     // Debian branch above, shipped by the other bases (observed 2026-10-30).
     // The subshell keeps `pipefail` from leaking into the persistent shell.
-    // The op declares `writes [*]`, so it runs after the merged apt op.
+    // Non-distro sources write `*` by default, so it runs after the merged
+    // apt op that installs curl.
     // Source: https://docs.astral.sh/uv/getting-started/installation/ (accessed 2026-10-31)
     // Source: https://docs.astral.sh/uv/reference/installer/ (accessed 2026-10-31)
-    sh!(
-        h,
-        "(set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)",
-        creates = "/usr/local/bin/uv"
+    h.script(
+        "uv",
+        ScriptSpec::new()
+            .bin("/usr/local/bin/uv")
+            .version("uv self version --short")
+            .latest(Latest::github_release("astral-sh/uv"))
+            .install(
+                "(set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)",
+            )
+            .update("uv self update"),
     );
     Ok(())
 }
@@ -323,8 +330,9 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
 //   the role no longer runs under Ansible there (package list changes).
 // - Set `UV_NO_MODIFY_PATH=1` on the uv installer: drops `env` and `env.fish`
 //   from `/usr/local/bin` and the three root profile edits.
-// - Pin uv to a version in `vars/container.toml` once the `tool` primitive
-//   exists (the non-gating versions diff shows it).
+// - Pin uv to a version in `vars/container.toml`: `.pin(v)` on the op, with
+//   the versioned installer URL `https://astral.sh/uv/$TP_WANT/install.sh`
+//   as `install` (the non-gating versions diff shows it).
 // - Replace pip `pyaml` with `PyYAML`, matching the Debian and Arch branches
 //   (the pip section loses `pyaml`).
 // - Name the dnf group per family (ID `development-tools` on Fedora, the name

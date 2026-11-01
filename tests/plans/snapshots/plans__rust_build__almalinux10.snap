@@ -39,14 +39,47 @@ role dev_common
       |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       |   fi
       | fi
-  #3 sh as shell:root reads [] writes [*]
-      | rc=0; changed=0; skipped=0
-      | if [ -e /usr/local/bin/uv ]; then
-      |   skipped=1
-      | else
+  #3 pkg[script] as shell:root reads [] writes [*] post [pkg:script:root:uv=Installed, file:/usr/local/bin/uv=Exists(true)]
+      | rc=0; changed=0; installed=()
+      | tp_name='uv'
+      | tp_tok() { grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
+      | tp_probe() {
+      |   tp_have=0; tp_v=
+      |   if [ -x '/usr/local/bin/uv' ]; then
+      |     tp_have=1
+      |     tp_v=$( (
+      | uv self version --short
+      | ) 2>/dev/null | tp_tok)
+      |   fi
+      | }
+      | tp_want_v=
+      | tp_probe
+      | tp_had=$tp_have; tp_before=$tp_v; tp_act=
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ "$tp_have" -eq 0 ]; then tp_act=install
+      |   elif [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; then tp_act=update
+      |   fi
+      | fi
+      | if [ "$tp_act" = install ]; then
+      |   ( export TP_WANT="$tp_want_v"
       | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
-      | rc=$?
-      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   )
+      |   rc=$?
+      | elif [ "$tp_act" = update ]; then
+      |   ( export TP_WANT="$tp_want_v"
+      | uv self update
+      |   )
+      |   rc=$?
+      | fi
+      | if [ -n "$tp_act" ]; then
+      |   tp_probe
+      |   if [ "$tp_have" -ne "$tp_had" ] || [ "$tp_v" != "$tp_before" ]; then changed=1; installed=("$tp_name"); fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ "$tp_have" -eq 0 ]; then tp_got=absent; else tp_got=${tp_v:-unknown}; fi
+      |     if [ "$tp_have" -eq 0 ] || { [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; }; then
+      |       echo "telepatch: script $tp_name: installed $tp_got, wanted ${tp_want_v:-present}" >&2; rc=1
+      |     fi
+      |   fi
       | fi
 role rust_build
   #6 pkg as shell:root reads [] writes [pkg:clang, pkg:gcc-c++, pkg:musl-gcc, pkg:openssl-devel, pkg:pkgconf-pkg-config] post [pkg:clang=Installed, pkg:gcc-c++=Installed, pkg:musl-gcc=Installed, pkg:openssl-devel=Installed, pkg:pkgconf-pkg-config=Installed]
