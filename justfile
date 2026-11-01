@@ -42,6 +42,12 @@ test-acceptance:
     ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 rust_build
     ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2604 latest_kernel_build
 
+# Apply container/<container> (dev_base or rust) twice in one container of the
+# pinned base image; passes when the second run shows CHANGED 0.
+# `just test-idempotent ubuntu2404 dev_base`
+test-idempotent distro container:
+    bash scripts/test-idempotent.sh {{distro}} {{container}}
+
 # Not a gate: every container of every distro's set; writes build/matrix.md.
 test-matrix jobs="3":
     ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-matrix.sh {{jobs}}

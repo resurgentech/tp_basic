@@ -10,7 +10,7 @@
 #      ANSIBLE_SHA  override the resolved `master` commit of the ansible repo
 #
 # Outputs (gitignored): build/test-container/<container>-<distro>/
-#   {ansible,telepatch}.{log,state,versions}
+#   {ansible,telepatch}.{log,state,versions}, base.state (the pinned base)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -118,6 +118,10 @@ hex=${base_id#sha256:}
 pin=tp-test/pin/base-$distro:${hex:0:12}
 docker tag "$base_id" "$pin"
 echo "base: $base_ref = $base_id (pinned as $pin)"
+# the pinned base's own state, so what a chain added can be computed later
+docker run --rm --entrypoint sh -e ADMIN_USERS="${ADMIN_USERS:-}" \
+    -v "$ROOT/scripts/image-state.sh:/image-state.sh:ro" "$pin" /image-state.sh >"$out/base.state"
+echo "captured $out/base.state ($(wc -l <"$out/base.state") lines)"
 
 created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 bb=(docker buildx build --no-cache --provenance=false --sbom=false --load --progress=plain)
