@@ -1,9 +1,0 @@
----
-- name: Arch rust build Dependancies
-  pacman:
-    name:
-      - openssl
-      - pkgconf
-      - clang
-      - musl
-    state: present

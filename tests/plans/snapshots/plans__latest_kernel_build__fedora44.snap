@@ -3,9 +3,9 @@ source: tests/plans.rs
 expression: text
 ---
 host fedora44 (os: RedHat/Fedora 44)
-blocking reads: 2
+blocking reads: 0
 
-window 1 (implicit barrier)
+window 1 (final)
 role dev_common
   #1 pkg as shell:root reads [] writes [pkg:@development-tools, pkg:bc, pkg:bison, pkg:clang, pkg:cmake, pkg:dpkg, pkg:dpkg-dev, pkg:dpkg-devel, pkg:flex, pkg:gcc, pkg:git, pkg:gnupg, pkg:lld, pkg:llvm, pkg:net-tools, pkg:newt, pkg:python3, pkg:python3-devel, pkg:python3-docutils, pkg:python3-pip, pkg:rpm-build, pkg:rsync, pkg:slang, pkg:xmlto, pkg:zlib-devel, pkg:zstd] post [pkg:@development-tools=Installed, pkg:bc=Installed, pkg:bison=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:dpkg=Installed, pkg:dpkg-dev=Installed, pkg:dpkg-devel=Installed, pkg:flex=Installed, pkg:gcc=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:net-tools=Installed, pkg:newt=Installed, pkg:python3=Installed, pkg:python3-devel=Installed, pkg:python3-docutils=Installed, pkg:python3-pip=Installed, pkg:rpm-build=Installed, pkg:rsync=Installed, pkg:slang=Installed, pkg:xmlto=Installed, pkg:zlib-devel=Installed, pkg:zstd=Installed]
       | rc=0; changed=0; installed=()
@@ -117,47 +117,97 @@ role kernel_build
       |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       | fi
       merged from kernel_build #9, rust_build #12, rust_build #13
-
-window 3 (final)
 role rust_build
-  #16 sh as login:root reads [] writes [*]
-      | rc=0; changed=0; skipped=0
-      | if { command -v cargo; } >/dev/null 2>&1; then
-      |   skipped=1
-      | else
-      | (set -o pipefail && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y)
-      | rc=$?
-      | if [ "$rc" -eq 0 ]; then changed=1; fi
+  #14 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_tc='stable'
+      | tp_prof='default'
+      | tp_path() {
+      |   tp_cb=${CARGO_HOME:-$HOME/.cargo}/bin
+      |   if [ -d "$tp_cb" ]; then case ":$PATH:" in *":$tp_cb:"*) ;; *) PATH=$tp_cb:$PATH;; esac; fi
+      | }
+      | tp_match() { awk -v t="$1" 'function tcm(f, t) { return f == t || (index(f, t "-") == 1 && substr(f, length(t) + 2) ~ /^(x86_64|i[3-6]86|aarch64|arm[0-9a-z_]*|riscv[0-9a-z]*|powerpc[0-9a-z_]*|s390x|loongarch64|mips[0-9a-z_]*|sparc[0-9a-z_]*|thumb[0-9a-z_]*|wasm[0-9]+)-[a-z0-9_]+-[a-z]/) } { if (tcm($1, t)) m=1 } END { exit m ? 0 : 1 }'; }
+      | tp_ver() { rustup run "$tp_tc" rustc --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
+      | tp_has_tc() { rustup toolchain list 2>/dev/null | tp_match "$tp_tc"; }
+      | tp_updates() { awk -v t="$tp_tc" 'function tcm(f, t) { return f == t || (index(f, t "-") == 1 && substr(f, length(t) + 2) ~ /^(x86_64|i[3-6]86|aarch64|arm[0-9a-z_]*|riscv[0-9a-z]*|powerpc[0-9a-z_]*|s390x|loongarch64|mips[0-9a-z_]*|sparc[0-9a-z_]*|thumb[0-9a-z_]*|wasm[0-9]+)-[a-z0-9_]+-[a-z]/) } /[Uu]pdate available/ { if ($1 == "rustup") print "self"; else if (tcm($1, t)) { v=$0; sub(/.*-> */, "", v); split(v, a, " "); print "tc " a[1] } }'; }
+      | tp_check() { tp_chk=$(rustup check 2>&1); tp_crc=$?; [ "$tp_crc" -eq 0 ] || [ "$tp_crc" -eq 100 ]; }
+      | tp_path
+      | tp_fresh=0
+      | if ! command -v rustup >/dev/null 2>&1; then
+      |   ( set -o pipefail; curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$tp_tc" --profile "$tp_prof" )
+      |   rc=$?
+      |   tp_path
+      |   if [ "$rc" -eq 0 ] && ! command -v rustup >/dev/null 2>&1; then echo 'telepatch: rustup not found after the installer' >&2; rc=1; fi
+      |   if [ "$rc" -eq 0 ]; then tp_fresh=1; fi
+      | elif ! tp_has_tc; then
+      |   rustup toolchain install "$tp_tc" --profile "$tp_prof"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then tp_fresh=1; fi
       | fi
-  #17 sh as login:root reads [] writes [*]
-      | rc=0; changed=0; skipped=0
-      | if { command -v cargo-deb; } >/dev/null 2>&1; then
-      |   skipped=1
-      | else
-      | cargo install cargo-deb
-      | rc=$?
-      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | if [ "$tp_fresh" -eq 1 ]; then
+      |   if tp_has_tc; then changed=1; installed+=("$tp_tc"); else echo "telepatch: rustup toolchain $tp_tc: not installed afterwards" >&2; rc=1; fi
       | fi
-  #18 sh as login:root reads [] writes [*]
-      | rc=0; changed=0; skipped=0
-      | if { command -v cargo-generate-rpm; } >/dev/null 2>&1; then
-      |   skipped=1
-      | else
-      | cargo install cargo-generate-rpm
-      | rc=$?
-      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | if [ "$rc" -eq 0 ] && [ "$tp_fresh" -eq 0 ]; then
+      |   tp_v0=$(tp_ver)
+      |   if ! tp_check; then
+      |     echo "telepatch: rustup check failed (rc $tp_crc): $tp_chk" >&2; rc=1
+      |   elif [ -n "$(printf '%s\n' "$tp_chk" | tp_updates)" ]; then
+      |     rustup update "$tp_tc"
+      |     rc=$?
+      |     if [ "$(tp_ver)" != "$tp_v0" ]; then changed=1; installed+=("$tp_tc"); fi
+      |   fi
       | fi
-  #19 sh as login:root reads [] writes [*]
-      | rc=0; changed=0; skipped=0
-      | if { rustup target list --installed | grep -qx x86_64-unknown-linux-musl; } >/dev/null 2>&1; then
-      |   skipped=1
-      | else
-      | rustup target add x86_64-unknown-linux-musl
-      | rc=$?
-      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      | if [ "$rc" -eq 0 ] && ! rustup default 2>/dev/null | tp_match "$tp_tc"; then
+      |   rustup default "$tp_tc"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_have=$(rustup target list --installed --toolchain "$tp_tc" 2>/dev/null)
+      |   tp_miss=()
+      |   for tp_x in 'x86_64-unknown-linux-musl'; do
+      |     printf '%s\n' "$tp_have" | grep -qxF -- "$tp_x" || tp_miss+=("$tp_x")
+      |   done
+      |   if [ "${#tp_miss[@]}" -gt 0 ]; then
+      |     rustup target add --toolchain "$tp_tc" "${tp_miss[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then
+      |       changed=1
+      |       for tp_x in "${tp_miss[@]}"; do installed+=("$tp_tc/target/$tp_x"); done
+      |     fi
+      |   fi
+      | fi
+  #15 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('cargo-deb' 'cargo-generate-rpm')
+      | declare -A tp_before=() tp_after=() tp_wantv=()
+      | tp_todo=()
+      | tp_list() { cargo install --list 2>/dev/null | sed -n 's/^\([^ ][^ ]*\) v\([^ :][^ :]*\)[^:]*:$/\1 \2/p'; }
+      | if ! command -v cargo >/dev/null 2>&1; then echo 'telepatch: cargo not found' >&2; rc=127; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   while read -r tp_n tp_v; do tp_before[$tp_n]=$tp_v; done < <(tp_list)
+      |   for tp_n in "${tp_want[@]}"; do
+      |     [ -n "${tp_before[$tp_n]+x}" ] || tp_todo+=("$tp_n")
+      |   done
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "${#tp_todo[@]}" -gt 0 ]; then
+      |   cargo install "${tp_todo[@]}"
+      |   rc=$?
+      |   while read -r tp_n tp_v; do tp_after[$tp_n]=$tp_v; done < <(tp_list)
+      |   for tp_n in "${tp_want[@]}"; do
+      |     if [ "${tp_after[$tp_n]-}" != "${tp_before[$tp_n]-}" ]; then changed=1; installed+=("$tp_n"); fi
+      |   done
+      |   if [ "$rc" -eq 0 ]; then
+      |     for tp_n in "${tp_todo[@]}"; do
+      |       tp_got=${tp_after[$tp_n]-}; tp_wv=${tp_wantv[$tp_n]-}
+      |       if [ -z "$tp_got" ] || { [ -n "$tp_wv" ] && [ "$tp_got" != "$tp_wv" ]; }; then
+      |         echo "telepatch: cargo $tp_n: installed ${tp_got:-absent}, wanted ${tp_wv:-present}" >&2; rc=1
+      |       fi
+      |     done
+      |   fi
       | fi
 role rust_kernel
-  #22 sh as login:root reads [] writes [*]
+  #18 sh as login:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
       | tp_out=$(mktemp)
       | {
@@ -166,7 +216,7 @@ role rust_kernel
       | rc=${PIPESTATUS[0]}
       | if [ "$rc" -eq 0 ] && grep -Eq 'downloading' "$tp_out"; then changed=1; fi
       | rm -f "$tp_out"
-  #23 sh as login:root reads [] writes [*]
+  #19 sh as login:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
       | if [ -e ~/.cargo/bin/bindgen ]; then
       |   skipped=1

@@ -5,9 +5,9 @@
 //! `dev_base`, all 13 distros) applies `dev_common` again and then this role,
 //! as root. The role installs the distro packages a Rust build needs, one
 //! list per family, then per user installs rustup with the default
-//! toolchain (or repairs or updates an existing install) and adds
-//! `cargo-deb`, `cargo-generate-rpm` and the `x86_64-unknown-linux-musl`
-//! target. Workstations run the role through the same flags, and then the
+//! toolchain (or installs a missing toolchain into an existing rustup, or
+//! updates it) and adds `cargo-deb`, `cargo-generate-rpm` and the
+//! `x86_64-unknown-linux-musl` target. Workstations run the role through the same flags, and then the
 //! user loop covers the human `ansible_user` as well as root. The only other
 //! playbook that applies it is `latest_kernel_build`, after `kernel_build`
 //! and before `rust_kernel`, and it is built only on ubuntu2604, so there
@@ -26,17 +26,29 @@
 //! reported ubuntu2404 and rockylinux10 identical against ansible
 //! 79d1ca16bfdeb678496986e1d7a0d407b06f4b45, with the non-gating version
 //! side diff identical too. The other 11 images were not run as a gate.
-//! The oracle builds fresh, so it does not exercise the repair or update
-//! paths nor a re-run (see the fixes and `Open:` items below).
+//! The oracle builds fresh, so it does not exercise the update path nor a
+//! re-run (see the fixes and `Open:` items below).
+//!
+//! Re-port (2026-10-31): the per-user block moved from `sh!` lines to a
+//! `Rustup` and a `Cargo` `pkg` source (the installer primitive that the
+//! understanding doc, since removed, asked to build before the port). The
+//! plans differ only inside that block, and the plans no longer read facts,
+//! so `blocking reads` is 0 and the host has no barrier between `dev_common`
+//! and these ops. The oracle result above is to be re-run on the new form
+//! (`rust_build` on ubuntu2404 and rockylinux10, `latest_kernel_build` on
+//! ubuntu2604).
 //!
 //! Fixes made in the port, none visible to the oracle:
 //! - Users are `admin_users` plus root, deduplicated (see `users`).
-//! - The home directory comes from the passwd entry, never from the name
-//!   (see the repair branch).
-//! - Checks use `command -v` or `bin_exists`, not `which`: `which` is absent
-//!   on five bases (see the install branch).
-//! - The extras finish in the same run that repairs (see the end of the
-//!   user loop).
+//! - Presence is decided by `command -v` and rustup's own listings, never
+//!   `which`: `which` is absent on five bases (see the toolchain op).
+//! - Root is processed once (see `users`), not twice.
+//! - The extras finish in the same run as the toolchain: the musl target
+//!   through `.targets`, `cargo-deb` and `cargo-generate-rpm` through the
+//!   `Cargo` source (see the user loop).
+//! - A broken install (cargo proxies, no toolchain) is repaired by
+//!   installing the toolchain into the existing tree; the YAML's `rm` of
+//!   `/home/<name>/.rustup` was a no-op for root.
 //! - The `musl-gcc` condition is written as "major version at least 10".
 //!
 //! Dropped branches, which no image reaches and which are not ported: Amazon
@@ -45,42 +57,47 @@
 //! `group_vars` for other roles. The `ansible_user`-is-human case is no
 //! image's, but the role still takes a list of users.
 //!
-//! Kept as written: the package names per family, `musl-gcc` only where
-//! it is packaged, the default profile, the musl target on every host,
-//! `cargo install` for the two tools, and the repair block. Users other than
+//! Kept as written: the package names per family (in full, although
+//! `dev_common` already installed `g++`, `clang`, `gcc-c++`,
+//! `pkgconf-pkg-config`, `openssl` and `pkgconf` on the parent image: `pkg`
+//! is idempotent and the lists are the contract when the role is applied
+//! on a desktop), `musl-gcc` only where it is packaged, the default
+//! profile, the musl target on every host, and `cargo install` for the two
+//! tools. Users other than
 //! `admin_users` and root get nothing: the ubuntu2404 and ubuntu2604 bases
 //! carry an `ubuntu` user (uid 1000) with no rustup, and a loop over all
 //! passwd users would still pass the oracle and be wrong.
 //!
-//! Ops here are `sh!`: telepatch has no `fetch`, `git` or tool-install
-//! primitive. This role installs no pip names, adds no repo and puts
-//! nothing in `/usr/local/bin` (`uv` and `uvx` come from `dev_common`), and
-//! it never installs `curl`: `dev_common` runs first and every base has
-//! `curl` and `cc` (observed 2026-10-30), so a program that applies this
-//! role alone depends on that.
+//! The per-user ops are `pkg` with a `Rustup` and a `Cargo` source, not
+//! `sh!`: the source owns the install command, the probe and the update, so
+//! the role holds no shell. The `h.pkg` lists are distro packages. This role
+//! installs no pip names, adds no repo and puts nothing in `/usr/local/bin`
+//! (`uv` and `uvx` come from `dev_common`), and it never installs `curl`:
+//! `dev_common` runs first and every base has `curl` and `cc` (observed
+//! 2026-10-30), so a program that applies this role alone depends on that.
+//! Amazon Linux 2023 is `Family::RedHat` in the engine but not `redhat_based`
+//! in the YAML (`group_vars/all:4`), so it is split on the distro.
 //!
 //! The version pins in `group_vars` (`rustup_version` 1.29.0,
 //! `cargo_version` and `rustc_version` 1.94.0) never pinned anything and
-//! this role does not read them; they stay in `Vars` until no role does.
-//! The installer ran with `-y` and no `--default-toolchain`, so it installs
-//! whatever `stable` is on the build day (observed 2026-10-30: rustup
-//! 1.29.2, cargo and rustc 1.99.1 on the existing images). The YAML compared
-//! the pins with `!=`, so any host not on exactly the pin ran
-//! `rustup self update` and `rustup update`, which move to latest, not to
-//! the pin; nothing in the role could produce the pinned versions. The port
-//! keeps the effect and drops the comparison.
+//! this role does not read them; they stay in `Vars`, unread, until
+//! "After equivalence" removes them. The installer ran with `-y` and no
+//! `--default-toolchain`, so it installs whatever `stable` is on the build
+//! day (observed 2026-10-30: rustup 1.29.2, cargo and rustc 1.99.1 on the
+//! existing images). The YAML compared the pins with `!=`, so any host not
+//! on exactly the pin ran `rustup self update` and `rustup update`, which
+//! move to latest, not to the pin; nothing in the role could produce the
+//! pinned versions. The port keeps the effect and drops the comparison: the
+//! toolchain is wanted at `Latest`, which is what the YAML did in practice,
+//! and the cargo tools are wanted `Present`.
 //!
-//! Open: the order of fact reads and installs on a re-run. `bin_exists` and
-//! `bin_version` are awaited before the install ops run, so on a fresh host
-//! they read "absent" and the extras are guarded by `unless` at the op,
-//! not by a fact. Whether a fact taken before the install step can see the
-//! install is settled by `tp plan` of the port on a bare dev_base container
-//! (the plan must list the cargo-deb op as unskipped) and an apply followed
-//! by a second apply that lists no changed op. Neither is part of the
-//! oracle.
+//! Open: that a re-run changes nothing (`just test-idempotent ubuntu2404
+//! rust`, needs network for `rustup check`) and that `latest_kernel_build`
+//! on ubuntu2604, where the role runs a second time, ends identical in the
+//! oracle. Neither is settled by the plan snapshots.
 
 use telepatch::facts::os::{Distro, Family, Os};
-use telepatch::{Host, TraceError, role, sh};
+use telepatch::{Host, TraceError, role};
 
 use crate::vars::Vars;
 
@@ -173,130 +190,111 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
         // passwd shell the YAML parsed. The installer adds
         // `. "$HOME/.cargo/env"` to `~/.profile` (observed 2026-10-30), which
         // a login bash reads, so `~/.cargo/bin` is on PATH once the install
-        // ran and the YAML's `. ~/.cargo/env &&` prefix is not written. The
-        // equivalence run confirmed it; were it to fail, the fix is to
-        // source that file in these ops. The profile edit also reaches
-        // `~/.bashrc` and `~/.bash_profile` where they exist; the oracle
-        // does not compare profile files.
+        // ran and the YAML's `. ~/.cargo/env &&` prefix is not written (the
+        // two sources also prepend `${CARGO_HOME:-$HOME/.cargo}/bin` to PATH
+        // themselves, before probing and after the installer). The
+        // equivalence run confirmed it for the `sh!` form. The profile edit
+        // also reaches `~/.bashrc` and `~/.bash_profile` where they exist;
+        // the oracle does not compare profile files.
         let s = h.as_user(&u);
 
-        // Absent, broken or working, from two reads. The YAML marked a host
-        // broken when `which cargo` succeeded and `rustc --version` printed
-        // nothing; its version pipeline ended in `cut`, which hid a failing
-        // rustc, so the empty output was the signal, and `bin_version`
-        // returning `None` is the same signal. cargo not on PATH is absent
-        // (the YAML also read "not installed" when `which` failed for any
-        // reason, such as a passwd shell that cannot run `-lc`; a broken
-        // install with `~/.cargo/bin` gone but `~/.rustup` left takes the
-        // install path, not the repair path, here as there). The reads wait
-        // for the package window.
-        // Decided: `unless` on each op that has an existence check, and one
-        // `bin_version` fact for this three-way decision, because repair is
-        // three ops and an op-level `unless` cannot branch on a multi-op
-        // choice. Cost: one awaited round trip per user and run.
-        let has_cargo = s.bin_exists("cargo").await;
-        let rustc = s.bin_version("rustc").await;
+        // The toolchain: a `pkg` with a `Rustup` source, name `stable`.
+        // Wanted is `Latest`: the YAML's installer ran with `-y` and no
+        // `--default-toolchain`, so it installed whatever stable was on the
+        // build day, and its "update" branch moved to latest on every re-run
+        // (see the module doc on the pins). The default profile installs
+        // `cargo`, `clippy`, `rust-docs`, `rust-std`, `rustc` and `rustfmt`,
+        // hence the components the oracle sees. The source runs the
+        // documented one-liner (`curl --proto '=https' --tlsv1.2 -sSf
+        // https://sh.rustup.rs | sh -s -- -y`, rustup.rs and the rustup book
+        // for `-y`) with `--default-toolchain stable --profile default`
+        // appended, in a subshell under `pipefail` so a failing `curl` fails
+        // the op and `pipefail` stays out of the persistent shell. The
+        // project documents a checksum for `rustup-init` binaries only, not
+        // for the script, so the download is unverified here as in the YAML.
+        // The script served on 2026-10-30 prints `rustup-init 1.29.2` and
+        // accepts `-y, --yes`, `--default-toolchain` and `--profile`;
+        // `-y` is also the book's route past rustup refusing when a distro
+        // Rust sits in `/usr`. Written with `*` (the installer edits files
+        // nobody listed), so it orders like the `sh!` lines it replaced.
+        //
+        // What the YAML's cases become, from the source's own probe, not a
+        // fact read in this role: rustup absent runs the installer; rustup
+        // present with the toolchain missing, including the YAML's "broken"
+        // state (cargo proxies on PATH, no toolchain, so `rustc --version`
+        // prints nothing) runs `rustup toolchain install stable`; both end
+        // with `rustup default stable` if another default is set. The
+        // YAML's repair removed `~/.rustup` and `~/.cargo` and reinstalled;
+        // this reinstalls the toolchain into the existing tree and leaves
+        // the rest alone, so no `rm` and no home directory is needed (the
+        // YAML's `/home/<name>` was wrong for root anyway: root's home is
+        // `/root`, `/home/root` does not exist, observed 2026-10-30 on all
+        // 13 images). Nothing the oracle sees reaches that state: a fresh
+        // image has neither cargo nor rustup. With the toolchain already
+        // present and `Latest` wanted (the second application, in
+        // `latest_kernel_build` on ubuntu2604): `rustup check`, and `rustup
+        // update stable` only when it reports an update for `stable` or for
+        // rustup itself; `rustup update` also checks for a rustup
+        // self-update unless `--no-self-update` is given, so the YAML's
+        // separate `rustup self update` overlapped it and is not repeated.
+        // A fresh install gets no update in the same run. The check needs
+        // the network, so a re-run of this role does too. Not probed or
+        // run in the oracle before the port; the idempotence run covers it.
+        //
+        // The musl target is added on every host regardless of `musl-gcc`,
+        // hence the component `rust-std-x86_64-unknown-linux-musl` and the
+        // target list gnu and musl; `.targets` reads `rustup target list
+        // --installed --toolchain stable` and adds only what is missing, in
+        // the same run as the install. `.set_default()` keeps `stable` as
+        // the default toolchain, which is the state the installer leaves.
+        // `command -v`, not `which`, is how presence is decided (the
+        // source's `command -v rustup` and rustup's own listings): `which`
+        // is absent from dev_base and the finished rust_build images on
+        // fedora43, fedora44, rockylinux10, almalinux10 and amazonlinux2023
+        // (observed 2026-10-30, `which: command not found`, exit 127), so
+        // there every YAML check read "not installed" even after
+        // installing, and a re-run reinstalled rustup, rebuilt `cargo-deb`
+        // and `cargo-generate-rpm` and re-added the target. The oracle
+        // builds fresh and cannot see it.
+        // Source: https://rustup.rs/ (accessed 2026-10-30)
+        // Source: https://rust-lang.github.io/rustup/installation/index.html (accessed 2026-10-30)
+        // Source: https://rust-lang.github.io/rustup/installation/already-installed-rust.html (accessed 2026-10-30)
+        // Source: https://rust-lang.github.io/rustup/concepts/profiles.html (accessed 2026-10-30)
+        // Source: https://rust-lang.github.io/rustup/basics.html (accessed 2026-10-30)
+        s.rustup("stable")
+            .targets(["x86_64-unknown-linux-musl"])
+            .set_default()
+            .latest();
 
-        if !has_cargo {
-            // `command -v`, not `which`: `which` is absent from dev_base and
-            // the finished rust_build images on fedora43, fedora44,
-            // rockylinux10, almalinux10 and amazonlinux2023 (observed
-            // 2026-10-30, `which: command not found`, exit 127). There every
-            // YAML check read "not installed" even after installing, so a
-            // re-run reinstalled rustup, rebuilt `cargo-deb` and
-            // `cargo-generate-rpm` and re-added the target; the oracle
-            // builds fresh and cannot see it.
-            // The documented install is `curl` with `--proto '=https'
-            // --tlsv1.2 -sSf` piped from the script host into `sh -s -- -y`
-            // (rustup.rs, and the rustup book for `-y`). The YAML downloaded
-            // the script to a shared `/tmp/rustup.sh` and ran it per user;
-            // the file is gone here (the Dockerfile deletes `/tmp/*` anyway)
-            // and the command is the same two actions. The project documents
-            // a checksum for `rustup-init` binaries only, not for the
-            // script, so the download is unverified here as in the YAML. The
-            // script served on 2026-10-30 prints `rustup-init 1.29.2` and
-            // accepts `-y, --yes`; `-y` is also the book's route past rustup
-            // refusing when a distro Rust sits in `/usr`. The `-y` default
-            // profile installs `cargo`, `clippy`, `rust-docs`, `rust-std`,
-            // `rustc` and `rustfmt`, hence the components the oracle sees.
-            // The subshell keeps `pipefail` out of the persistent shell and
-            // fails the op when `curl` fails. A literal: `sh!` quotes every
-            // `{var}` it interpolates.
-            // Source: https://rustup.rs/ (accessed 2026-10-30)
-            // Source: https://rust-lang.github.io/rustup/installation/index.html (accessed 2026-10-30)
-            // Source: https://rust-lang.github.io/rustup/installation/already-installed-rust.html (accessed 2026-10-30)
-            // Source: https://rust-lang.github.io/rustup/concepts/profiles.html (accessed 2026-10-30)
-            sh!(
-                s,
-                "(set -o pipefail && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y)",
-                unless = "command -v cargo"
-            );
-        } else if rustc.is_none() {
-            // Repair: remove both trees, then reinstall. Kept although no
-            // image reaches it (a fresh install is never broken) because
-            // workstations do; the oracle cannot test it, so a unit test on
-            // the command plan stands in. The home comes from the passwd
-            // entry, not `/home/<name>`: the YAML removed
-            // `/home/<name>/.rustup` and `.cargo`, which for root is a no-op
-            // (root's home is `/root`, `/home/root` does not exist, observed
-            // 2026-10-30 on all 13 images), so `rustup -y` then ran over the
-            // broken tree.
-            sh!(
-                s,
-                "home=$(getent passwd {u} | cut -d: -f6) && [ -n \"$home\" ] && rm -rf \"$home/.rustup\" \"$home/.cargo\""
-            );
-            sh!(
-                s,
-                "(set -o pipefail && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y)"
-            );
-        } else {
-            // Working install: the YAML's `!=` tests against the pins always
-            // held, so it ran `rustup self update` and `rustup update` on
-            // every re-run (see the module doc on the pins). `rustup update`
-            // updates stable and then checks for a self-update unless
-            // `--no-self-update` is given, so the separate
-            // `rustup self update` overlapped it and is not repeated. A fresh
-            // install gets no update in the same run. This path runs in a
-            // build only on ubuntu2604, in `latest_kernel_build`, and it was
-            // not probed or run in the oracle.
-            // Source: https://rust-lang.github.io/rustup/basics.html (accessed 2026-10-30)
-            sh!(s, "rustup update");
-        }
-
-        // The extras run in all three branches, so a repaired host gets them
-        // in the same run; the YAML skipped them while its broken flag was
-        // set. Built from source and unpinned: they take the newest release
-        // on the build day (observed on the arch image: cargo-deb v3.8.0,
-        // cargo-generate-rpm v0.21.1). The YAML does not say why `libssl-dev`,
-        // `openssl-devel`, `openssl`, `pkg-config` and `clang` are requested;
-        // they are build-time dependencies of something here, and the oracle
-        // compares the package list, so all stay. `cargo install cargo-deb`
-        // is the documented method and needs Rust 1.76 or newer, which the
-        // install above provides. The cargo-generate-rpm page returned
-        // HTTP 404 on 2026-10-30, so its method is unconfirmed by
-        // documentation.
+        // The two tools: a `pkg` with a `Cargo` source, wanted `Present`
+        // (any version; the YAML had no `--version`). One `cargo install`
+        // for the names the host's `cargo install --list` does not show,
+        // and none when both are listed, where the YAML's `which` guard
+        // reran on five images. It runs after the toolchain op because both
+        // write `*`, so `cargo` is on PATH by then (the source fails with
+        // "cargo not found" otherwise). Built from source and unpinned:
+        // they take the newest release on the build day (observed on the
+        // arch image: cargo-deb v3.8.0, cargo-generate-rpm v0.21.1; the
+        // YAML had no `--locked` either, and neither has the source). The
+        // YAML does not say why `libssl-dev`, `openssl-devel`, `openssl`,
+        // `pkg-config` and `clang` are requested; they are build-time
+        // dependencies of something here, and the oracle compares the
+        // package list, so all stay. `cargo install cargo-deb` is the
+        // documented method and needs Rust 1.76 or newer, which the
+        // toolchain above provides. Cargo itself skips a package already
+        // installed at the same version ("Ignored package ... is already
+        // installed", exit 0; observed 2026-10-31), which is what kept the
+        // `which`-less images correct under the YAML. The cargo-generate-rpm
+        // page returned HTTP 404 on 2026-10-30, so its method is unconfirmed
+        // by documentation. Unlike the YAML, which skipped the tools while
+        // its broken flag was set, a repaired host gets them in the same
+        // run.
         // Open: `cargo install --list` as root on each rust_build image; the
         // oracle's `~/.cargo/bin` capture holds both names and the version
         // side diff shows drift.
         // Source: https://github.com/kornelski/cargo-deb (accessed 2026-10-30)
-        sh!(
-            s,
-            "cargo install cargo-deb",
-            unless = "command -v cargo-deb"
-        );
-        sh!(
-            s,
-            "cargo install cargo-generate-rpm",
-            unless = "command -v cargo-generate-rpm"
-        );
-        // The musl target is added on every host regardless of musl-gcc,
-        // hence the component `rust-std-x86_64-unknown-linux-musl` and the
-        // target list gnu and musl.
-        sh!(
-            s,
-            "rustup target add x86_64-unknown-linux-musl",
-            unless = "rustup target list --installed | grep -qx x86_64-unknown-linux-musl"
-        );
+        // Source: https://doc.rust-lang.org/cargo/commands/cargo-install.html (accessed 2026-10-31)
+        s.cargo(["cargo-deb", "cargo-generate-rpm"]);
     }
     Ok(())
 }
@@ -305,17 +303,30 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
 // change with its own oracle diff, made only once the 13-image oracle is
 // green:
 // - Pin the toolchain, or state that `stable` is the intent, and delete the
-//   pin variables from `Vars` and `group_vars`. Pinning changes toolchain
-//   names (`1.94.0-...` instead of `stable-...`) and the component versions.
+//   pin variables from `Vars` and `group_vars`. `.pin` is not available on
+//   rustup: name a version toolchain instead (`s.rustup("1.94.0")`), which
+//   changes toolchain names (`1.94.0-...` instead of `stable-...`) and the
+//   component versions, and needs `RUSTUP_VERSION` on the installer if
+//   rustup itself is to be pinned.
 // - Replace the `curl | sh` script download by a checksummed `rustup-init`
-//   download (the `.sha256` file beside it on `static.rust-lang.org`); no
-//   names change.
+//   download (the `.sha256` file beside it on `static.rust-lang.org`) as the
+//   source's `.installer(..)`; no names change.
 //   Source: https://rust-lang.github.io/rustup/installation/other.html (accessed 2026-10-30)
-// - Pin `cargo-deb` and `cargo-generate-rpm` (`cargo install --locked
-//   --version`) or fetch release binaries (build time and versions change).
+// - Pin `cargo-deb` and `cargo-generate-rpm` through `.pin(v)` per name on
+//   the `Cargo` source (`--version`; the source adds no `--locked`, so a
+//   locked install needs a `.installer`-style command or an engine change),
+//   or fetch release binaries (build time and versions change). Today's
+//   latest are cargo-deb 3.8.0 and cargo-generate-rpm 0.21.1, so a pin
+//   changes nothing until the next release.
 // - Request `musl-gcc` on Rocky and Alma 9 if a crate needs it; there is no
 //   EPEL 9 build, so the answer is a different package source.
 // - Drop the `rls` and `rust-analyzer` stub names from `~/.cargo/bin` by
-//   choosing the `minimal` profile (the component list and the names change).
+//   choosing the `minimal` profile (`.profile("minimal")`; the component
+//   list changes: `rust-docs` goes, and `clippy` and `rustfmt` come back
+//   through `.components` if wanted).
+// - Pass `--no-modify-path` and write one `/etc/profile.d` line instead of
+//   editing each user's rc files (the oracle does not capture them, but
+//   `rust_kernel`, `rust_tools` and interactive users rely on `cargo` being
+//   on the login PATH, so it is a behaviour change for users).
 // - Install `which`, or drop it from `dev_common`'s assumptions; only needed
 //   if another role calls `which`.

@@ -47,45 +47,18 @@ fn rust_build_plans() {
     }
 }
 
-/// `rust_build` on ubuntu2404 with fixture answers for root's login
-/// environment: `cargo` on PATH and `rustc --version` as given.
-fn rust_build_with(rustc: Option<&str>) -> String {
-    use telepatch::facts::{os::Os, query::Fact};
-    use telepatch::testing::{FakeExecutor, FixtureHost, plan_with};
-    use telepatch::{RunAs, Value};
-    let pbs = playbooks();
-    let pb = pbs
-        .iter()
-        .find(|p| p.name == "container/rust")
-        .expect("playbook container/rust_build");
-    let root = RunAs::login("root");
-    let mut fake =
-        FakeExecutor::new().answer(root.clone(), Fact::bin_exists("cargo"), Value::Exists(true));
-    if let Some(v) = rustc {
-        fake = fake.answer(root, Fact::bin_version("rustc"), Value::Text(v.to_string()));
-    }
-    let host = FixtureHost::new(
-        "ubuntu2404",
-        Os::fixture("ubuntu2404").expect("fixture"),
-        std::rc::Rc::new(Vars::default()),
-    );
-    plan_with(pb, &host, fake)
-}
-
+/// The old repair and update branches read `bin_exists("cargo")` and
+/// `bin_version("rustc")` per user. The `Rustup` and `Cargo` sources probe
+/// on the host instead, so the plan has no fact reads and no `sh` op in the
+/// per-user block, whatever state the host is in.
 #[test]
-fn rust_build_working_install_updates() {
-    let text = rust_build_with(Some("rustc 1.99.1 (abc 2026-10-01)"));
-    insta::with_settings!({snapshot_path => "plans/snapshots"}, {
-        insta::assert_snapshot!("rust_build__ubuntu2404__working", text);
-    });
-}
-
-#[test]
-fn rust_build_broken_install_repairs() {
-    let text = rust_build_with(None);
-    insta::with_settings!({snapshot_path => "plans/snapshots"}, {
-        insta::assert_snapshot!("rust_build__ubuntu2404__broken", text);
-    });
+fn rust_build_per_user_block_reads_no_facts() {
+    let text = plan("container/rust", "ubuntu2404");
+    assert!(text.contains("blocking reads: 0"), "{text}");
+    assert!(text.contains("pkg[rustup] as login:root"), "{text}");
+    assert!(text.contains("pkg[cargo] as login:root"), "{text}");
+    let role = &text[text.find("role rust_build").expect("role rust_build")..];
+    assert!(!role.contains("  sh as "), "{role}");
 }
 
 #[test]
