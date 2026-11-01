@@ -34,9 +34,11 @@
 //! understanding doc, since removed, asked to build before the port). The
 //! plans differ only inside that block, and the plans no longer read facts,
 //! so `blocking reads` is 0 and the host has no barrier between `dev_common`
-//! and these ops. The oracle result above is to be re-run on the new form
-//! (`rust_build` on ubuntu2404 and rockylinux10, `latest_kernel_build` on
-//! ubuntu2604).
+//! and these ops. On the new form (2026-11-01) the oracle again reported
+//! `rust_build` on ubuntu2404 and rockylinux10 and `latest_kernel_build` on
+//! ubuntu2604 identical (the full acceptance set, 7/7), and two runs of
+//! `container/rust` in one ubuntu2404 container left the second with
+//! `CHANGED 0` (`just test-idempotent ubuntu2404 rust`).
 //!
 //! Fixes made in the port, none visible to the oracle:
 //! - Users are `admin_users` plus root, deduplicated (see `users`).
