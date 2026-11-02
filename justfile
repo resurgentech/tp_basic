@@ -51,3 +51,13 @@ test-idempotent distro container:
 # Not a gate: every container of every distro's set; writes build/matrix.md.
 test-matrix jobs="3":
     ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-matrix.sh {{jobs}}
+
+# Goal-3 check, a proof of the SSH transport: a fresh VM made with
+# ~/repos/jaredeh/vmtool, container/<container> applied twice over SSH (run 1
+# exits 0, run 2 STATUS ok and CHANGED 0), then the VM deleted and checked gone
+# (unless --keep is passed to the script). The comparison with the docker
+# oracle's record is printed and NON-GATING: containers and VMs differ in
+# structure (systemd, kernel, udev, cloud-init, a slimmer base); Ansible
+# against telepatch on a VM is a separate check (test-vm-oracle, to come). Only `just test-vm ubuntu2404 dev_base`.
+test-vm distro container:
+    bash scripts/test-vm.sh {{distro}} {{container}}
