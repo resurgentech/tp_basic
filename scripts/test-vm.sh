@@ -26,7 +26,8 @@
 # architecture, what the oracle added and the VM lacks, what the run added and
 # the oracle lacks, the apt-sources diff and the count of version
 # differences. Equivalence of Ansible and telepatch on a VM is
-# a separate check (scripts/test-vm-oracle.sh, to come).
+# a separate check, scripts/test-vm-oracle.sh (`just test-vm-oracle`). The VM
+# lifecycle (create, onboard, wait, apt-get update, delete) is scripts/lib/vm.sh.
 #
 # Outputs (gitignored): build/test-vm/<container>-<distro>/
 #   create.log, onboard.log, wait.log, prep.log, vm-pre.state, vm-post.state, vm-post.versions,
@@ -34,9 +35,13 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-VMTOOL_DIR=$HOME/repos/jaredeh/vmtool
+VM_TAG=test-vm
 
 die() { echo "test-vm: $*" >&2; exit 2; }
+
+# the VM lifecycle: vmtool, vm_ip, vm_listed, vm_up, sshv, vm_state, vm_cleanup
+# shellcheck source=lib/vm.sh
+source "$ROOT/scripts/lib/vm.sh"
 
 # ---- the comparison (also used by --self-test) -----------------------------
 
@@ -184,11 +189,6 @@ oracle=$ROOT/build/test-container/$container-$distro
 [[ -f $ROOT/vars/container.toml ]] || die "vars/container.toml not found"
 [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"
 
-vmtool() { (cd "$VMTOOL_DIR" && ./vmtool "$@"); }
-# vm_ip <name> : the IP column of the list row whose NAME is exactly <name>.
-vm_ip() { vmtool list | awk -v n="$1" 'NR > 1 && $1 == n { print $NF }'; }
-vm_listed() { vmtool list | awk -v n="$1" 'NR > 1 && $1 == n { f = 1 } END { exit !f }'; }
-
 name=tp-$container-$(date -u +%Y%m%dt%H%M%Sz)
 vm_listed "$name" && die "a VM named $name already exists; not touching it"
 
@@ -198,86 +198,18 @@ rm -f "$out"/*
 
 cleanup() {
     local rc=$?
-    if [[ $keep -eq 1 ]]; then
-        echo "--keep: VM $name left running (delete with: cd $VMTOOL_DIR && ./vmtool delete $name)"
-    else
-        if vm_listed "$name"; then
-            echo "=== deleting VM $name ==="
-            vmtool delete "$name" || echo "test-vm: WARNING: vmtool delete $name failed" >&2
-        fi
-        if vm_listed "$name"; then
-            echo "test-vm: WARNING: VM $name is still listed by 'vmtool list' after the delete" >&2
-            exit 1
-        fi
-        echo "VM $name deleted (not in 'vmtool list')"
-    fi
+    vm_cleanup "$keep" || exit 1
     exit $rc
 }
 trap cleanup EXIT
 
-# ---- create -----------------------------------------------------------------
-echo "=== creating VM $name (ubuntu2404.qcow2, 4 GiB) ==="
-crc=0
-vmtool create "$name" ubuntu2404.qcow2 --memory 4 >"$out/create.log" 2>&1 || crc=$?
-if grep -q 'timed out waiting for IP' "$out/create.log"; then
-    tail -5 "$out/create.log"
-    echo "test-vm: the VM got no IP. This is a host environment problem, not a telepatch failure:" >&2
-    echo "test-vm: see $VMTOOL_DIR/README.md, \"Troubleshooting\" > \"A new VM never gets an IP\"." >&2
-    exit 2
-fi
-[[ $crc -eq 0 ]] || { tail -20 "$out/create.log"; die "vmtool create exited $crc (log: $out/create.log)"; }
-
-ip=$(vm_ip "$name")
-[[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "no IP for $name in 'vmtool list' (got '${ip:-}')"
-
-# Onboarding: vmtool's setup_bot.yml makes user bot (key auth, passwordless
-# sudo) and writes the key to its .machines/<name>/id_ed25519. It is run once
-# the guest's sshd answers: `create --playbook` runs it right after the IP and
-# races sshd's start (observed: "Connection refused").
-echo "=== waiting for sshd on $ip, then onboarding bot (setup_bot.yml) ==="
-deadline=$((SECONDS + 300))
-until timeout 5 bash -c "exec 3<>/dev/tcp/$ip/22" 2>/dev/null; do
-    [[ $SECONDS -lt $deadline ]] || die "sshd on $name ($ip) did not answer within 5 min"
-    sleep 3
-done
-vmtool playbook "$name" setup_bot.yml >"$out/onboard.log" 2>&1 \
-    || { grep -E 'fatal|ERROR|RECAP' "$out/onboard.log" | tail -5; die "vmtool playbook $name setup_bot.yml failed (log: $out/onboard.log)"; }
-key=$VMTOOL_DIR/.machines/$name/id_ed25519
-[[ -f $key ]] || die "no key at $key"
-dest=bot@$ip
-echo "VM $name at $ip"
-
-sshv() {
-    ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
-        -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$out/known_hosts" "$dest" "$@"
-}
-
-# ---- wait for cloud-init and the dpkg lock (bounded, 10 min) ----------------
-echo "=== waiting for cloud-init and a free dpkg lock ==="
-ready='cloud-init status --wait >/dev/null 2>&1; s=$?; [ $s -eq 0 ] || [ $s -eq 2 ] || exit 1
-if command -v fuser >/dev/null 2>&1; then
-  ! sudo -n fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1
-else
-  ! pgrep -x "apt|apt-get|dpkg|unattended-upgr" >/dev/null
-fi'
-deadline=$((SECONDS + 600))
-until sshv "$ready" >>"$out/wait.log" 2>&1; do
-    [[ $SECONDS -lt $deadline ]] || { tail -5 "$out/wait.log"; echo "FAIL: VM not ready after 10 min (log: $out/wait.log)"; exit 1; }
-    sleep 5
-done
-echo "ready after $((SECONDS - deadline + 600))s"
-
-# The cloud image ships package lists from its build date, whose archive
-# files are gone (observed: 404 on the first install). The oracle's
-# Dockerfile runs `apt-get update --fix-missing` before tp-basic; this is the
-# same environment step, done before the "before" capture so it is not
-# counted as something the run added.
-echo "=== apt-get update on the VM (as the oracle's Dockerfile does) ==="
-sshv 'sudo -n apt-get -q update --fix-missing' >"$out/prep.log" 2>&1 \
-    || { tail -10 "$out/prep.log"; die "apt-get update on the VM failed (log: $out/prep.log)"; }
+# ---- create, onboard bot, wait, apt-get update (scripts/lib/vm.sh) -------------
+vm_record "$name"
+vm_up "$name" "$out" ""
+key=$VM_KEY dest=$VM_DEST
 
 # ---- state before -------------------------------------------------------------
-sshv 'sudo -n sh -s' <"$ROOT/scripts/image-state.sh" >"$out/vm-pre.state"
+vm_state "$ROOT/scripts/image-state.sh" >"$out/vm-pre.state"
 echo "captured $out/vm-pre.state ($(wc -l <"$out/vm-pre.state") lines)"
 
 # ---- the two runs -------------------------------------------------------------
@@ -318,8 +250,8 @@ echo "second run: STATUS ok, CHANGED 0"
 # ---- state after and the non-gating comparison -----------------------------------
 # Neither the capture nor the report decides the exit code.
 crc=0
-{ sshv 'sudo -n sh -s' <"$ROOT/scripts/image-state.sh" >"$out/vm-post.state" \
-    && sshv 'sudo -n sh -s -- --versions' <"$ROOT/scripts/image-state.sh" >"$out/vm-post.versions"; } || crc=$?
+{ vm_state "$ROOT/scripts/image-state.sh" >"$out/vm-post.state" \
+    && vm_state "$ROOT/scripts/image-state.sh" --versions >"$out/vm-post.versions"; } || crc=$?
 if [[ $crc -ne 0 ]]; then
     echo "test-vm: WARNING: the post capture exited $crc; no comparison report" >&2
 else

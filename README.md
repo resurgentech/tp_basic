@@ -22,6 +22,19 @@ It also prints a non-gating comparison with the docker oracle's record (if
 `just test-container ubuntu2404 dev_base` has been run): containers and VMs
 differ in structure (systemd, kernel, udev, cloud-init, a slimmer base), so
 the packages a useful playbook adds cannot match 1:1; Ansible against
-telepatch on a VM is a separate check (`just test-vm-oracle`, to come). Outputs land in
+telepatch on a VM is `just test-vm-oracle`. Outputs land in
 `build/test-vm/dev_base-ubuntu2404/`; `scripts/test-vm.sh --self-test` checks
 the report alone.
+
+**Ansible against telepatch on a VM:** `just test-vm-oracle ubuntu2404 dev_base`
+(on demand; not part of `test-acceptance`) proves that the original Ansible
+playbook and `tp-basic` do the same thing on the base that is actually
+deployed to. It creates two fresh VMs from the same image, one at a time
+(about twice the time of `test-vm`, since each VM is created, onboarded and
+provisioned in turn): the first gets `ansible-playbook` (from this machine,
+as `bot` with become, on the `../ansible` commit `ported_ansible`, exported
+with `git archive`), the second gets `tp-basic run --host`. It deletes each VM
+after capturing its state, and fails on any difference between
+`ansible.state` and `telepatch.state` (versions are informational). Outputs
+land in `build/test-vm-oracle/dev_base-ubuntu2404/`; `scripts/test-vm-oracle.sh
+--self-test` checks the diff and the inventory writer alone.

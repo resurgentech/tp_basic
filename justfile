@@ -58,6 +58,14 @@ test-matrix jobs="3":
 # (unless --keep is passed to the script). The comparison with the docker
 # oracle's record is printed and NON-GATING: containers and VMs differ in
 # structure (systemd, kernel, udev, cloud-init, a slimmer base); Ansible
-# against telepatch on a VM is a separate check (test-vm-oracle, to come). Only `just test-vm ubuntu2404 dev_base`.
+# against telepatch on a VM is test-vm-oracle. Only `just test-vm ubuntu2404 dev_base`.
 test-vm distro container:
     bash scripts/test-vm.sh {{distro}} {{container}}
+
+# On demand, not part of test-acceptance: Ansible against telepatch on a VM.
+# Two fresh VMs from ubuntu2404.qcow2, one at a time (the original playbook
+# with ansible-playbook from this machine on one, tp-basic over SSH on the
+# other), their image-state captures diffed as the docker oracle does. Outputs
+# in build/test-vm-oracle/<container>-<distro>/. Only `ubuntu2404 dev_base`.
+test-vm-oracle distro container:
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-vm-oracle.sh {{distro}} {{container}}
