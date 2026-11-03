@@ -27,6 +27,11 @@ test-container distro container:
 test-container-selftest:
     bash scripts/test-container.sh --self-test
 
+# Self-tests of both oracles' comparison logic (no docker, VM or network).
+test-oracle-selftest:
+    bash scripts/test-container.sh --self-test
+    bash scripts/test-vm-oracle.sh --self-test
+
 # The ansible commit the ports were made from (conversion/SOURCE at port
 # time). The oracle compares against it, not ansible master.
 ported_ansible := "79d1ca16bfdeb678496986e1d7a0d407b06f4b45"

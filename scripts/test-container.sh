@@ -21,27 +21,10 @@ die() { echo "test-container: $*" >&2; exit 2; }
 
 # ---- the diff logic (also used by --self-test) ------------------------------
 
-# compare_captures <dir> : diffs <dir>/ansible.state vs telepatch.state (gating)
-# and the .versions files (informational). Returns 1 on a gating diff.
-compare_captures() {
-    local dir=$1 rc=0
-    if diff -u --label ansible.state --label telepatch.state "$dir/ansible.state" "$dir/telepatch.state" >"$dir/gating.diff"; then
-        echo "GATING: names/arch, pip, rustup, apt sources, /usr/local/bin: identical"
-    else
-        echo "GATING DIFF (ansible vs telepatch):"
-        cat "$dir/gating.diff"
-        rc=1
-    fi
-    if [[ -f $dir/ansible.versions && -f $dir/telepatch.versions ]]; then
-        if diff -u --label ansible.versions --label telepatch.versions "$dir/ansible.versions" "$dir/telepatch.versions" >"$dir/versions.diff"; then
-            echo "VERSIONS (non-gating): identical"
-        else
-            echo "VERSIONS (non-gating) side diff:"
-            cat "$dir/versions.diff"
-        fi
-    fi
-    return $rc
-}
+# compare_captures and intended_for live in scripts/lib/compare.sh, shared with
+# test-vm-oracle.sh.
+# shellcheck source=lib/compare.sh
+source "$ROOT/scripts/lib/compare.sh"
 
 self_test() {
     local t fails=0
@@ -68,6 +51,8 @@ self_test() {
     printf '%s' "${vers/8.5/8.6}" >"$t/telepatch.versions"
     expect "version only" 0
     grep -q '^+curl amd64 8.6' "$t/out" || { echo "FAIL version only: side diff not printed"; fails=1; }
+    selftest_intended compare_captures "$t" || fails=1
+    selftest_no_local_copy "${BASH_SOURCE[0]}" "$ROOT/scripts/test-vm-oracle.sh" || fails=1
     return $fails
 }
 
@@ -186,4 +171,4 @@ if [[ $side != both ]]; then
     echo "side=$side: built and captured one side only; no comparison"
     exit 0
 fi
-compare_captures "$out"
+compare_captures "$out" "$(intended_for "$container")"

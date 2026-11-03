@@ -57,7 +57,8 @@ chain twice from one pinned base image, once with the Ansible Dockerfiles in
 `../docker_images` at the ported commit and once with the telepatch twins,
 captures the installed state of each final image with
 `scripts/image-state.sh` (packages by name and architecture, pip
-distributions, rustup state, apt sources, `/usr/local/bin`), and diffs. Any
+distributions, rustup state, apt sources, `/usr/local/bin`, mise shims,
+tools, config and `/etc/profile.d` names), and diffs. Any
 difference fails.
 
 ```
@@ -100,7 +101,22 @@ versions:
 | telepatch | 3m46s | 1.3s | 0 |
 
 Each script has a `--self-test` that checks its comparison logic with no
-docker, VM or network.
+docker, VM or network; `just test-oracle-selftest` runs both.
+
+**Intended differences.** Both oracles compare through one function,
+`compare_captures` in `scripts/lib/compare.sh`. Where telepatch deliberately
+differs from Ansible, `tests/oracle/intended/<container>.txt` (used for every
+distro of that container; no file means an exact match) lists it, one per
+line: `+<section>|<line>` when telepatch adds the line, `-<section>|<line>`
+when it lacks it; `#` comments and blank lines are allowed. `<section>` is the
+text of a `== section ==` header in the capture. The oracle writes
+`ansible.intended.state`, Ansible's capture with each `+` line merged into its
+section (in `LC_ALL=C` sort order for the sections `image-state.sh` sorts,
+appended otherwise) and each `-` line removed, then runs the usual `diff -u`
+against `telepatch.state`. So a `+` line telepatch lacks still fails, as does
+a `-` line Ansible never had, an unknown section, or any other difference.
+The result line reads `identical (N intended differences applied)` and lists
+them.
 
 ## Neighbours
 

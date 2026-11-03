@@ -48,32 +48,11 @@ die() { echo "test-vm-oracle: $*" >&2; exit 2; }
 
 # shellcheck source=lib/vm.sh
 source "$ROOT/scripts/lib/vm.sh"
+# compare_captures and intended_for, shared with test-container.sh
+# shellcheck source=lib/compare.sh
+source "$ROOT/scripts/lib/compare.sh"
 
 # ---- the comparison (also used by --self-test) -------------------------------
-
-# compare_captures, copied byte for byte from scripts/test-container.sh (the
-# self-test checks the copy).
-# compare_captures <dir> : diffs <dir>/ansible.state vs telepatch.state (gating)
-# and the .versions files (informational). Returns 1 on a gating diff.
-compare_captures() {
-    local dir=$1 rc=0
-    if diff -u --label ansible.state --label telepatch.state "$dir/ansible.state" "$dir/telepatch.state" >"$dir/gating.diff"; then
-        echo "GATING: names/arch, pip, rustup, apt sources, /usr/local/bin: identical"
-    else
-        echo "GATING DIFF (ansible vs telepatch):"
-        cat "$dir/gating.diff"
-        rc=1
-    fi
-    if [[ -f $dir/ansible.versions && -f $dir/telepatch.versions ]]; then
-        if diff -u --label ansible.versions --label telepatch.versions "$dir/ansible.versions" "$dir/telepatch.versions" >"$dir/versions.diff"; then
-            echo "VERSIONS (non-gating): identical"
-        else
-            echo "VERSIONS (non-gating) side diff:"
-            cat "$dir/versions.diff"
-        fi
-    fi
-    return $rc
-}
 
 # compare_pre <dir> : NON-GATING. Whether ansible-pre.state and
 # telepatch-pre.state are identical; when not, their diff, which explains a
@@ -88,12 +67,12 @@ compare_pre() {
     fi
 }
 
-# oracle_compare <dir> : compare_pre, then compare_captures, printed and
-# written to <dir>/comparison.txt. Returns compare_captures' code.
+# oracle_compare <dir> [<intended file>] : compare_pre, then compare_captures,
+# printed and written to <dir>/comparison.txt. Returns compare_captures' code.
 oracle_compare() {
     local dir=$1 rc=0
     compare_pre "$dir" >"$dir/comparison.txt"
-    compare_captures "$dir" >>"$dir/comparison.txt" || rc=$?
+    compare_captures "$dir" "${2:-}" >>"$dir/comparison.txt" || rc=$?
     cat "$dir/comparison.txt"
     return $rc
 }
@@ -187,15 +166,9 @@ self_test() {
     grep -q '^+snapd amd64' "$t/out" || { echo "FAIL pre-states differ: pre diff not printed"; fails=1; }
     [[ -s $t/comparison.txt ]] || { echo "FAIL comparison.txt not written"; fails=1; }
 
-    # compare_captures is test-container.sh's, byte for byte
-    local cut='/^compare_captures() {$/,/^}$/p'
-    sed -n "$cut" "$ROOT/scripts/test-container.sh" >"$t/cc.container"
-    sed -n "$cut" "${BASH_SOURCE[0]}" >"$t/cc.vm"
-    if [[ -s $t/cc.container ]] && diff -u "$t/cc.container" "$t/cc.vm" >"$t/cc.diff"; then
-        echo "ok   compare_captures identical to test-container.sh's ($(wc -l <"$t/cc.vm") lines)"
-    else
-        echo "FAIL compare_captures differs from test-container.sh's:"; sed 's/^/     | /' "$t/cc.diff" 2>/dev/null || true; fails=1
-    fi
+    # the shared cases: intended differences, and no local compare_captures
+    selftest_intended oracle_compare "$t" || fails=1
+    selftest_no_local_copy "$ROOT/scripts/test-container.sh" "${BASH_SOURCE[0]}" || fails=1
 
     # the inventory writer: host vars present, the key's path only
     local key=$t/machines/tp-x/id_ed25519
@@ -365,7 +338,7 @@ side_down telepatch "$name_telepatch"
 echo "=== timings ==="
 timings_table "$out/timings.txt" "$a1" "$a2" "$ac" "$t1" "$t2" "$tc"
 echo "=== ansible.state against telepatch.state ==="
-if oracle_compare "$out"; then
+if oracle_compare "$out" "$(intended_for "$container")"; then
     echo "PASS: Ansible and telepatch agree on $container on a $distro VM"
     exit 0
 fi

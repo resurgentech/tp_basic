@@ -76,6 +76,20 @@ sources() {
     done
 }
 
+# mise, names only (versions go to "mise versions"): the shims, the installed
+# tools, the config lines and the profile.d entries. Header only when none exist.
+mise_state() {
+    {
+        ls -A /usr/local/share/mise/shims 2>/dev/null | sed 's/^/shim /'
+        for d in /usr/local/share/mise/installs/*; do
+            [ -d "$d" ] && echo "tool ${d##*/}"
+        done
+        [ -f /etc/mise/config.toml ] && grep -Ev '^[[:space:]]*(#|$)' /etc/mise/config.toml | sed 's/^/config /'
+        ls -A /etc/profile.d 2>/dev/null | sed 's/^/profile.d /'
+    } | sort
+    return 0
+}
+
 section "packages"; packages
 if [ $mode = names ]; then
     section "pip"; pip_dists
@@ -90,5 +104,10 @@ done
 if [ $mode = names ]; then
     section "apt sources"; sources
     section "/usr/local/bin"; ls -A /usr/local/bin 2>/dev/null | sort
+    section "mise"; mise_state
+fi
+if [ $mode = versions ]; then
+    section "mise versions"
+    [ -x /usr/local/bin/mise ] && /usr/local/bin/mise ls 2>&1
 fi
 exit 0

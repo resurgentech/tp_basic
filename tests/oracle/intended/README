@@ -1,0 +1,1 @@
+Intended differences for the oracle: one <container>.txt per container (every distro of it), lines "+section|line" (telepatch adds it) or "-section|line" (telepatch lacks it), "#" comments. See README.md.
