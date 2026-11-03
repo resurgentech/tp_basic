@@ -19,9 +19,10 @@ musl:
 
 # Docker equivalence oracle: build <container>'s chain with Ansible and with
 # tp-basic from one pinned base image, diff the resulting image state.
-# `just test-container ubuntu2404 dev_base`
+# `just test-container ubuntu2404 dev_base`. Pins the Ansible side to
+# `ported_ansible` like test-acceptance (ANSIBLE_SHA overrides).
 test-container distro container:
-    bash scripts/test-container.sh {{distro}} {{container}}
+    ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh {{distro}} {{container}}
 
 # Self-test of the oracle's diff/exit logic (no docker needed).
 test-container-selftest:

@@ -94,12 +94,12 @@ just test-vm-oracle ubuntu2404 dev_base
 ```
 
 A run on 2026-11-03, `dev_base` on Ubuntu 24.04, states identical down to
-versions:
+versions apart from the six intended mise lines:
 
 | | First run | Second run | Changed on the second run |
 |---|---|---|---|
-| Ansible | 4m05s | 7.0s | 1 (the original's unguarded uv installer) |
-| telepatch | 3m46s | 1.3s | 0 |
+| Ansible | 4m36s | 6.7s | 1 (the original's unguarded uv installer) |
+| telepatch | 3m57s | 1.3s | 0 |
 
 Each script has a `--self-test` that checks its comparison logic with no
 docker, VM or network; `just test-oracle-selftest` runs both.
