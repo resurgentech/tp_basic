@@ -15,11 +15,18 @@
 # Needs: build/tp-basic (`just musl`), vars/container.toml, vmtool,
 #        ansible-playbook on this machine.
 #
+# Each side runs twice on its VM: the first run does the work, the second
+# should change nothing. Both are timed (wall clock, from this machine) and
+# the second run's "changed" count is recorded, so the two tools can be
+# compared on a fresh host and on a converged one. The states are captured
+# after the second run.
+#
 # Exit: 2 on usage or environment problems (unknown commit, no VM IP, no
 # onboarding); 1 when ansible-playbook or tp-basic fails, on a gating diff of
 # ansible.state against telepatch.state, or when a VM of this run is still
-# listed after the cleanup. Versions are informational; whether the two
-# pre-states match is printed, not gated.
+# listed after the cleanup. Versions, timings and the second run's changed
+# count are informational; whether the two pre-states match is printed, not
+# gated.
 #
 # The VMs are tp-<container>-ansible-<UTC stamp> and
 # tp-<container>-telepatch-<UTC stamp>; each is deleted after its side, and a
@@ -27,10 +34,10 @@
 # is used in place from vmtool's .machines/<vm>/; the inventory names its path.
 #
 # Outputs (gitignored): build/test-vm-oracle/<container>-<distro>/
-#   ansible-src/ (with inventories/vm.yml), ansible-version.txt, ansible.log,
-#   telepatch.jsonl, telepatch.out, {ansible,telepatch}-{create,onboard,wait,prep}.log,
+#   ansible-src/ (with inventories/vm.yml), ansible-version.txt, ansible{,2}.log,
+#   telepatch{,2}.jsonl, telepatch{,2}.out, {ansible,telepatch}-{create,onboard,wait,prep}.log,
 #   {ansible,telepatch}-pre.state, {ansible,telepatch}.{state,versions},
-#   gating.diff, versions.diff, pre.diff, comparison.txt, known_hosts
+#   gating.diff, versions.diff, pre.diff, comparison.txt, timings.txt, known_hosts
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -89,6 +96,41 @@ oracle_compare() {
     compare_captures "$dir" >>"$dir/comparison.txt" || rc=$?
     cat "$dir/comparison.txt"
     return $rc
+}
+
+# ---- timings ------------------------------------------------------------------
+
+# now_s : seconds since the epoch, with the fraction (bash 5's EPOCHREALTIME).
+now_s() { echo "$EPOCHREALTIME"; }
+
+# fmt_secs <seconds> : "4m35.4s" or "2.1s".
+fmt_secs() {
+    awk -v s="$1" 'BEGIN { if (s >= 60) printf "%dm%04.1fs\n", int(s / 60), s - 60 * int(s / 60); else printf "%.1fs\n", s }'
+}
+
+# timings_table <file> <a1> <a2> <ac> <t1> <t2> <tc> : writes and prints the
+# table. a1/t1 are the first-run seconds, a2/t2 the second-run seconds, ac/tc
+# the second run's changed count on each side.
+timings_table() {
+    local file=$1 a1=$2 a2=$3 ac=$4 t1=$5 t2=$6 tc=$7
+    {
+        echo "TIMINGS (non-gating; wall clock from this machine, ssh included):"
+        printf '  %-10s %12s %12s   %s\n' side "first run" "second run" "changed on the second run"
+        printf '  %-10s %12s %12s   %s\n' ansible "$(fmt_secs "$a1")" "$(fmt_secs "$a2")" "$ac"
+        printf '  %-10s %12s %12s   %s\n' telepatch "$(fmt_secs "$t1")" "$(fmt_secs "$t2")" "$tc"
+    } | tee "$file"
+}
+
+# ansible_changed <log> : the changed= count from the PLAY RECAP, or "?".
+ansible_changed() {
+    sed -n '/^PLAY RECAP/,$p' "$1" | sed -n 's/.*changed=\([0-9]*\).*/\1/p' | head -1 | grep . || echo "?"
+}
+
+# telepatch_changed <out> : the CHANGED column of the host row, or "?".
+telepatch_changed() {
+    awk '/^HOST +STATUS/ { for (i = 1; i <= NF; i++) if ($i == "CHANGED") c = i; next }
+         c && NF >= c && !done { print $c; done = 1 }
+         END { if (!done) print "?" }' "$1"
 }
 
 # write_inventory <file> <host> <ip> <key path> <known_hosts> : the Ansible
@@ -170,6 +212,24 @@ self_test() {
     if grep -qE 'PRIVATE KEY|c2VjcmV0LWZpeHR1cmU=' "$inv"; then echo "FAIL inventory holds key material"; ok=0; fi
     if [[ $ok -eq 1 ]]; then echo "ok   inventory writer (host vars, key path only)"; else fails=1; fi
     sed 's/^/     | /' "$inv"
+
+    # timings: the formatter, the changed-count readers, the table
+    local got
+    got=$(fmt_secs 275.37); [[ $got == 4m35.4s ]] || { echo "FAIL fmt_secs 275.37 -> '$got'"; fails=1; }
+    got=$(fmt_secs 2.06); [[ $got == 2.1s ]] || { echo "FAIL fmt_secs 2.06 -> '$got'"; fails=1; }
+    printf '%s\n' 'PLAY RECAP ****' 'vm : ok=6    changed=4    unreachable=0    failed=0' >"$t/a.log"
+    got=$(ansible_changed "$t/a.log"); [[ $got == 4 ]] || { echo "FAIL ansible_changed -> '$got'"; fails=1; }
+    got=$(ansible_changed /dev/null); [[ $got == '?' ]] || { echo "FAIL ansible_changed on empty -> '$got'"; fails=1; }
+    printf '%s\n' 'HOST                 STATUS    OK CHANGED FAILED NOT RUN  DETAIL' 'bot@192.0.2.7  ok         2       0      0       0' >"$t/t.out"
+    got=$(telepatch_changed "$t/t.out"); [[ $got == 0 ]] || { echo "FAIL telepatch_changed -> '$got'"; fails=1; }
+    got=$(telepatch_changed /dev/null); [[ $got == '?' ]] || { echo "FAIL telepatch_changed on empty -> '$got'"; fails=1; }
+    timings_table "$t/timings.txt" 275.37 130.2 1 250.0 2.06 0 >"$t/out"
+    if grep -qE '^  ansible +4m35.4s +2m10.2s +1$' "$t/timings.txt" && grep -qE '^  telepatch +4m10.0s +2.1s +0$' "$t/timings.txt"; then
+        echo "ok   timings (fmt_secs, changed readers, table)"
+    else
+        echo "FAIL timings table:"; fails=1
+    fi
+    sed 's/^/     | /' "$t/timings.txt"
     return $fails
 }
 
@@ -204,8 +264,8 @@ done
 
 out=$ROOT/build/test-vm-oracle/$container-$distro
 mkdir -p "$out"
+rm -rf "$out/ansible-src"   # a previous run's export; the rest are files
 rm -f "$out"/*
-rm -rf "$out/ansible-src"
 mkdir "$out/ansible-src"
 git -C "$ANSIBLE_REPO" archive "$sha" | tar -x -C "$out/ansible-src"
 [[ -f $out/ansible-src/$playbook && -f $out/ansible-src/inventories/group_vars/all ]] \
@@ -244,42 +304,66 @@ side_down() {
     fi
 }
 
+# run_ansible <log> : one ansible-playbook pass on the current VM, timed.
+# Sets RUN_SECS. Exits 1 on failure.
+run_ansible() {
+    local log=$1 rc=0 t0
+    echo "=== ansible-playbook $playbook on $VM_DEST (become; ansible-src/inventories/vm.yml) -> $(basename "$log") ==="
+    t0=$(now_s)
+    (cd "$out/ansible-src" && ANSIBLE_ROLES_PATH="$out/ansible-src/roles" ansible-playbook \
+        --inventory inventories/vm.yml "$playbook" \
+        --extra-vars '{"admin_users":["root"],"vnc_users":["root"],"full_users":["root"]}') \
+        >"$log" 2>&1 || rc=$?
+    RUN_SECS=$(awk -v a="$t0" -v b="$(now_s)" 'BEGIN { print b - a }')
+    sed -n '/^PLAY RECAP/,$p' "$log"
+    echo "took $(fmt_secs "$RUN_SECS")"
+    if [[ $rc -ne 0 ]]; then
+        grep -E '^fatal|FAILED' "$log" | tail -10 || true
+        echo "FAIL: ansible-playbook exited $rc (log: $log)"
+        exit 1
+    fi
+}
+
+# run_telepatch <jsonl> <out> : one tp-basic run on the current VM, timed.
+# Sets RUN_SECS. Exits 1 on failure.
+run_telepatch() {
+    local jsonl=$1 txt=$2 rc=0 t0
+    echo "=== tp-basic run container/$container --host $VM_DEST -> $(basename "$txt") ==="
+    t0=$(now_s)
+    "$ROOT/build/tp-basic" run "container/$container" --host "$VM_DEST" --ssh-key "$VM_KEY" \
+        --ssh-option StrictHostKeyChecking=accept-new \
+        --ssh-option UserKnownHostsFile="$VM_KNOWN_HOSTS" \
+        --vars "$ROOT/vars/container.toml" --log "$jsonl" \
+        >"$txt" 2>&1 || rc=$?
+    RUN_SECS=$(awk -v a="$t0" -v b="$(now_s)" 'BEGIN { print b - a }')
+    sed -n '/^HOST  *STATUS/,$p' "$txt"
+    echo "took $(fmt_secs "$RUN_SECS")"
+    if [[ $rc -ne 0 ]]; then
+        tail -40 "$txt"
+        echo "FAIL: tp-basic run exited $rc (log: $txt)"
+        exit 1
+    fi
+}
+
 # ---- ansible VM ---------------------------------------------------------------
 side_up ansible "$name_ansible"
 inv=$out/ansible-src/inventories/vm.yml
 write_inventory "$inv" "$name_ansible" "$VM_IP" "$VM_KEY" "$VM_KNOWN_HOSTS"
-echo "=== ansible-playbook $playbook on $VM_DEST (become; ansible-src/inventories/vm.yml) ==="
-arc=0
-(cd "$out/ansible-src" && ANSIBLE_ROLES_PATH="$out/ansible-src/roles" ansible-playbook \
-    --inventory inventories/vm.yml "$playbook" \
-    --extra-vars '{"admin_users":["root"],"vnc_users":["root"],"full_users":["root"]}') \
-    >"$out/ansible.log" 2>&1 || arc=$?
-sed -n '/^PLAY RECAP/,$p' "$out/ansible.log"
-if [[ $arc -ne 0 ]]; then
-    grep -E '^fatal|FAILED' "$out/ansible.log" | tail -10 || true
-    echo "FAIL: ansible-playbook exited $arc (log: $out/ansible.log)"
-    exit 1
-fi
+run_ansible "$out/ansible.log"; a1=$RUN_SECS
+run_ansible "$out/ansible2.log"; a2=$RUN_SECS
+ac=$(ansible_changed "$out/ansible2.log")
 side_down ansible "$name_ansible"
 
 # ---- telepatch VM -------------------------------------------------------------
 side_up telepatch "$name_telepatch"
-echo "=== tp-basic run container/$container --host $VM_DEST ==="
-trc=0
-"$ROOT/build/tp-basic" run "container/$container" --host "$VM_DEST" --ssh-key "$VM_KEY" \
-    --ssh-option StrictHostKeyChecking=accept-new \
-    --ssh-option UserKnownHostsFile="$VM_KNOWN_HOSTS" \
-    --vars "$ROOT/vars/container.toml" --log "$out/telepatch.jsonl" \
-    >"$out/telepatch.out" 2>&1 || trc=$?
-sed -n '/^HOST  *STATUS/,$p' "$out/telepatch.out"
-if [[ $trc -ne 0 ]]; then
-    tail -40 "$out/telepatch.out"
-    echo "FAIL: tp-basic run exited $trc (log: $out/telepatch.out)"
-    exit 1
-fi
+run_telepatch "$out/telepatch.jsonl" "$out/telepatch.out"; t1=$RUN_SECS
+run_telepatch "$out/telepatch2.jsonl" "$out/telepatch2.out"; t2=$RUN_SECS
+tc=$(telepatch_changed "$out/telepatch2.out")
 side_down telepatch "$name_telepatch"
 
-# ---- the diff -------------------------------------------------------------------
+# ---- timings and the diff -------------------------------------------------------
+echo "=== timings ==="
+timings_table "$out/timings.txt" "$a1" "$a2" "$ac" "$t1" "$t2" "$tc"
 echo "=== ansible.state against telepatch.state ==="
 if oracle_compare "$out"; then
     echo "PASS: Ansible and telepatch agree on $container on a $distro VM"

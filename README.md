@@ -33,8 +33,12 @@ deployed to. It creates two fresh VMs from the same image, one at a time
 (about twice the time of `test-vm`, since each VM is created, onboarded and
 provisioned in turn): the first gets `ansible-playbook` (from this machine,
 as `bot` with become, on the `../ansible` commit `ported_ansible`, exported
-with `git archive`), the second gets `tp-basic run --host`. It deletes each VM
-after capturing its state, and fails on any difference between
-`ansible.state` and `telepatch.state` (versions are informational). Outputs
-land in `build/test-vm-oracle/dev_base-ubuntu2404/`; `scripts/test-vm-oracle.sh
---self-test` checks the diff and the inventory writer alone.
+with `git archive`), the second gets `tp-basic run --host`. Each side runs
+twice, the second pass on the converged host, and both passes are timed
+from this machine; `timings.txt` tabulates first-run and second-run wall
+clock and what the second pass still reported as changed (informational).
+It deletes each VM after capturing its state, and fails on any difference
+between `ansible.state` and `telepatch.state` (versions are informational).
+Outputs land in `build/test-vm-oracle/dev_base-ubuntu2404/`;
+`scripts/test-vm-oracle.sh --self-test` checks the diff, the inventory
+writer and the timing table alone.
