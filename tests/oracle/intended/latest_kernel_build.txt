@@ -1,0 +1,8 @@
+# Goal 5a (2026-11-03): dev_common installs mise system-wide and just through
+# it; the Ansible original at 79d1ca1 has neither. See src/roles/dev_common.rs.
++/usr/local/bin|mise
++mise|shim just
++mise|tool just
++mise|config [tools]
++mise|config just = "latest"
++mise|profile.d mise.sh

@@ -71,7 +71,8 @@ just test-matrix                            # every container on every distro; w
 **SSH transport on a VM** (`scripts/test-vm.sh`). Creates a fresh Ubuntu
 24.04 VM with [vmtool](https://github.com/jaredeh/vmtool), applies `container/dev_base`
 to it over SSH twice, and deletes the VM. Passes when the first run exits 0
-and the second reports `STATUS ok`, `CHANGED 0`. The package comparison with
+and the second reports `STATUS ok`, `CHANGED 0`, and `bot`'s login shell
+runs `just --version` through the mise shims. The package comparison with
 the docker oracle's record is printed but not gated: containers and VMs
 differ in structure (systemd, kernel, udev, cloud-init), so apt resolves
 alternatives differently and the sets cannot match one to one.
@@ -117,6 +118,14 @@ against `telepatch.state`. So a `+` line telepatch lacks still fails, as does
 a `-` line Ansible never had, an unknown section, or any other difference.
 The result line reads `identical (N intended differences applied)` and lists
 them.
+
+The first intended difference (goal 5a, 2026-11-03): `dev_common` installs
+mise system-wide (`/usr/local/bin/mise`), puts its shims on every login
+shell's PATH (`/etc/profile.d/mise.sh`) and installs `just` through mise's
+system layer (`/etc/mise/config.toml`, `/usr/local/share/mise`). The Ansible
+original has none of it, so the four containers' files list the six lines it
+adds. Any user's login shell then runs `just` from
+`/usr/local/share/mise/shims/just`; `just test-vm` checks that as `bot`.
 
 ## Neighbours
 

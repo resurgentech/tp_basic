@@ -22,6 +22,13 @@
 //! listed at the end of this file under "After equivalence" and are not
 //! made yet.
 //!
+//! Intended divergence (2026-11-03, goal 5a): after uv the role installs
+//! mise system-wide (`/usr/local/bin/mise`, a `Script` source), puts its
+//! shims on login shells' PATH (`/etc/profile.d/mise.sh`) and installs
+//! `just` through mise's system layer (the `Mise` source). The Ansible
+//! original has none of it; the oracle applies the lines listed in
+//! `tests/oracle/intended/<container>.txt` to the Ansible side and diffs.
+//!
 //! Hacks (a `sh!` or a workaround standing in for a primitive; the marker
 //! is what a search for `HACK(` finds when the primitive lands):
 //! - `HACK(pkg: dnf5 group id)`: the per-manager group spec in the RedHat
@@ -320,6 +327,71 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
             )
             .update("uv self update"),
     );
+
+    // Intended divergence from the Ansible original (the role at 79d1ca1 has
+    // no mise and no just), the first in a ported role: the next three ops
+    // are listed line by line in `tests/oracle/intended/<container>.txt`,
+    // which the oracle applies to the Ansible side before it diffs.
+    //
+    // The mise binary: intent is `mise` present in `/usr/local/bin` for every
+    // user, the system-wide installer for tools distros package badly or
+    // late. A `pkg` with a `Script` source, its five parts settled by probe
+    // on 2026-11-03: binary `/usr/local/bin/mise`; installed version from
+    // `mise version` (prints `2026.10.25 linux-x64 (2026-10-31)`); latest
+    // from the GitHub releases of `jdx/mise` (resolved on the host, only
+    // for `.latest()`; mise.run holds new releases back 24h, so it can name
+    // one mise.run will not install yet); install mise.run with
+    // `MISE_INSTALL_PATH` so the binary lands outside root's home; update
+    // `mise self-update -y`. Wanted is `Present`, like uv; pinning it is an
+    // "After equivalence" item. Needs curl, as uv does (installed by the
+    // Debian branch, shipped by the other bases). The subshell keeps
+    // `pipefail` from leaking into the persistent shell.
+    // Source: https://mise.jdx.dev/installing-mise.html (accessed 2026-11-03)
+    h.script(
+        "mise",
+        ScriptSpec::new()
+            .bin("/usr/local/bin/mise")
+            .version("mise version")
+            .latest(Latest::github_release("jdx/mise"))
+            .install(
+                "(set -o pipefail && curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh)",
+            )
+            .update("mise self-update -y"),
+    );
+
+    // The system shims on every login shell's PATH: intent is that any user
+    // runs a tool mise installed system-wide by its name. A shim in
+    // `/usr/local/share/mise/shims` is a link to the mise binary that starts
+    // the version `/etc/mise/config.toml` asks for; it works for a non-root
+    // user with only that dir on PATH (probed 2026-11-03, T39's live test).
+    // Login shells only (`bash -l`, `su -`, `sudo -i` and SSH logins read
+    // `/etc/profile.d`); Docker `RUN` lines and non-login `bash -c` do not
+    // need it, and `/etc/environment` is not edited. The whole file is
+    // these two lines, mode 0644 like the other profile.d files.
+    // Source: https://mise.jdx.dev/dev-tools/shims.html (accessed 2026-11-03)
+    // Source: https://mise.jdx.dev/configuration.html (accessed 2026-11-03)
+    h.file("/etc/profile.d/mise.sh")
+        .content(
+            "# mise system shims for login shells (telepatch dev_common)\nexport PATH=\"/usr/local/share/mise/shims:$PATH\"\n",
+        )
+        .mode(0o644);
+
+    // `just` through mise's system layer: intent is the `just` command for
+    // every user, from the shim `/usr/local/share/mise/shims/just`, not
+    // `/usr/local/bin/just`. A `pkg` with the `Mise` source (root only): the
+    // name is mise's registry name `just`; installed means a system install
+    // under `/usr/local/share/mise/installs/just`; latest is `mise latest
+    // just` on the host, only for `.latest()`; the op adds `just = "latest"`
+    // to `/etc/mise/config.toml` and keeps any other line; install is `mise
+    // install --system just` then `mise reshim --system`. Wanted is
+    // `Present`: the first run installs the newest release and later runs
+    // leave it alone (mise does not re-resolve "latest" by itself), and the
+    // probe needs no network. Ansible master later added its own `just`
+    // role (a pinned release binary in `/usr/local/bin`); the oracle stays
+    // on 79d1ca1, which has none.
+    // Source: https://mise.jdx.dev/cli/install.html (accessed 2026-11-03)
+    // Source: https://mise.jdx.dev/cli/config/set.html (accessed 2026-11-03)
+    h.mise(["just"]);
     Ok(())
 }
 
@@ -333,6 +405,9 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
 // - Pin uv to a version in `vars/container.toml`: `.pin(v)` on the op, with
 //   the versioned installer URL `https://astral.sh/uv/$TP_WANT/install.sh`
 //   as `install` (the non-gating versions diff shows it).
+// - Pin the mise binary (`.pin(v)` with `MISE_VERSION` in the installer),
+//   and decide whether `just` should be pinned (Ansible master pins 1.59.0)
+//   or `.latest()`; both show only in the non-gating versions diff.
 // - Replace pip `pyaml` with `PyYAML`, matching the Debian and Arch branches
 //   (the pip section loses `pyaml`).
 // - Name the dnf group per family (ID `development-tools` on Fedora, the name

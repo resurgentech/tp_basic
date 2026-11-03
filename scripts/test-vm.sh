@@ -4,7 +4,9 @@
 # `tp-basic run --host`, and delete the VM. Usage errors and environment
 # problems (no VM IP, no onboarding) exit 2; a failed first run, a second run
 # that is not STATUS ok / CHANGED 0, or a VM still listed after the delete
-# exits 1.
+# exits 1. After run 2 it also gates on bot's login shell: `command -v just`
+# must print /usr/local/share/mise/shims/just and `just --version` must work
+# (dev_common's mise; exit 1 with the output otherwise).
 #
 #   scripts/test-vm.sh [--keep] <distro> <container>   (only: ubuntu2404 dev_base)
 #   scripts/test-vm.sh --self-test
@@ -246,6 +248,22 @@ if [[ $rc2 -ne 0 || $ch != 0 || $st != ok ]]; then
     exit 1
 fi
 echo "second run: STATUS ok, CHANGED 0"
+
+# ---- just through mise's system shims, as bot in a login shell (gating) ----------
+# dev_common puts /usr/local/share/mise/shims on login shells' PATH
+# (/etc/profile.d/mise.sh) and installs just there through mise.
+jrc=0; jpath=$(sshv 'bash -lc "command -v just"' 2>&1) || jrc=$?
+if [[ $jrc -ne 0 || $jpath != /usr/local/share/mise/shims/just ]]; then
+    echo "FAIL: bot's login shell finds just at '${jpath}' (exit $jrc), wanted /usr/local/share/mise/shims/just"
+    exit 1
+fi
+jrc=0; jver=$(sshv 'bash -lc "just --version"' 2>&1) || jrc=$?
+if [[ $jrc -ne 0 ]]; then
+    echo "FAIL: bot's 'bash -lc \"just --version\"' exited $jrc:"
+    printf '%s\n' "$jver"
+    exit 1
+fi
+echo "bot: command -v just -> $jpath; just --version -> $jver"
 
 # ---- state after and the non-gating comparison -----------------------------------
 # Neither the capture nor the report decides the exit code.
