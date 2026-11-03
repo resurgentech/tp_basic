@@ -1,44 +1,117 @@
 # tp_basic
 
 Playbooks and roles for [telepatch](https://github.com/resurgentech/telepatch):
-the basic development workstation, build container and server configurations
-that the [ansible](https://github.com/resurgentech/ansible) repo used to hold.
+the development workstation, build container and server configurations that
+the [ansible](https://github.com/resurgentech/ansible) repo used to hold.
 
 telepatch is the engine. This repo is what runs on it, the way a playbook
-repo relates to Ansible itself.
+repo relates to Ansible itself. It compiles to one static binary,
+`tp-basic`, that knows every playbook here.
 
-**Status:** being ported. The Ansible originals are pulled into
-`conversion/` as they are worked on, each with a short document of what the
-playbook and its roles are for, whether the methods they use are still the
-right ones, and the decisions made. A role leaves `conversion/` when its
-telepatch version exists; the understanding goes into the code as comments.
+## What is in it
 
-**Over SSH:** `just test-vm ubuntu2404 dev_base` creates a fresh Ubuntu 24.04
-VM with `~/repos/jaredeh/vmtool` (named `tp-dev_base-<UTC stamp>`), runs
-`tp-basic run container/dev_base --host bot@<ip> --ssh-key <vmtool's key>`
-against it twice, and deletes the VM. It proves the SSH transport: it passes
-when the first run exits 0 and the second reports `STATUS ok`, `CHANGED 0`.
-It also prints a non-gating comparison with the docker oracle's record (if
-`just test-container ubuntu2404 dev_base` has been run): containers and VMs
-differ in structure (systemd, kernel, udev, cloud-init, a slimmer base), so
-the packages a useful playbook adds cannot match 1:1; Ansible against
-telepatch on a VM is `just test-vm-oracle`. Outputs land in
-`build/test-vm/dev_base-ubuntu2404/`; `scripts/test-vm.sh --self-test` checks
-the report alone.
+```
+src/playbooks/container.rs   container/dev_base, container/kernel_build, container/rust, container/latest_kernel_build
+src/roles/                   dev_common, kernel_build, rust_build, rust_kernel, src_repos
+src/vars.rs                  the typed vars every playbook reads (loaded from TOML)
+vars/container.toml          vars for image builds: admin_users = ["root"], tool versions
+Dockerfiles/telepatch.*      the telepatch twins of docker_images' ansible.* Dockerfiles, one per distro family
+scripts/                     the equivalence oracles and the VM harness (below)
+conversion/                  provenance of the ported originals; a role being ported keeps its YAML and understanding doc here
+tests/plans.rs               plan snapshots: every playbook on every supported distro
+```
 
-**Ansible against telepatch on a VM:** `just test-vm-oracle ubuntu2404 dev_base`
-(on demand; not part of `test-acceptance`) proves that the original Ansible
-playbook and `tp-basic` do the same thing on the base that is actually
-deployed to. It creates two fresh VMs from the same image, one at a time
-(about twice the time of `test-vm`, since each VM is created, onboarded and
-provisioned in turn): the first gets `ansible-playbook` (from this machine,
-as `bot` with become, on the `../ansible` commit `ported_ansible`, exported
-with `git archive`), the second gets `tp-basic run --host`. Each side runs
-twice, the second pass on the converged host, and both passes are timed
-from this machine; `timings.txt` tabulates first-run and second-run wall
-clock and what the second pass still reported as changed (informational).
-It deletes each VM after capturing its state, and fails on any difference
-between `ansible.state` and `telepatch.state` (versions are informational).
-Outputs land in `build/test-vm-oracle/dev_base-ubuntu2404/`;
-`scripts/test-vm-oracle.sh --self-test` checks the diff, the inventory
-writer and the timing table alone.
+Each role carries its understanding as comments: what the playbook is for,
+which branches were kept, dropped or fixed, and why. The YAML it replaced is
+gone; `conversion/SOURCE` records the ansible commit the ports were made
+from, and `just check-conversion` verifies the directory against it.
+
+## Build and run
+
+Rust stable, `just`, and the `x86_64-unknown-linux-musl` target.
+
+```
+just musl                                   # build/tp-basic, static, then `list`
+build/tp-basic list
+build/tp-basic plan container/rust --distro rockylinux10
+build/tp-basic run container/dev_base --local --vars vars/container.toml
+build/tp-basic run container/dev_base --host bot@10.0.0.7 --ssh-key ~/.ssh/id_ed25519 --vars vars/container.toml --log run.jsonl
+```
+
+The same binary builds images (bind-mounted into a `docker build`, see
+`Dockerfiles/`), provisions a machine it is copied to, or provisions hosts
+over SSH from wherever it runs.
+
+`cargo test` renders every playbook against every supported distro and
+compares with the snapshots under `tests/plans/snapshots/`, so a change to a
+role shows up as a diff in the plan before anything is applied anywhere.
+
+## Proving the ports
+
+Every ported role is held to the same standard: the original Ansible playbook
+and `tp-basic` must leave a machine in the same state. Three harnesses check
+that, from cheap to thorough. Outputs land under `build/`, gitignored.
+
+**Docker oracle** (`scripts/test-container.sh`). Builds a container's image
+chain twice from one pinned base image, once with the Ansible Dockerfiles in
+`../docker_images` at the ported commit and once with the telepatch twins,
+captures the installed state of each final image with
+`scripts/image-state.sh` (packages by name and architecture, pip
+distributions, rustup state, apt sources, `/usr/local/bin`), and diffs. Any
+difference fails.
+
+```
+just test-container ubuntu2404 dev_base     # one cell
+just test-acceptance                        # the gate: 7 cells on ubuntu2404, rockylinux10 and ubuntu2604
+just test-idempotent ubuntu2404 rust        # apply twice in one container; the second run must change nothing
+just test-matrix                            # every container on every distro; writes build/matrix.md (not a gate)
+```
+
+**SSH transport on a VM** (`scripts/test-vm.sh`). Creates a fresh Ubuntu
+24.04 VM with [vmtool](https://github.com/jaredeh/vmtool), applies `container/dev_base`
+to it over SSH twice, and deletes the VM. Passes when the first run exits 0
+and the second reports `STATUS ok`, `CHANGED 0`. The package comparison with
+the docker oracle's record is printed but not gated: containers and VMs
+differ in structure (systemd, kernel, udev, cloud-init), so apt resolves
+alternatives differently and the sets cannot match one to one.
+
+```
+just test-vm ubuntu2404 dev_base
+```
+
+**Ansible against telepatch on a VM** (`scripts/test-vm-oracle.sh`). The
+docker oracle on the base you actually deploy to. Two fresh VMs from the same
+image, one at a time: `ansible-playbook` from this machine runs the original
+playbook on one, `tp-basic run --host` runs the port on the other, and the
+two states are diffed with the docker oracle's own comparison. Each side runs
+twice and both passes are timed, so the run also answers how the two tools
+compare on a fresh host and on a converged one.
+
+```
+just test-vm-oracle ubuntu2404 dev_base
+```
+
+A run on 2026-11-03, `dev_base` on Ubuntu 24.04, states identical down to
+versions:
+
+| | First run | Second run | Changed on the second run |
+|---|---|---|---|
+| Ansible | 4m05s | 7.0s | 1 (the original's unguarded uv installer) |
+| telepatch | 3m46s | 1.3s | 0 |
+
+Each script has a `--self-test` that checks its comparison logic with no
+docker, VM or network.
+
+## Neighbours
+
+The harnesses read, and never write, three sibling checkouts:
+
+- `../ansible`: the originals, at the commit in `conversion/SOURCE`.
+- `../docker_images`: the pinned base images and the Ansible-side
+  Dockerfiles, which the docker oracle reuses unmodified.
+- `~/repos/jaredeh/vmtool`: the libvirt VM tool the VM harnesses drive
+  through its CLI; VMs are named `tp-*` and deleted when the run ends.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
