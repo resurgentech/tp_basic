@@ -1,0 +1,40 @@
+---
+
+- name: Admin users need this group to avoid annoying GUI warnings
+  user:
+    name: "{{ item }}"
+    state: present
+    groups: libvirt
+    append: yes
+
+- name: Create .vagrant.d
+  file:
+    state: directory
+    mode: 0777
+    path:  "/home/{{ item }}/.vagrant.d"
+    owner: "{{ item }}"
+    group: "{{ item }}"
+
+- name: Create .vagrant.d/boxes
+  file:
+    state: directory
+    mode: 0777
+    path:  "/home/{{ item }}/.vagrant.d/boxes"
+    owner: "{{ item }}"
+    group: "{{ item }}"
+
+- name: Create .vagrant.d/data
+  file:
+    state: directory
+    mode: 0777
+    path:  "/home/{{ item }}/.vagrant.d/data"
+    owner: "{{ item }}"
+    group: "{{ item }}"
+
+- name: Create .vagrant.d/tmp
+  file:
+    state: directory
+    mode: 0777
+    path:  "/home/{{ item }}/.vagrant.d/tmp"
+    owner: "{{ item }}"
+    group: "{{ item }}"

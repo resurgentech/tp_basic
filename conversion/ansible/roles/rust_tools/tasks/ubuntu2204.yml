@@ -1,0 +1,15 @@
+---
+- name: Ubuntu2204 rust tools Dependancies
+  apt:
+    name:
+      - ffmpegthumbnailer
+      - 7zip
+      - jq
+      - poppler-utils
+      - poppler-data
+      - fzf
+      - imagemagick
+      - xclip
+      - wl-clipboard
+      - xsel
+    state: present

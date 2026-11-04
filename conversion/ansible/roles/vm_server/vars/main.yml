@@ -1,0 +1,40 @@
+vagrant_version: '2.2.19'
+
+redhat_packages_kvm:
+  - policycoreutils-python-utils
+  - qemu-kvm
+  - qemu-img
+  - libvirt
+  - libvirt-devel
+  - libvirt-client
+  - libselinux-python3
+  - python3-libvirt
+  - libvirt-nss
+  - libguestfs-tools
+  - virt-install
+  - virt-top
+  - virt-manager
+  - genisoimage
+  - ruby
+  - ruby-devel
+  - ansible
+  - openssl-devel
+
+debian_packages_kvm:
+  - policycoreutils-python-utils
+  - qemu-kvm
+  - qemu-utils
+  - libvirt-clients
+  - libvirt-daemon-system
+  - bridge-utils
+  - python3-libvirt
+  - libnss-libvirt
+  - libguestfs-tools
+  - virtinst
+  - virt-top
+  - virt-manager
+  - genisoimage
+  - ansible
+
+selinux_booleans_kvm:
+  - {name: staff_use_svirt, state: yes, persistent: yes}

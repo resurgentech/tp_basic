@@ -1,0 +1,29 @@
+---
+
+# We need the users prefered shell to tell if godoc
+- name: Get default shell for '{{ item }}'
+  command: getent passwd {{ item }}
+  register: passwd_info
+  changed_when: false
+
+- name: Parse default shell for '{{ item }}'
+  set_fact:
+    user_shell: "{{ passwd_info.stdout.split(':')[-1] | trim }}"
+
+- name: check for godoc
+  shell: |
+    {{ user_shell }} -lc 'which godoc'
+  #shell: bash -c "source /etc/profile.d/golang.sh; which godoc"
+  register: godoc_install
+  changed_when: false
+  ignore_errors: yes
+  become: yes
+  become_user: "{{ item }}"
+
+- name: install godoc
+  #shell: bash -c "source /etc/profile.d/golang.sh; go install golang.org/x/tools/cmd/godoc@latest"
+  shell: |
+    {{ user_shell }} -lc 'go install golang.org/x/tools/cmd/godoc@latest'
+  when: godoc_install.rc != 0
+  become: yes
+  become_user: "{{ item }}"

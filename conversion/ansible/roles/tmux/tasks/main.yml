@@ -1,0 +1,6 @@
+- name: Install tmux
+  become: yes
+  apt:
+    pkg:
+      - tmux
+      - tmuxp

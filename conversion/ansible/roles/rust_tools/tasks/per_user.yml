@@ -1,0 +1,30 @@
+---
+
+- name: Check if cargo is installed '{{ item }}'
+  shell: source ~/.cargo/env && which cargo
+  args:
+    executable: /bin/bash
+  register: cargo_check
+  become: yes
+  become_user: "{{ item }}"
+  changed_when: false
+  ignore_errors: yes
+
+- name: Fail if cargo is not installed
+  fail:
+    msg: "Cargo is not installed or not in PATH"
+  when: cargo_check.rc != 0
+
+- include_tasks: per_app.yml
+  loop:
+    - zoxide
+    - riffdiff
+    - fd-find
+    - eza
+    - ripgrep
+    - yazi-fm
+    - yazi-cli
+  loop_control:
+    loop_var: app_name
+  vars:
+    current_user: "{{ item }}"

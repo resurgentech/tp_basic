@@ -1,0 +1,20 @@
+---
+
+- name: Set includedir in sudoers
+  lineinfile:
+    dest: /etc/sudoers
+    line: "#includedir /etc/sudoers.d"
+    regexp: '^#includedir'
+    state: present
+    validate: "/usr/sbin/visudo -cf %s"
+
+- name: Set secure_path in sudoers
+  lineinfile:
+    dest: /etc/sudoers
+    line: "Defaults    secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin"
+    regexp: '^Defaults\s*secure_path'
+    state: present
+    validate: "/usr/sbin/visudo -cf %s"
+
+- include_tasks: per_user.yml
+  loop: "{{ admin_users }}"

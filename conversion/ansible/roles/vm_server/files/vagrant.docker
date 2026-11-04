@@ -1,0 +1,24 @@
+#!/bin/bash
+BDIR=$(realpath "${PWD}/..")
+BNAME=$(basename "${PWD}")
+
+ARGS=""
+for var in "$@"; do
+  if [[ "$var" =~ \ |\' ]]; then
+    ARGS="${ARGS} \"${var}\""
+  else
+    ARGS="${ARGS} ${var}"
+  fi
+done
+
+CMD="docker run -i --rm \
+  -e LIBVIRT_DEFAULT_URI \
+  -v /var/run/libvirt/:/var/run/libvirt/ \
+  -v ~/.vagrant.d:/.vagrant.d \
+  -v ${BDIR}:${BDIR} \
+  --workdir ${BDIR}/${BNAME} \
+  --network host \
+  docker.io/vagrantlibvirt/vagrant-libvirt:latest \
+  vagrant $ARGS"
+
+eval $CMD
