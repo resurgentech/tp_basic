@@ -3,12 +3,22 @@
 # (scripts/test-container.sh). POSIX sh, runs inside a container of the image.
 #   image-state.sh             gating sections: names (+arch), no versions
 #   image-state.sh --versions  the same facts with versions (informational)
+#   image-state.sh --users a,b also the account sections for those users
+#                              (names mode only; never a hash: `passwd -S`
+#                              gives the status letter alone)
 # Env: ADMIN_USERS  space-separated users checked besides root (default none)
 # Every section is sorted with LC_ALL=C so two runs diff cleanly.
 set -u
 export LC_ALL=C
 mode=names
-[ "${1:-}" = "--versions" ] && mode=versions
+users=
+while [ $# -gt 0 ]; do
+    case $1 in
+        --versions) mode=versions ;;
+        --users) users=$(printf '%s' "${2:-}" | tr ',' ' '); shift ;;
+    esac
+    shift
+done
 
 section() { printf '== %s ==\n' "$1"; }
 
@@ -90,6 +100,43 @@ mise_state() {
     return 0
 }
 
+# The admin-user sections (--users), names mode only. Per user: the passwd
+# entry minus the secret fields (name, home, shell), `id -nG` sorted, the
+# `passwd -S` status letter (never the hash), the drop-in's mode, owner and
+# lines, and ~/.ssh's mode and owner. /etc/sudoers: the include and
+# secure_path lines.
+user_sections() {
+    section "users"
+    for u in $users; do
+        e=$(getent passwd "$u") || { echo "$u (no account)"; continue; }
+        echo "$e" | awk -F: '{ print $1, $6, $7 }'
+    done | sort
+    section "user groups"
+    for u in $users; do
+        getent passwd "$u" >/dev/null || continue
+        echo "$u: $(id -nG "$u" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+    done | sort
+    section "password status"
+    for u in $users; do
+        getent passwd "$u" >/dev/null || continue
+        passwd -S "$u" 2>/dev/null | awk '{ print $1, $2 }'
+    done | sort
+    section "sudoers"
+    [ -f /etc/sudoers ] && grep -E 'includedir|secure_path' /etc/sudoers | sort
+    section "sudoers.d"
+    for u in $users; do
+        f=/etc/sudoers.d/$u
+        [ -f "$f" ] || { echo "$u (no drop-in)"; continue; }
+        echo "$u $(stat -c '%a %U:%G' "$f")"
+        sed "s/^/$u | /" "$f"
+    done | sort
+    section "ssh dirs"
+    for u in $users; do
+        h=$(getent passwd "$u" | cut -d: -f6)
+        if [ -n "$h" ] && [ -d "$h/.ssh" ]; then echo "$u $(stat -c '%a %U:%G' "$h/.ssh")"; else echo "$u (no ~/.ssh)"; fi
+    done | sort
+}
+
 section "packages"; packages
 if [ $mode = names ]; then
     section "pip"; pip_dists
@@ -105,6 +152,7 @@ if [ $mode = names ]; then
     section "apt sources"; sources
     section "/usr/local/bin"; ls -A /usr/local/bin 2>/dev/null | sort
     section "mise"; mise_state
+    [ -z "$users" ] || user_sections
 fi
 if [ $mode = versions ]; then
     section "mise versions"

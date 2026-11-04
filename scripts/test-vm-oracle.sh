@@ -7,7 +7,7 @@
 # are diffed the way the docker oracle (scripts/test-container.sh) diffs its
 # two images. Not part of test-acceptance or any default gate.
 #
-#   scripts/test-vm-oracle.sh [--keep] <distro> <container>   (only: ubuntu2404 dev_base)
+#   scripts/test-vm-oracle.sh [--keep] <distro> <container>   (ubuntu2404; dev_base or dev_desktop_kept)
 #   scripts/test-vm-oracle.sh --self-test
 #
 # Env: ANSIBLE_SHA  the ../ansible commit to run (default: conversion/SOURCE's).
@@ -130,6 +130,35 @@ write_inventory() {
     } >"$file"
 }
 
+# oracle_config <container> : the allowlist. Sets OC_PLAYBOOK (the Ansible
+# playbook, relative to the export), OC_TP (the tp-basic playbook), OC_VARS,
+# OC_EXTRA (ansible --extra-vars JSON) and OC_USERS (image-state.sh --users,
+# empty for none). Returns 1 for any other name.
+#
+# dev_desktop_kept: the roles of playbooks/dev_desktop.yml that were kept as
+# ports, admin_users and tmux (the others were rewritten and have no Ansible
+# side to diff, and the real playbook needs unpinned Galaxy roles). The
+# playbook is written into this run's export only; ../ansible is not touched.
+oracle_config() {
+    case $1 in
+        dev_base)
+            OC_PLAYBOOK=playbooks/container/dev_base.yml OC_TP=container/dev_base OC_VARS=vars/container.toml
+            OC_EXTRA='{"admin_users":["root"],"vnc_users":["root"],"full_users":["root"]}' OC_USERS= ;;
+        dev_desktop_kept)
+            OC_PLAYBOOK=playbooks/tp_dev_desktop_kept.yml OC_TP=dev_desktop_kept OC_VARS=vars/desktop.toml
+            OC_EXTRA='{"admin_users":["bot","tpdev"],"default_password":""}' OC_USERS=bot,tpdev ;;
+        *) return 1 ;;
+    esac
+}
+
+# write_kept_playbook <file> : the two-role playbook for dev_desktop_kept, with
+# the original's hosts and remote_user (the inventory's ansible_user and
+# become decide the connection, as for dev_base).
+write_kept_playbook() {
+    printf '%s\n' '---' '# Written by scripts/test-vm-oracle.sh: the kept roles of playbooks/dev_desktop.yml.' \
+        '- name: dev_desktop, kept roles' '  hosts: all' '  remote_user: root' '  roles:' '    - admin_users' '    - tmux' >"$1"
+}
+
 self_test() {
     local t fails=0
     t=$(mktemp -d)
@@ -203,6 +232,22 @@ self_test() {
         echo "FAIL timings table:"; fails=1
     fi
     sed 's/^/     | /' "$t/timings.txt"
+
+    # the playbook allowlist and the dev_desktop_kept playbook the script writes
+    got=$(oracle_config dev_base && echo "$OC_PLAYBOOK|$OC_TP|$OC_VARS|$OC_EXTRA|$OC_USERS")
+    if [[ $got == 'playbooks/container/dev_base.yml|container/dev_base|vars/container.toml|{"admin_users":["root"],"vnc_users":["root"],"full_users":["root"]}|' ]]; then
+        echo "ok   oracle_config dev_base"; else echo "FAIL oracle_config dev_base -> '$got'"; fails=1; fi
+    got=$(oracle_config dev_desktop_kept && echo "$OC_PLAYBOOK|$OC_TP|$OC_VARS|$OC_EXTRA|$OC_USERS")
+    if [[ $got == 'playbooks/tp_dev_desktop_kept.yml|dev_desktop_kept|vars/desktop.toml|{"admin_users":["bot","tpdev"],"default_password":""}|bot,tpdev' ]]; then
+        echo "ok   oracle_config dev_desktop_kept"; else echo "FAIL oracle_config dev_desktop_kept -> '$got'"; fails=1; fi
+    if (oracle_config dev_desktop) >/dev/null 2>&1; then echo "FAIL oracle_config dev_desktop accepted"; fails=1
+    else echo "ok   oracle_config dev_desktop refused"; fi
+    mkdir -p "$t/src/playbooks"
+    write_kept_playbook "$t/src/playbooks/tp_dev_desktop_kept.yml"
+    if diff <(printf '%s\n' '---' '# Written by scripts/test-vm-oracle.sh: the kept roles of playbooks/dev_desktop.yml.' \
+        '- name: dev_desktop, kept roles' '  hosts: all' '  remote_user: root' '  roles:' '    - admin_users' '    - tmux') \
+        "$t/src/playbooks/tp_dev_desktop_kept.yml" >/dev/null; then echo "ok   kept playbook written"
+    else echo "FAIL kept playbook:"; sed 's/^/     | /' "$t/src/playbooks/tp_dev_desktop_kept.yml"; fails=1; fi
     return $fails
 }
 
@@ -213,13 +258,16 @@ keep=0
 if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
 distro=${1:-}; container=${2:-}
 [[ -n $distro && -n $container ]] || die "usage: test-vm-oracle.sh [--keep] <distro> <container> | --self-test"
-[[ $distro == ubuntu2404 && $container == dev_base ]] || die "only 'ubuntu2404 dev_base' is supported, not '$distro $container'"
-# the playbook docker-bake.hcl's CONTAINERS gives dev_base
-playbook=playbooks/container/dev_base.yml
+[[ $distro == ubuntu2404 ]] || die "only the ubuntu2404 image is supported, not '$distro'"
+oracle_config "$container" || die "'$container' is not one of: dev_base, dev_desktop_kept"
+# dev_base: the playbook docker-bake.hcl's CONTAINERS gives dev_base
+playbook=$OC_PLAYBOOK
+state_args=()
+[[ -z $OC_USERS ]] || state_args=(--users "$OC_USERS")
 
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
-[[ -f $ROOT/vars/container.toml ]] || die "vars/container.toml not found"
+[[ -f $ROOT/$OC_VARS ]] || die "$OC_VARS not found"
 [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"
 command -v ansible-playbook >/dev/null || die "ansible-playbook not found on this machine"
 
@@ -241,6 +289,7 @@ rm -rf "$out/ansible-src"   # a previous run's export; the rest are files
 rm -f "$out"/*
 mkdir "$out/ansible-src"
 git -C "$ANSIBLE_REPO" archive "$sha" | tar -x -C "$out/ansible-src"
+[[ $container != dev_desktop_kept ]] || write_kept_playbook "$out/ansible-src/$playbook"
 [[ -f $out/ansible-src/$playbook && -f $out/ansible-src/inventories/group_vars/all ]] \
     || die "the export of $sha lacks $playbook or inventories/group_vars/all"
 ansible-playbook --version >"$out/ansible-version.txt" 2>&1
@@ -262,14 +311,14 @@ trap cleanup EXIT
 side_up() {
     vm_record "$2"
     vm_up "$2" "$out" "$1-"
-    vm_state "$ROOT/scripts/image-state.sh" >"$out/$1-pre.state"
+    vm_state "$ROOT/scripts/image-state.sh" "${state_args[@]}" >"$out/$1-pre.state"
     echo "captured $out/$1-pre.state ($(wc -l <"$out/$1-pre.state") lines)"
 }
 
 # side_down <side> <name> : <side>.state and <side>.versions, then delete the
 # VM (unless --keep) before the next one is created.
 side_down() {
-    vm_state "$ROOT/scripts/image-state.sh" >"$out/$1.state"
+    vm_state "$ROOT/scripts/image-state.sh" "${state_args[@]}" >"$out/$1.state"
     vm_state "$ROOT/scripts/image-state.sh" --versions >"$out/$1.versions"
     echo "captured $out/$1.state ($(wc -l <"$out/$1.state") lines)"
     if [[ $keep -eq 0 ]]; then
@@ -285,7 +334,7 @@ run_ansible() {
     t0=$(now_s)
     (cd "$out/ansible-src" && ANSIBLE_ROLES_PATH="$out/ansible-src/roles" ansible-playbook \
         --inventory inventories/vm.yml "$playbook" \
-        --extra-vars '{"admin_users":["root"],"vnc_users":["root"],"full_users":["root"]}') \
+        --extra-vars "$OC_EXTRA") \
         >"$log" 2>&1 || rc=$?
     RUN_SECS=$(awk -v a="$t0" -v b="$(now_s)" 'BEGIN { print b - a }')
     sed -n '/^PLAY RECAP/,$p' "$log"
@@ -301,12 +350,12 @@ run_ansible() {
 # Sets RUN_SECS. Exits 1 on failure.
 run_telepatch() {
     local jsonl=$1 txt=$2 rc=0 t0
-    echo "=== tp-basic run container/$container --host $VM_DEST -> $(basename "$txt") ==="
+    echo "=== tp-basic run $OC_TP --host $VM_DEST --vars $OC_VARS -> $(basename "$txt") ==="
     t0=$(now_s)
-    "$ROOT/build/tp-basic" run "container/$container" --host "$VM_DEST" --ssh-key "$VM_KEY" \
+    "$ROOT/build/tp-basic" run "$OC_TP" --host "$VM_DEST" --ssh-key "$VM_KEY" \
         --ssh-option StrictHostKeyChecking=accept-new \
         --ssh-option UserKnownHostsFile="$VM_KNOWN_HOSTS" \
-        --vars "$ROOT/vars/container.toml" --log "$jsonl" \
+        --vars "$ROOT/$OC_VARS" --log "$jsonl" \
         >"$txt" 2>&1 || rc=$?
     RUN_SECS=$(awk -v a="$t0" -v b="$(now_s)" 'BEGIN { print b - a }')
     sed -n '/^HOST  *STATUS/,$p' "$txt"

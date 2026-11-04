@@ -1,0 +1,18 @@
+# dev_desktop_kept (admin_users + tmux) on the Ubuntu 24.04 VM oracle, 2026-11-04.
+# Lines read from the first live Ansible capture (ansible 79d1ca1) against
+# admin_users bugs 1 and 2; the fixes are in src/roles/admin_users.rs.
+#
+# Bug 1: Ansible's lineinfile regexp `^#includedir` misses Ubuntu's stock
+# `@includedir /etc/sudoers.d`, so it appends a second, old-style include and
+# every drop-in is read twice. The port matches `^[#@]includedir` and leaves
+# the stock line alone, so telepatch lacks the appended line.
+-sudoers|#includedir /etc/sudoers.d
+# Bug 2: Ansible replaces the distro's secure_path, dropping /snap/bin and
+# putting /usr/local behind the system directories. The port keeps Ubuntu's
+# own line, which already starts with /usr/local, so telepatch lacks
+# Ansible's replacement and keeps the stock line (TAB after Defaults).
+-sudoers|Defaults    secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin
++sudoers|Defaults	secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+# No password-status difference: both sides leave the new tpdev locked
+# (`passwd -S` letter L). Bug 4 (wheel where no sudo group exists) is not
+# visible on Ubuntu.
