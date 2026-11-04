@@ -121,24 +121,30 @@ fn dev_desktop_kept_plans() {
     }
 }
 
-/// `node` runs after `dev_common` and asks mise for `node`. The optimizer
-/// merges it into the `just` op of `dev_common` (one mise transaction), so
-/// the plan shows no `role node` section but a `merged from` line naming
-/// both, with `node` after `just`.
+/// `node` runs after `docker`, which runs after `dev_common`. The mise op of
+/// `node` writes `*`, so it cannot hoist over docker's group and user ops
+/// into the `just` op of `dev_common`: each keeps its own mise transaction
+/// (`just` in `dev_common`, `node` in `role node`), in YAML order. (Before
+/// `docker` was ported the two merged.)
 #[test]
 fn dev_desktop_node_and_tmux_focus() {
     for d in DISTROS {
         let text = desktop_plan(d);
         let common = role_section(&text, "dev_common");
-        assert!(
-            common.contains("pkg:mise:root:just=Installed, pkg:mise:root:node=Installed"),
-            "{d}: {common}"
-        );
-        assert!(common.contains("tp_want=('just' 'node')"), "{d}: {common}");
-        assert!(common.contains("merged from dev_common #"), "{d}: {common}");
-        assert!(common.contains(", node #"), "{d}: {common}");
+        assert!(common.contains("pkg:mise:root:just=Installed"), "{d}: {common}");
+        assert!(!common.contains("pkg:mise:root:node"), "{d}: {common}");
+        assert!(common.contains("tp_want=('just')"), "{d}: {common}");
+        let node = role_section(&text, "node");
+        assert!(node.contains("pkg:mise:root:node=Installed"), "{d}: {node}");
+        assert!(node.contains("tp_want=('node')"), "{d}: {node}");
         let at = |r: &str| text.find(&format!("role {r}")).unwrap_or_else(|| panic!("no role {r}"));
-        assert!(at("dev_common") < at("rust_build") && at("rust_build") < at("tmux"), "{d}");
+        assert!(
+            at("dev_common") < at("docker")
+                && at("docker") < at("node")
+                && at("node") < at("rust_build")
+                && at("rust_build") < at("tmux"),
+            "{d}"
+        );
     }
 }
 
@@ -207,4 +213,75 @@ fn dev_desktop_admin_users_focus() {
         let text = role(d);
         assert!(text.contains("wheel"), "{d}: {text}");
     }
+}
+
+/// `docker` (T52): Docker's own repository per family, the five packages,
+/// the group, and every admin user in it.
+#[test]
+fn docker_on_docker_repository() {
+    // (distro, repo path, apt suite)
+    for (d, path, suite) in [
+        ("ubuntu2404", "ubuntu", Some("noble")),
+        ("ubuntu2604", "ubuntu", Some("resolute")),
+        ("debian12", "debian", Some("bookworm")),
+        ("debian13", "debian", Some("trixie")),
+        ("fedora43", "fedora", None),
+        ("fedora44", "fedora", None),
+        ("rockylinux9", "rhel", None),
+        ("rockylinux10", "rhel", None),
+        ("almalinux9", "rhel", None),
+        ("almalinux10", "rhel", None),
+    ] {
+        let text = desktop_plan(d);
+        let sec = role_section(&text, "docker");
+        assert!(sec.contains(&format!("download.docker.com/linux/{path}")), "{d}: {sec}");
+        if let Some(s) = suite {
+            assert!(sec.contains(&format!("'{s}'")), "{d}: {sec}");
+        }
+        for p in ["docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"] {
+            assert!(sec.contains(p), "{d} {p}: {sec}");
+        }
+        assert!(sec.contains("group"), "{d}: {sec}");
+        for u in ["bot", "tpdev"] {
+            assert!(sec.contains(&format!("user {u}")) || sec.contains(&format!("'{u}'")), "{d} {u}: {sec}");
+        }
+        let hack = sec.contains("systemctl enable --now docker");
+        assert_eq!(hack, !path.contains("ubuntu") && path != "debian", "{d}: {sec}");
+        if hack {
+            assert!(sec.contains("systemctl is-active --quiet docker"), "{d}: {sec}");
+        }
+    }
+}
+
+/// Arch (and Omarchy) and Amazon Linux 2023: the distro package, no repo.
+#[test]
+fn docker_distro_package_on_arch_and_amazon() {
+    for d in ["arch", "omarchy", "amazonlinux2023"] {
+        let text = desktop_plan(d);
+        let sec = role_section(&text, "docker");
+        assert!(!sec.contains("download.docker.com"), "{d}: {sec}");
+        assert!(!sec.contains("docker-ce"), "{d}: {sec}");
+        assert!(!sec.contains("\n  #1 repo") && !sec.contains(" repo as "), "{d}: {sec}");
+        assert!(sec.contains("docker"), "{d}: {sec}");
+        assert_eq!(
+            sec.contains("systemctl enable --now docker"),
+            d != "amazonlinux2023",
+            "{d}: {sec}"
+        );
+    }
+}
+
+#[test]
+fn docker_never_uses_the_convenience_script() {
+    for d in DISTROS {
+        assert!(!desktop_plan(d).contains("get.docker.com"), "{d}");
+    }
+}
+
+/// A distro Docker has no repository for is a trace error naming it.
+#[test]
+fn docker_unknown_distro_is_a_trace_error() {
+    let os = telepatch::facts::os::Os::parse("ID=gentoo\nNAME=Gentoo\nVERSION_ID=2.15\n").unwrap();
+    let err = tp_basic::roles::docker::check_distro(&os).unwrap_err().to_string();
+    assert!(err.contains("gentoo"), "{err}");
 }
