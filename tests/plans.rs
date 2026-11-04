@@ -311,3 +311,149 @@ fn dev_desktop_golang_focus() {
     let kept = desktop_plan_of("dev_desktop_kept", "ubuntu2404");
     assert!(!kept.contains("golang"), "{kept}");
 }
+
+/// The `tp_want=(..)` line of the pkg op that requests libvirt. The
+/// optimizer merges `vm_server`'s packages into the earlier pkg op (docker's
+/// on the Debian family and the EL images), so they are not in the
+/// `role vm_server` section; the op still runs before its user ops.
+fn libvirt_want(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().filter(|l| l.contains("tp_want=(")).collect();
+    let mut hit = lines.iter().filter(|l| l.contains("libvirt"));
+    let one = hit
+        .next()
+        .unwrap_or_else(|| panic!("no pkg op wants libvirt: {text}"));
+    assert!(hit.next().is_none(), "libvirt in two pkg ops: {text}");
+    one.to_string()
+}
+
+/// `vm_server` (T54): the packages per family from `vm_server.md`, the
+/// Debian family on `qemu-system-x86` (never the virtual `qemu-kvm`).
+#[test]
+fn vm_server_packages_per_family() {
+    for d in DISTROS {
+        let text = desktop_plan(d);
+        let want = libvirt_want(&text);
+        let (yes, no): (&[&str], &[&str]) = match d {
+            "debian12" | "debian13" | "ubuntu2404" | "ubuntu2604" => (
+                &[
+                    "'qemu-system-x86'",
+                    "'libvirt-daemon-system'",
+                    "'libvirt-clients'",
+                    "'virtinst'",
+                    "'bridge-utils'",
+                ],
+                &["qemu-kvm", "virt-install"],
+            ),
+            "arch" | "omarchy" => (
+                &["'libvirt'", "'qemu-base'", "'virt-install'"],
+                &["qemu-kvm"],
+            ),
+            "amazonlinux2023" => (
+                &["'qemu-kvm'", "'libvirt'", "'libvirt-client'"],
+                &["virt-install"],
+            ),
+            _ => (
+                &[
+                    "'qemu-kvm'",
+                    "'libvirt'",
+                    "'libvirt-client'",
+                    "'virt-install'",
+                ],
+                &[],
+            ),
+        };
+        for w in yes {
+            assert!(want.contains(w), "{d} {w}: {want}");
+        }
+        for n in no {
+            assert!(!want.contains(n), "{d} {n}: {want}");
+        }
+        for n in [
+            "vagrant",
+            "ansible",
+            "ruby",
+            "libvirt-devel",
+            "virt-manager",
+        ] {
+            assert!(!want.contains(n), "{d} {n}: {want}");
+        }
+        assert!(
+            !text.contains(".vagrant.d") && !text.contains("/usr/bin/vagrant"),
+            "{d}"
+        );
+    }
+}
+
+/// The socket start is a marked hack on Arch (`libvirtd.socket`) and Amazon
+/// Linux 2023 (`virtqemud.socket`) only; the other families ship it enabled.
+#[test]
+fn vm_server_socket_start_only_where_the_package_leaves_it_off() {
+    for d in DISTROS {
+        let sec = role_section(&desktop_plan(d), "vm_server");
+        let unit = match d {
+            "arch" | "omarchy" => Some("libvirtd.socket"),
+            "amazonlinux2023" => Some("virtqemud.socket"),
+            _ => None,
+        };
+        assert_eq!(
+            sec.contains("systemctl enable --now"),
+            unit.is_some(),
+            "{d}: {sec}"
+        );
+        if let Some(u) = unit {
+            assert!(
+                sec.contains(&format!("systemctl enable --now {u}")),
+                "{d}: {sec}"
+            );
+            assert!(
+                sec.contains(&format!("systemctl is-active --quiet {u}")),
+                "{d}: {sec}"
+            );
+        }
+    }
+}
+
+/// One user op per admin user adds `libvirt`, after the package op, and no
+/// `group` op makes the group (the package's name must be the one used).
+#[test]
+fn vm_server_adds_each_admin_user_to_libvirt_after_the_packages() {
+    for d in DISTROS {
+        let text = desktop_plan(d);
+        let sec = role_section(&text, "vm_server");
+        assert!(!sec.contains(" group as "), "{d}: {sec}");
+        // The (merged) pkg op that wants libvirt comes before the users'.
+        let pkg = text.find(&libvirt_want(&text)).unwrap();
+        for u in ["bot", "tpdev"] {
+            let at = text
+                .find(&format!("reads [group:libvirt] writes [user:{u}]"))
+                .unwrap_or_else(|| panic!("{d} {u}: {sec}"));
+            assert!(pkg < at, "{d} {u}: {sec}");
+            assert!(
+                sec.contains(&format!("writes [user:{u}]")),
+                "{d} {u}: {sec}"
+            );
+        }
+        assert_eq!(sec.matches("tp_g in 'libvirt'").count(), 4, "{d}: {sec}");
+    }
+}
+
+/// `vm_server` runs after `docker` and before `node`; `dev_desktop_kept`
+/// has none of it.
+#[test]
+fn vm_server_sits_between_docker_and_node() {
+    for d in DISTROS {
+        let text = desktop_plan(d);
+        let at = |r: &str| {
+            text.find(&format!("role {r}"))
+                .unwrap_or_else(|| panic!("{d}: no role {r}"))
+        };
+        assert!(
+            at("docker") < at("vm_server") && at("vm_server") < at("node"),
+            "{d}"
+        );
+        assert!(
+            !desktop_plan_of("dev_desktop_kept", d).contains("vm_server"),
+            "{d}"
+        );
+    }
+}

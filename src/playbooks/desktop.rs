@@ -10,6 +10,7 @@ use crate::roles::golang::golang;
 use crate::roles::node::node;
 use crate::roles::rust_build::rust_build;
 use crate::roles::tmux::tmux;
+use crate::roles::vm_server::vm_server;
 use crate::vars::Vars;
 
 /// Every desktop playbook, registered under its YAML name.
@@ -32,14 +33,15 @@ fn dev_desktop_entry(h: Host<Vars>) -> PlaybookFuture {
 
 /// `playbooks/dev_desktop.yml:8-17`: roles in YAML order. Only the roles
 /// already ported are here; each later step inserts its role at its YAML
-/// position (vm_server between `docker` and `node`). `docker` sits between
-/// `dev_common` and `node`, so `node`'s mise op no longer merges into
-/// `dev_common`'s. `node` stands where `nvm_node` did (dropped, see
-/// `roles/node.rs`); `golang` follows it; `rust_tools` is dropped.
+/// position. `docker` and `vm_server` sit between `dev_common` and `node`,
+/// so `node`'s mise op no longer merges into `dev_common`'s. `node` stands
+/// where `nvm_node` did (dropped, see `roles/node.rs`); `golang` follows it;
+/// `rust_tools` is dropped.
 async fn dev_desktop(h: &Host<Vars>) -> Result<(), TraceError> {
     admin_users(h).await?;
     dev_common(h).await?;
     docker(h).await?;
+    vm_server(h).await?;
     node(h).await?;
     golang(h).await?;
     rust_build(h).await?;

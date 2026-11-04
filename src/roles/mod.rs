@@ -10,3 +10,4 @@ pub mod rust_build;
 pub mod rust_kernel;
 pub mod src_repos;
 pub mod tmux;
+pub mod vm_server;
