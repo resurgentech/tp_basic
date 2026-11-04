@@ -245,11 +245,8 @@ fn docker_on_docker_repository() {
         for u in ["bot", "tpdev"] {
             assert!(sec.contains(&format!("user {u}")) || sec.contains(&format!("'{u}'")), "{d} {u}: {sec}");
         }
-        let hack = sec.contains("systemctl enable --now docker");
-        assert_eq!(hack, !path.contains("ubuntu") && path != "debian", "{d}: {sec}");
-        if hack {
-            assert!(sec.contains("systemctl is-active --quiet docker"), "{d}: {sec}");
-        }
+        assert!(sec.contains("writes [svc:docker.service]"), "{d}: {sec}");
+        assert!(!sec.contains("systemctl enable --now docker"), "{d}: {sec}");
     }
 }
 
@@ -263,11 +260,8 @@ fn docker_distro_package_on_arch_and_amazon() {
         assert!(!sec.contains("docker-ce"), "{d}: {sec}");
         assert!(!sec.contains("\n  #1 repo") && !sec.contains(" repo as "), "{d}: {sec}");
         assert!(sec.contains("docker"), "{d}: {sec}");
-        assert_eq!(
-            sec.contains("systemctl enable --now docker"),
-            d != "amazonlinux2023",
-            "{d}: {sec}"
-        );
+        assert!(sec.contains("writes [svc:docker.service]"), "{d}: {sec}");
+        assert!(!sec.contains("systemctl enable --now docker"), "{d}: {sec}");
     }
 }
 
@@ -384,32 +378,22 @@ fn vm_server_packages_per_family() {
     }
 }
 
-/// The socket start is a marked hack on Arch (`libvirtd.socket`) and Amazon
-/// Linux 2023 (`virtqemud.socket`) only; the other families ship it enabled.
+/// One `svc` op per kit, on that kit's socket: `libvirtd.socket` on the
+/// Debian family and Arch, `virtqemud.socket` on Fedora/EL and Amazon; no
+/// `sh!` hack is left.
 #[test]
-fn vm_server_socket_start_only_where_the_package_leaves_it_off() {
+fn vm_server_enables_and_starts_the_kits_socket() {
     for d in DISTROS {
         let sec = role_section(&desktop_plan(d), "vm_server");
         let unit = match d {
-            "arch" | "omarchy" => Some("libvirtd.socket"),
-            "amazonlinux2023" => Some("virtqemud.socket"),
-            _ => None,
+            "arch" | "omarchy" | "debian12" | "debian13" | "ubuntu2404" | "ubuntu2604" => {
+                "libvirtd.socket"
+            }
+            _ => "virtqemud.socket",
         };
-        assert_eq!(
-            sec.contains("systemctl enable --now"),
-            unit.is_some(),
-            "{d}: {sec}"
-        );
-        if let Some(u) = unit {
-            assert!(
-                sec.contains(&format!("systemctl enable --now {u}")),
-                "{d}: {sec}"
-            );
-            assert!(
-                sec.contains(&format!("systemctl is-active --quiet {u}")),
-                "{d}: {sec}"
-            );
-        }
+        assert!(sec.contains(&format!("writes [svc:{unit}]")), "{d}: {sec}");
+        assert_eq!(sec.matches("writes [svc:").count(), 1, "{d}: {sec}");
+        assert!(!sec.contains("enable --now"), "{d}: {sec}");
     }
 }
 

@@ -62,14 +62,10 @@
 //! `iptables-nft` are optional dependencies of Arch's `libvirt` for the
 //! default NAT network and are not requested.
 //!
-//! Hacks (a `sh!` standing in for a primitive; a search for `HACK(` finds
-//! them when the primitive lands):
-//! - `HACK(svc)`: the libvirt socket on Arch and Amazon Linux 2023, where
-//!   the packages leave it disabled; there is no service primitive yet
-//!   (non-goal of goal 5b, D2).
+//! Hacks: none.
 
 use telepatch::facts::os::{Distro, Family, Os};
-use telepatch::{Host, TraceError, role, sh};
+use telepatch::{Host, TraceError, role};
 
 use crate::vars::Vars;
 
@@ -147,13 +143,13 @@ pub async fn vm_server(h: &Host<Vars>) -> Result<(), TraceError> {
         Kit::Arch => h.pkg(["libvirt", "qemu-base", "virt-install"]),
     };
 
-    // HACK(svc): "socket enabled and running". The Debian family and the
-    // Fedora/EL preset leave the daemon enabled (`is-enabled` probed in
-    // containers 2026-11-03); on Amazon Linux 2023 `virtqemud.socket` is
-    // disabled after install and on Arch `libvirtd.socket` is. libvirt
-    // starts the daemon on the first connection once the socket is
-    // enabled ("There is no need to start the services"). The guard keeps a
-    // running socket untouched; replace with `h.svc(..)` when it exists.
+    // "Socket enabled and running", one `svc` per kit. The Debian family and
+    // the Fedora/EL preset leave the socket enabled (`is-enabled` probed in
+    // containers 2026-11-03), where the op finds nothing to do; on Amazon
+    // Linux 2023 `virtqemud.socket` is disabled after install and on Arch
+    // `libvirtd.socket` is. libvirt starts the daemon on the first
+    // connection once the socket is enabled ("There is no need to start the
+    // services").
     // Source: https://libvirt.org/daemons.html (accessed 2026-11-03)
     // Probe 2026-11-03 (containers have no running systemd, so
     // "enabled" is the unit state, not proof the service answers): Ubuntu
@@ -172,24 +168,11 @@ pub async fn vm_server(h: &Host<Vars>) -> Result<(), TraceError> {
     // Open: on a `rockylinux/rockylinux:10` VM, `dnf -y install libvirt
     // qemu-kvm libvirt-client && systemctl is-active virtqemud.socket` shows
     // whether the install also started the socket.
-    // `sh!` takes literals, so each unit has its own call.
-    match kit(&h.os)? {
-        Kit::Amazon => {
-            sh!(
-                h,
-                "systemctl enable --now virtqemud.socket",
-                unless = "systemctl is-active --quiet virtqemud.socket"
-            );
-        }
-        Kit::Arch => {
-            sh!(
-                h,
-                "systemctl enable --now libvirtd.socket",
-                unless = "systemctl is-active --quiet libvirtd.socket"
-            );
-        }
-        Kit::Debian | Kit::RedHat => {}
-    }
+    let socket = match kit(&h.os)? {
+        Kit::Debian | Kit::Arch => "libvirtd.socket",
+        Kit::RedHat | Kit::Amazon => "virtqemud.socket",
+    };
+    h.svc(socket).enabled().started();
 
     // `vagrant_per_user.yml:3`: "Admin users need this group to avoid
     // annoying GUI warnings"; it is what lets a user manage the system

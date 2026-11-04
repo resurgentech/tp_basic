@@ -40,14 +40,11 @@
 //! diffed against it); the five package names, `docker.sources`, the key,
 //! and `id -nG <u>` showing `docker` are what a run is checked on.
 //!
-//! Hacks (a `sh!` standing in for a primitive; a search for `HACK(` finds
-//! them when the primitive lands):
-//! - `HACK(svc)`: the daemon start on the families whose package leaves it
-//!   stopped; there is no service primitive yet (non-goal of goal 5b, D2).
+//! Hacks: none.
 
 use telepatch::facts::os::{Distro, Family, Os};
 use telepatch::ops::repo::AptRepo;
-use telepatch::{Host, TraceError, role, sh};
+use telepatch::{Host, TraceError, role};
 
 use crate::vars::Vars;
 
@@ -69,14 +66,13 @@ const BASE: &str = "https://download.docker.com/linux";
 /// How a host gets Docker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
-    /// Docker's apt repository `linux/<path>`; the daemon starts itself.
+    /// Docker's apt repository `linux/<path>`.
     Apt { path: &'static str },
-    /// Docker's dnf repository `linux/<path>`; the daemon stays stopped.
+    /// Docker's dnf repository `linux/<path>`.
     Dnf { path: &'static str },
     /// The distro's own `docker` package (Docker lists neither Arch nor
-    /// Amazon Linux). `starts_itself`: Amazon Linux 2023 ships
-    /// `docker.socket` enabled by preset, Arch ships nothing.
-    Distro { starts_itself: bool },
+    /// Amazon Linux).
+    Distro,
 }
 
 /// The distro to its source, or an error naming the distro.
@@ -110,10 +106,10 @@ pub fn source(os: &Os) -> Result<Source, TraceError> {
         // behind Docker's 29.x: Amazon's package is the only one for that
         // platform, so the version gap is recorded, not fixed.
         // Source: https://docs.aws.amazon.com/linux/al2023/ug/install-docker.html (accessed 2026-11-03; the URL served the page titled "Using AL2023 in containers", which names the `docker` package and gives no start step)
-        Distro::Amazon => Source::Distro { starts_itself: true },
-        Distro::Arch => Source::Distro { starts_itself: false },
+        Distro::Amazon => Source::Distro,
+        Distro::Arch => Source::Distro,
         // Omarchy is Arch underneath and parses as `Other("omarchy")`.
-        Distro::Other(_) if os.family == Family::Arch => Source::Distro { starts_itself: false },
+        Distro::Other(_) if os.family == Family::Arch => Source::Distro,
         other => {
             return Err(TraceError::new(format!(
                 "docker: no Docker source for distro {other:?}"
@@ -130,7 +126,7 @@ pub fn check_distro(os: &Os) -> Result<(), TraceError> {
 #[role]
 pub async fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
     let src = source(&h.os)?;
-    let needs_start = match &src {
+    match &src {
         Source::Apt { path } => {
             // The suite is the release codename; on a derivative it is the
             // base's (`UBUNTU_CODENAME` first, as Docker's Ubuntu page:
@@ -163,9 +159,6 @@ pub async fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
                 key_url: format!("{BASE}/{path}/gpg"),
             });
             h.pkg(PACKAGES);
-            // Docker's Debian and Ubuntu pages: the service starts itself
-            // on the Debian family (the VM gate is the proof).
-            false
         }
         Source::Dnf { path } => {
             // The `.repo` file Docker publishes (Docker's RHEL and Fedora
@@ -191,19 +184,17 @@ pub async fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
             // Source: https://docs.docker.com/engine/install/fedora/ (accessed 2026-11-03)
             h.repo("docker").dnf_url(&format!("{BASE}/{path}/docker-ce.repo"));
             h.pkg(PACKAGES);
-            true
         }
-        Source::Distro { starts_itself } => {
+        Source::Distro => {
             h.pkg(["docker"]);
-            !starts_itself
         }
-    };
+    }
 
-    // HACK(svc): "enabled and running". The package does not start the
-    // daemon here ("This command installs Docker, but it doesn't start
-    // Docker"; `is-enabled` prints `disabled` after install, probed on
-    // rockylinux/rockylinux:10 2026-11-03). The guard keeps a running
-    // daemon untouched; replace with `h.svc("docker")` when it exists.
+    // "Docker enabled and running", on every family. The package already
+    // does it on the Debian family, where the op finds nothing to do; the
+    // others leave the daemon stopped ("This command installs Docker, but it
+    // doesn't start Docker"; `is-enabled` prints `disabled` after install,
+    // probed on rockylinux/rockylinux:10 2026-11-03).
     // Daemon state after install, per family (probed 2026-11-03):
     // Ubuntu, Debian, Pop!_OS running and enabled ("The `docker` service
     // starts automatically on Debian based distributions"; the Ubuntu page
@@ -217,8 +208,8 @@ pub async fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
     // has `docker.socket` enabled by preset (`rpm -q --scripts docker`
     // calls `systemd-update-helper install-system-units docker.service
     // docker.socket`; `/usr/lib/systemd/system-preset/90-default.preset:270`
-    // is `enable docker.socket`), which starts the service on first use,
-    // so `Distro { starts_itself: true }` skips the hack there.
+    // is `enable docker.socket`), which starts the service on first use; the
+    // op enables and starts `docker.service` itself all the same.
     // Docker's post-install page: `systemctl enable docker.service` and
     // `containerd.service` start them at boot.
     // Source: https://docs.docker.com/engine/install/rhel/ (accessed 2026-11-03)
@@ -226,17 +217,11 @@ pub async fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
     // Source: https://wiki.archlinux.org/title/Docker (accessed 2026-11-03)
     // Open: on an `amazonlinux:2023` VM, `dnf -y install docker && systemctl
     // is-enabled docker.socket docker.service && docker run --rm
-    // hello-world` settles whether the hack is needed there.
+    // hello-world` shows what the package leaves there.
     // Open: on an Arch VM, `pacman -S --noconfirm docker && systemctl
     // is-enabled docker.service docker.socket` prints what the package
     // leaves.
-    if needs_start {
-        sh!(
-            h,
-            "systemctl enable --now docker",
-            unless = "systemctl is-active --quiet docker"
-        );
-    }
+    h.svc("docker").enabled().started();
 
     // The package creates the group on the Debian family and the others;
     // the op makes sure of it on every source, whatever a package does.

@@ -480,9 +480,9 @@ role docker
       | if [ ! -e "$tp_f" ]; then
       |   if tp_fetch 'https://download.docker.com/linux/fedora/docker-ce.repo' "$tp_f"; then changed=1; else rc=1; fi
       | fi
-  #20 pkg as shell:root reads [] writes [pkg:containerd.io, pkg:docker-buildx-plugin, pkg:docker-ce, pkg:docker-ce-cli, pkg:docker-compose-plugin] post [pkg:containerd.io=Installed, pkg:docker-buildx-plugin=Installed, pkg:docker-ce=Installed, pkg:docker-ce-cli=Installed, pkg:docker-compose-plugin=Installed]
+  #20 pkg as shell:root reads [] writes [pkg:containerd.io, pkg:docker-buildx-plugin, pkg:docker-ce, pkg:docker-ce-cli, pkg:docker-compose-plugin, pkg:libvirt, pkg:libvirt-client, pkg:qemu-kvm, pkg:virt-install] post [pkg:containerd.io=Installed, pkg:docker-buildx-plugin=Installed, pkg:docker-ce=Installed, pkg:docker-ce-cli=Installed, pkg:docker-compose-plugin=Installed, pkg:libvirt=Installed, pkg:libvirt-client=Installed, pkg:qemu-kvm=Installed, pkg:virt-install=Installed]
       | rc=0; changed=0; installed=()
-      | tp_want=('docker-ce' 'docker-ce-cli' 'containerd.io' 'docker-buildx-plugin' 'docker-compose-plugin')
+      | tp_want=('docker-ce' 'docker-ce-cli' 'containerd.io' 'docker-buildx-plugin' 'docker-compose-plugin' 'qemu-kvm' 'libvirt' 'libvirt-client' 'virt-install')
       | tp_missing=()
       | for tp_n in "${tp_want[@]}"; do
       |   case "$tp_n" in
@@ -495,14 +495,40 @@ role docker
       |   rc=$?
       |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       | fi
-  #21 sh as shell:root reads [] writes [*]
-      | rc=0; changed=0; skipped=0
-      | if { systemctl is-active --quiet docker; } >/dev/null 2>&1; then
+      merged from docker #20, vm_server #27
+  #21 svc as shell:root reads [] writes [svc:docker.service] post [svc:docker.service=Exists(true)]
+      | tp_u='docker'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
       |   skipped=1
       | else
-      | systemctl enable --now docker
-      | rc=$?
-      | if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
+      |   esac
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if ! systemctl is-active --quiet -- "$tp_u"; then
+      |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           systemctl daemon-reload
+      |           rc=$?
+      |         fi
+      |         if [ "$rc" -eq 0 ]; then
+      |           systemctl start -- "$tp_u"
+      |           rc=$?
+      |           if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
       | fi
   #22 group as shell:root reads [] writes [group:docker] post [group:docker=Exists(true)]
       | created=0
@@ -573,22 +599,41 @@ role docker
       | fi
       | fi
 role vm_server
-  #27 pkg as shell:root reads [] writes [pkg:libvirt, pkg:libvirt-client, pkg:qemu-kvm, pkg:virt-install] post [pkg:libvirt=Installed, pkg:libvirt-client=Installed, pkg:qemu-kvm=Installed, pkg:virt-install=Installed]
-      | rc=0; changed=0; installed=()
-      | tp_want=('qemu-kvm' 'libvirt' 'libvirt-client' 'virt-install')
-      | tp_missing=()
-      | for tp_n in "${tp_want[@]}"; do
-      |   case "$tp_n" in
-      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
-      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+  #28 svc as shell:root reads [] writes [svc:virtqemud.socket] post [svc:virtqemud.socket=Exists(true)]
+      | tp_u='virtqemud.socket'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
       |   esac
-      | done
-      | if [ "${#tp_missing[@]}" -gt 0 ]; then
-      |   dnf install -y "${tp_missing[@]}"
-      |   rc=$?
-      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if ! systemctl is-active --quiet -- "$tp_u"; then
+      |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           systemctl daemon-reload
+      |           rc=$?
+      |         fi
+      |         if [ "$rc" -eq 0 ]; then
+      |           systemctl start -- "$tp_u"
+      |           rc=$?
+      |           if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
       | fi
-  #28 user as shell:root reads [group:libvirt] writes [user:bot] post [user:bot=Exists(true)]
+  #29 user as shell:root reads [group:libvirt] writes [user:bot] post [user:bot=Exists(true)]
       | created=0
       | tp_u='bot'
       | for tp_g in 'libvirt'; do
@@ -618,7 +663,7 @@ role vm_server
       |   fi
       | fi
       | fi
-  #29 user as shell:root reads [group:libvirt] writes [user:tpdev] post [user:tpdev=Exists(true)]
+  #30 user as shell:root reads [group:libvirt] writes [user:tpdev] post [user:tpdev=Exists(true)]
       | created=0
       | tp_u='tpdev'
       | for tp_g in 'libvirt'; do
@@ -649,7 +694,7 @@ role vm_server
       | fi
       | fi
 role node
-  #32 pkg[mise] as shell:root reads [] writes [*] post [pkg:mise:root:node=Installed, file:/etc/mise/config.toml=Exists(true)]
+  #33 pkg[mise] as shell:root reads [] writes [*] post [pkg:mise:root:node=Installed, file:/etc/mise/config.toml=Exists(true)]
       | rc=0; changed=0; installed=()
       | tp_want=('node')
       | declare -A tp_have=() tp_before=() tp_spec=() tp_wantv=()
@@ -710,7 +755,7 @@ role node
       |   fi
       | fi
 role golang
-  #35 pkg[script] as shell:root reads [] writes [*] post [pkg:script:root:go=Installed, file:/usr/local/go/bin/go=Exists(true)]
+  #36 pkg[script] as shell:root reads [] writes [*] post [pkg:script:root:go=Installed, file:/usr/local/go/bin/go=Exists(true)]
       | rc=0; changed=0; installed=()
       | tp_name='go'
       | tp_tok() { grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
@@ -804,7 +849,7 @@ role golang
       |     fi
       |   fi
       | fi
-  #36 file as shell:root reads [] writes [file:/etc/profile.d/go.sh] post [file:/etc/profile.d/go.sh=Exists(true)]
+  #37 file as shell:root reads [] writes [file:/etc/profile.d/go.sh] post [file:/etc/profile.d/go.sh=Exists(true)]
       | rc=0; changed=0
       | tp_p='/etc/profile.d/go.sh'
       | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
@@ -829,7 +874,7 @@ role golang
       |   if chmod 644 "$tp_p"; then changed=1; else rc=$?; fi
       | fi
 role rust_build
-  #39 pkg as shell:root reads [] writes [pkg:clang, pkg:gcc-c++, pkg:musl-gcc, pkg:openssl-devel, pkg:pkgconf-pkg-config] post [pkg:clang=Installed, pkg:gcc-c++=Installed, pkg:musl-gcc=Installed, pkg:openssl-devel=Installed, pkg:pkgconf-pkg-config=Installed]
+  #40 pkg as shell:root reads [] writes [pkg:clang, pkg:gcc-c++, pkg:musl-gcc, pkg:openssl-devel, pkg:pkgconf-pkg-config] post [pkg:clang=Installed, pkg:gcc-c++=Installed, pkg:musl-gcc=Installed, pkg:openssl-devel=Installed, pkg:pkgconf-pkg-config=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('gcc-c++' 'openssl-devel' 'pkgconf-pkg-config' 'clang' 'musl-gcc')
       | tp_missing=()
@@ -844,11 +889,11 @@ role rust_build
       |   rc=$?
       |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       | fi
-      merged from rust_build #39, rust_build #40
+      merged from rust_build #40, rust_build #41
 
 window 2 (final)
 role rust_build
-  #41 pkg[rustup] as login:bot reads [] writes [*] post [pkg:rustup:bot:stable=Installed, pkg:rustup:bot:stable/target/x86_64-unknown-linux-musl=Installed]
+  #42 pkg[rustup] as login:bot reads [] writes [*] post [pkg:rustup:bot:stable=Installed, pkg:rustup:bot:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -907,7 +952,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #42 pkg[cargo] as login:bot reads [] writes [*] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
+  #43 pkg[cargo] as login:bot reads [] writes [*] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -936,7 +981,7 @@ role rust_build
       |     done
       |   fi
       | fi
-  #43 pkg[rustup] as login:tpdev reads [] writes [*] post [pkg:rustup:tpdev:stable=Installed, pkg:rustup:tpdev:stable/target/x86_64-unknown-linux-musl=Installed]
+  #44 pkg[rustup] as login:tpdev reads [] writes [*] post [pkg:rustup:tpdev:stable=Installed, pkg:rustup:tpdev:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -995,7 +1040,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #44 pkg[cargo] as login:tpdev reads [] writes [*] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
+  #45 pkg[cargo] as login:tpdev reads [] writes [*] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -1024,7 +1069,7 @@ role rust_build
       |     done
       |   fi
       | fi
-  #45 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
+  #46 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -1083,7 +1128,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #46 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
+  #47 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -1113,7 +1158,7 @@ role rust_build
       |   fi
       | fi
 role tmux
-  #49 pkg as shell:root reads [] writes [pkg:tmux] post [pkg:tmux=Installed]
+  #50 pkg as shell:root reads [] writes [pkg:tmux] post [pkg:tmux=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('tmux')
       | tp_missing=()
