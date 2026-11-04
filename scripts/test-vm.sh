@@ -397,6 +397,15 @@ if [[ $container == dev_desktop ]]; then
         check "$u" "go version" 'go version'
         check "$u" "node --version" 'node --version'
         check "$u" "just --version" 'just --version'
+        # mise must not warn: a root shell without `-H` kept HOME=/home/bot
+        # under the drop-in's `!env_reset`, and root's mise wrote bot's
+        # ~/.cache/mise (seen on 2026-11-04; the engine now runs `sudo -n -H`).
+        check "$u" "just --version has no mise warning" '! (just --version 2>&1 | grep -q WARN) && echo clean'
+        # Nothing under the user's home may belong to anyone else, for the
+        # same reason: root's ops must write to /root, as_user ops to ~u.
+        f=$(sshv "sudo -n find /home/$u -xdev ! -user $u -print 2>/dev/null | head -5") || f="(find failed)"
+        if [[ -z $f ]]; then echo "ok   [$u] home has no files owned by others"
+        else echo "FAIL [$u] home has files owned by others:"; printf '%s\n' "$f" | sed 's/^/     | /'; wrc=1; fi
         check "$u" "tmux -V" 'tmux -V'
         check "$u" "virsh --version" 'virsh --version'
         # non-gating: the VM may not offer nested KVM (A-5b-13)
