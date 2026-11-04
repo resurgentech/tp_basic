@@ -360,7 +360,7 @@ Bugs the oracle cannot see (fixed in the port): Fedora and CentOS got the
 publishes `fedora` and `centos` ones; the `Pop!_OS` family override can never
 be true; the role removed `podman` from hosts that had no conflict.
 
-After equivalence (change what the oracle sees; not made yet): none; no
+Intended differences (bugs fixed in the port that the oracle sees): none; no
 Ansible baseline exists for this role.
 
 Primitive gaps: `svc` (enabled and running): marked hack on four families,
@@ -377,5 +377,6 @@ Decision: docker rewrite on download.docker.com (`repo` + `pkg` per family, dist
 
 ## Review
 
-(No pass yet: the user has not read this doc. A dated entry goes here when
-the pass happens.)
+2026-11-04: accepted by the user for the port ("okay go"), all levels, no
+comments; the Decision line stands as written. rust_tools is dead: not ported,
+not reconsidered.

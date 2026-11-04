@@ -330,7 +330,7 @@ Bugs the oracle cannot see (fixed in the port): the 0777 on
 on Arch and Amazon (the port installs the packages that create the group
 there); `ansible` and `ruby*` installed on every workstation (gone).
 
-After equivalence (change what the oracle sees; not made yet): none; no
+Intended differences (bugs fixed in the port that the oracle sees): none; no
 Ansible baseline exists for the shrunk role.
 
 Primitive gaps: `svc` for the libvirt socket on Arch and Amazon Linux 2023:
@@ -348,5 +348,6 @@ Decision: vm_server shrink to KVM/libvirt and the `libvirt` group (vagrant, `ans
 
 ## Review
 
-(No pass yet: the user has not read this doc. A dated entry goes here when
-the pass happens.)
+2026-11-04: accepted by the user for the port ("okay go"), all levels, no
+comments; the Decision line stands as written. rust_tools is dead: not ported,
+not reconsidered.

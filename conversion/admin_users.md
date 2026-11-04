@@ -283,9 +283,10 @@ Reproduce (run on 2026-11-03, results in the table): `docker run --rm ubuntu:24.
 
 ### Position
 
-Option 1. The role is kept as is (the user's triage); the two sudoers fixes
-wait until after equivalence so a divergence in the oracle's diff is always
-a port bug.
+Option 2. The port carries the intent of each task, not its text: both
+sudoers bugs are fixed in the port and what the oracle sees of them is
+declared as intended differences with the bug named, so a divergence the
+diff does not expect is still always a port bug.
 
 Dropped branches (no image reaches them): none; Amazon Linux and Arch hit
 the `sudo` group failure (bug 4), so the port gives them `wheel` (see the
@@ -297,10 +298,18 @@ has to fix, because the Ansible task does nothing with an empty
 module leaves. Bug 4: the port picks `wheel` for any family that has no
 `sudo` group.
 
-After equivalence (change what the oracle sees; not made yet): bug 1 (use
-`^[#@]includedir`, or write the spelling the file already uses) and bug 2
-(keep the distro's `secure_path` entries and put `/usr/local` first). Both
-are recorded here and declared as intended differences when they land.
+Intended differences (bugs fixed in the port that the oracle sees): bug 1
+(`line_re` `^[#@]includedir\s+/etc/sudoers\.d`, line `@includedir
+/etc/sudoers.d`: the current directive, accepted by every supported sudo,
+≥ 1.9.1; stock Ubuntu, Debian and Arch are unchanged, the EL family's
+`#includedir` is rewritten once and never doubled) and bug 2 (a per-family
+`secure_path` line that is the distro's own default from the probe table
+with `/usr/local/sbin:/usr/local/bin` ensured at the front, so Ubuntu keeps
+`/snap/bin` and the EL family gains `/usr/local`). On the Ubuntu 24.04
+oracle both show: the sudoers section lacks Ansible's appended
+`#includedir` and its replaced `secure_path` line and keeps the stock line.
+Each is declared in `tests/oracle/intended/dev_desktop_kept.txt` with the
+bug named.
 
 Primitive gaps: none beyond the new `user` and `file(..).validate(..)`
 primitives that this goal builds first (see Task intent).
@@ -315,7 +324,7 @@ does. Position: (a). Stakes: with (b) a new Arch host cannot be configured;
 with (a) the port diverges from Ansible only where Ansible cannot run, so no
 oracle image sees it.
 
-Decision: keep (port as is, both sudoers edits exactly as the YAML says; the fixes are recorded under "After equivalence"). Decided by the user 2026-11-04 (triage); levels not yet reviewed.
+Decision: keep, porting the intent: both sudoers bugs fixed in the port (bugs 1 and 2 above, declared as intended differences on the oracle), `wheel` where no `sudo` group exists (bug 4), the new account left locked as Ansible leaves it (bug 3 is not a bug). Decided by the user 2026-11-04 ("we should always be porting the intent, that shouldn't even be a question"; the earlier "port as is" triage line is withdrawn); levels not yet reviewed.
 
 ## Port notes
 
@@ -323,5 +332,6 @@ Decision: keep (port as is, both sudoers edits exactly as the YAML says; the fix
 
 ## Review
 
-(No pass yet: the user has not read this doc. A dated entry goes here when
-the pass happens.)
+2026-11-04: accepted by the user for the port ("okay go"), all levels, no
+comments; the Decision line stands as written. rust_tools is dead: not ported,
+not reconsidered.

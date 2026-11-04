@@ -277,7 +277,7 @@ check treats a missing login shell like a missing godoc
 (`roles/golang/tasks/godoc.yml:19`); the `passwd_info`/`user_shell` names
 collide with `rust_build`'s. Both vanish with the godoc tasks.
 
-After equivalence (change what the oracle sees; not made yet): none; no
+Intended differences (bugs fixed in the port that the oracle sees): none; no
 Ansible baseline exists for this role.
 
 Primitive gaps: a `go install` source: not built, so `godoc` is dropped
@@ -293,5 +293,6 @@ Decision: golang rewrite as a `Script` source wanting Latest (install from go.de
 
 ## Review
 
-(No pass yet: the user has not read this doc. A dated entry goes here when
-the pass happens.)
+2026-11-04: accepted by the user for the port ("okay go"), all levels, no
+comments; the Decision line stands as written. rust_tools is dead: not ported,
+not reconsidered.

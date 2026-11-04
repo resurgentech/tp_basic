@@ -455,7 +455,7 @@ non-Debian family because its only task is an unguarded `apt` call
 distro's own manager everywhere. Also: `tmuxp` is requested where it has no
 package. No other bug found in these three roles.
 
-After equivalence (change what the oracle sees; not made yet): none. The
+Intended differences (bugs fixed in the port that the oracle sees): none. The
 oracle for `tmux` runs on Ubuntu 24.04 (apt), where Ansible and the port
 install the same two names.
 
@@ -477,5 +477,6 @@ Decision: the Node line sits in its own one-line `node` role in the playbook whe
 
 ## Review
 
-(No pass yet: the user has not read this doc. A dated entry goes here when
-the pass happens.)
+2026-11-04: accepted by the user for the port ("okay go"), all levels, no
+comments; the Decision line stands as written. rust_tools is dead: not ported,
+not reconsidered.
