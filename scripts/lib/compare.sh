@@ -3,7 +3,7 @@
 # scripts/test-vm-oracle.sh (source it; it runs nothing). It runs on this
 # machine only: just scripts/image-state.sh goes into a container or VM.
 
-# apply_intended <dir> <intended file> : writes <dir>/ansible.intended.state,
+# apply_intended <dir> <intended file> [<distro>] : writes <dir>/ansible.intended.state,
 # ansible.state with the intended differences applied, and prints one line per
 # applied difference on stdout and each problem on stderr, as "ERR <text>".
 # Returns 1 when any line was a problem (the applied ones are still written).
@@ -11,20 +11,38 @@
 # File format, one per line: "+<section>|<line>" (telepatch adds the line) or
 # "-<section>|<line>" (telepatch lacks it); "#" comments and blank lines are
 # skipped. <section> is the text between "== " and " ==" in the capture.
+# A line may start with a distro scope, "[rockylinux9,rockylinux10]+sec|line":
+# it applies only when <distro> (the cell's distro id) is listed, and is
+# ignored otherwise (no check at all). A malformed scope (unclosed, empty list
+# or member, anything but [a-z0-9] in a member) is an error naming file:line.
 #
 # A section that is already in LC_ALL=C sort order in ansible.state (every
 # section image-state.sh sorts) gets its "+" lines merged with
 # `LC_ALL=C sort`; any other section (apt sources, in file order) gets them
 # appended at its end. A "-" line removes one occurrence.
 apply_intended() {
-    local dir=$1 file=$2 rc=0 line kind rest sect text n=0 i
+    local dir=$1 file=$2 distro=${3:-} rc=0 line kind rest sect text n=0 i lineno=0 scope members m
     local -A adds=() dels=() known=()
     local t; t=$(mktemp -d)
     while IFS= read -r line || [[ -n $line ]]; do
         known[${line:3:${#line}-6}]=1
     done < <(grep -E '^== .* ==$' "$dir/ansible.state")
     while IFS= read -r line || [[ -n $line ]]; do
+        lineno=$((lineno + 1))
         [[ -z ${line//[[:space:]]/} || $line == '#'* ]] && continue
+        if [[ $line == '['* ]]; then
+            scope=${line%%]*}
+            if [[ $scope == "$line" ]]; then
+                echo "ERR bad distro scope (unclosed '[') at $file:$lineno: $line" >&2; rc=1; continue
+            fi
+            members=${scope:1}
+            line=${line#*]}
+            if [[ ! $members =~ ^[a-z0-9]+(,[a-z0-9]+)*$ ]]; then
+                echo "ERR bad distro scope (want [distro,distro] of [a-z0-9]) at $file:$lineno: [$members]$line" >&2; rc=1; continue
+            fi
+            # a scoped line on a cell whose distro is not listed is ignored
+            [[ ,$members, == *",$distro,"* && -n $distro ]] || continue
+        fi
         kind=${line:0:1}; rest=${line:1}; sect=${rest%%|*}; text=${rest#*|}
         if [[ ($kind != + && $kind != -) || $rest != *'|'* ]]; then
             echo "ERR bad intended line (want +section|line or -section|line): $line" >&2; rc=1; continue
@@ -69,15 +87,15 @@ apply_intended() {
     return $rc
 }
 
-# compare_captures <dir> [<intended file>] : diffs <dir>/ansible.state vs
+# compare_captures <dir> [<intended file> [<distro>]] : diffs <dir>/ansible.state vs
 # telepatch.state (gating) and the .versions files (informational). With an
 # intended-differences file (format at apply_intended) the gating diff is
 # against ansible.intended.state instead. Returns 1 on a gating diff.
 compare_captures() {
-    local dir=$1 intended=${2:-} rc=0 left=ansible.state applied="" n=0 bad=0
+    local dir=$1 intended=${2:-} distro=${3:-} rc=0 left=ansible.state applied="" n=0 bad=0
     if [[ -n $intended ]]; then
         [[ -f $intended ]] || { echo "intended-differences file not found: $intended"; return 1; }
-        applied=$(apply_intended "$dir" "$intended" 2>"$dir/intended.err") || bad=1
+        applied=$(apply_intended "$dir" "$intended" "$distro" 2>"$dir/intended.err") || bad=1
         [[ -z $applied ]] || n=$(printf '%s\n' "$applied" | wc -l)
         [[ $n -gt 0 || $bad -eq 1 ]] && left=ansible.intended.state
     fi
@@ -119,7 +137,7 @@ intended_for() {
 # selftest_intended <fn> <dir> : shared self-test cases.
 # <fn> is compare_captures or oracle_compare; <dir> a scratch dir.
 selftest_intended() {
-    local fn=$1 t=$2 fails=0
+    local fn=$1 t=$2 fails=0 dist=rockylinux9
     local base=$'== packages ==\nbash amd64\ncurl amd64\n== /usr/local/bin ==\nuv\n== mise ==\nprofile.d mise.sh\n'
     rm -f "$t"/*.versions "$t"/ansible.intended.state
     # case_ <name> <want rc> <intended file content, or -> <telepatch state> [egrep pattern for the output]
@@ -128,7 +146,7 @@ selftest_intended() {
         printf '%s' "$base" >"$t/ansible.state"
         printf '%s' "$tele" >"$t/telepatch.state"
         if [[ $content != - ]]; then f=$t/intended.txt; printf '%s' "$content" >"$f"; fi
-        "$fn" "$t" "$f" >"$t/out" 2>&1 || rc=$?
+        "$fn" "$t" "$f" "$dist" >"$t/out" 2>&1 || rc=$?
         if [[ $rc -eq $want ]]; then echo "ok   $name (exit $rc)"; else echo "FAIL $name: exit $rc, wanted $want"; fails=1; fi
         if [[ -n $pat ]] && ! grep -qE -- "$pat" "$t/out"; then echo "FAIL $name: output lacks /$pat/"; fails=1; fi
         sed 's/^/     | /' "$t/out"
@@ -145,6 +163,19 @@ selftest_intended() {
     case_ "intended: unknown section" 1 $'+nosuch|x\n' "$base" 'nosuch'
     case_ "intended: unrelated extra with a file present" 1 "$plus" "${base/bash/awk amd64$'\n'bash}zzz amd64"$'\n' '^\+zzz amd64'
     case_ "intended: comments only" 0 $'# nothing\n\n' "$base" '^GATING: .*: identical$'
+    # distro-scoped lines: [a,b]+section|line (the cell's distro is rockylinux9)
+    case_ "intended: scoped + applied on a listed distro" 0 $'[rockylinux9,rockylinux10]+packages|awk amd64\n' "${base/bash/awk amd64$'\n'bash}" 'identical \(1 intended differences applied\)'
+    case_ "intended: scoped + ignored on an unlisted distro" 0 $'[fedora43,debian13]+packages|awk amd64\n' "$base" '^GATING: .*: identical$'
+    case_ "intended: scoped - applied on a listed distro" 0 $'[rockylinux9]-packages|curl amd64\n' "${base/curl amd64$'\n'/}" 'identical \(1 intended differences applied\)'
+    case_ "intended: scoped - absent on a listed distro fails" 1 $'[rockylinux9]-packages|zsh amd64\n' "$base" 'intended removal not on the ansible side'
+    case_ "intended: scoped - absent but unlisted is ignored" 0 $'[fedora43]-packages|zsh amd64\n' "$base" '^GATING: .*: identical$'
+    case_ "intended: scoped + missing on telepatch on a listed distro fails" 1 $'[rockylinux9]+packages|awk amd64\n' "$base" '^GATING DIFF'
+    case_ "intended: scope unclosed" 1 $'[rockylinux9+packages|awk amd64\n' "$base" 'bad distro scope.*intended\.txt:1'
+    case_ "intended: scope empty" 1 $'[]+packages|awk amd64\n' "$base" 'bad distro scope'
+    case_ "intended: scope empty member" 1 $'[rockylinux9,]+packages|awk amd64\n' "$base" 'bad distro scope'
+    case_ "intended: scope bad characters" 1 $'[Rocky-9]+packages|awk amd64\n' "$base" 'bad distro scope'
+    case_ "intended: malformed scope fails even on an unlisted distro" 1 $'# c\n[fedora43,]+packages|x\n' "$base" 'intended\.txt:2'
+    case_ "intended: scope with no sign" 1 $'[rockylinux9]packages|awk amd64\n' "$base" 'bad intended line'
     return $fails
 }
 

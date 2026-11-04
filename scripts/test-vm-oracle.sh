@@ -67,12 +67,12 @@ compare_pre() {
     fi
 }
 
-# oracle_compare <dir> [<intended file>] : compare_pre, then compare_captures,
+# oracle_compare <dir> [<intended file> [<distro>]] : compare_pre, then compare_captures,
 # printed and written to <dir>/comparison.txt. Returns compare_captures' code.
 oracle_compare() {
     local dir=$1 rc=0
     compare_pre "$dir" >"$dir/comparison.txt"
-    compare_captures "$dir" "${2:-}" >>"$dir/comparison.txt" || rc=$?
+    compare_captures "$dir" "${2:-}" "${3:-}" >>"$dir/comparison.txt" || rc=$?
     cat "$dir/comparison.txt"
     return $rc
 }
@@ -387,7 +387,7 @@ side_down telepatch "$name_telepatch"
 echo "=== timings ==="
 timings_table "$out/timings.txt" "$a1" "$a2" "$ac" "$t1" "$t2" "$tc"
 echo "=== ansible.state against telepatch.state ==="
-if oracle_compare "$out" "$(intended_for "$container")"; then
+if oracle_compare "$out" "$(intended_for "$container")" "$distro"; then
     echo "PASS: Ansible and telepatch agree on $container on a $distro VM"
     exit 0
 fi

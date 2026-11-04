@@ -1,1 +1,10 @@
 Intended differences for the oracle: one <container>.txt per container (every distro of it), lines "+section|line" (telepatch adds it) or "-section|line" (telepatch lacks it), "#" comments. See README.md.
+
+A line may be limited to distros by a bracketed, comma-separated list of
+distro ids immediately before the sign: "[rockylinux9,rockylinux10]-pip|pyaml".
+It applies only on a cell whose distro is listed; elsewhere the line is ignored
+entirely (not applied, not checked, not an error). Members are [a-z0-9]; an
+unclosed bracket, empty list, empty member or other character is an error that
+fails the comparison and names file:line, on every distro. Unscoped lines apply
+to every distro of the container as before. A distro id that names no known
+distro is not an error; it simply never matches.

@@ -171,4 +171,4 @@ if [[ $side != both ]]; then
     echo "side=$side: built and captured one side only; no comparison"
     exit 0
 fi
-compare_captures "$out" "$(intended_for "$container")"
+compare_captures "$out" "$(intended_for "$container")" "$distro"

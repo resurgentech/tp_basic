@@ -149,7 +149,10 @@ appended otherwise) and each `-` line removed, then runs the usual `diff -u`
 against `telepatch.state`. So a `+` line telepatch lacks still fails, as does
 a `-` line Ansible never had, an unknown section, or any other difference.
 The result line reads `identical (N intended differences applied)` and lists
-them.
+them. A line may be limited to some distros with a bracketed list right before
+the sign, `[rockylinux9,rockylinux10]-pip|pyaml`: on any other distro it is
+ignored; a malformed list fails the comparison (see
+`tests/oracle/intended/README`).
 
 The first intended difference (goal 5a, 2026-11-03): `dev_common` installs
 mise system-wide (`/usr/local/bin/mise`), puts its shims on every login
