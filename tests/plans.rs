@@ -285,3 +285,29 @@ fn docker_unknown_distro_is_a_trace_error() {
     let err = tp_basic::roles::docker::check_distro(&os).unwrap_err().to_string();
     assert!(err.contains("gentoo"), "{err}");
 }
+
+/// `golang` sits after `node` and before `rust_build`; its plan has the Go
+/// `Script` pkg wanting latest, the go.dev URLs, the checksum check, and
+/// the login-shell PATH file.
+#[test]
+fn dev_desktop_golang_focus() {
+    let text = desktop_plan("ubuntu2404");
+    let go = role_section(&text, "golang");
+    assert!(go.contains("pkg[script]"), "{go}");
+    assert!(go.contains("/usr/local/go/bin/go"), "{go}");
+    assert!(go.contains("https://go.dev/VERSION?m=text"), "{go}");
+    assert!(go.contains("f=\"go$TP_WANT.linux-$a.tar.gz\""), "{go}");
+    assert!(go.contains("\"https://go.dev/dl/$f\""), "{go}");
+    assert!(go.contains("https://go.dev/dl/?mode=json"), "{go}");
+    assert!(go.contains("sha256sum -c"), "{go}");
+    assert!(go.contains("tp_want_v=$tp_latest"), "{go}");
+    assert!(go.contains("/etc/profile.d/go.sh"), "{go}");
+    // The file op carries its content base64-encoded:
+    // `export PATH="$PATH:/usr/local/go/bin"` plus a newline.
+    assert!(go.contains("tp_b='ZXhwb3J0IFBBVEg9IiRQQVRIOi91c3IvbG9jYWwvZ28vYmluIgo='"), "{go}");
+    assert!(go.contains("chmod 644 \"$tp_t\""), "{go}");
+    let at = |r: &str| text.find(&format!("role {r}")).unwrap_or_else(|| panic!("no role {r}"));
+    assert!(at("node") < at("golang") && at("golang") < at("rust_build"), "{text}");
+    let kept = desktop_plan_of("dev_desktop_kept", "ubuntu2404");
+    assert!(!kept.contains("golang"), "{kept}");
+}

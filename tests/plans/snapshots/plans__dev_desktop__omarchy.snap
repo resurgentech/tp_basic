@@ -591,8 +591,127 @@ role node
       |     if "$tp_mise" reshim --system; then changed=1; else rc=$?; fi
       |   fi
       | fi
+role golang
+  #28 pkg[script] as shell:root reads [] writes [*] post [pkg:script:root:go=Installed, file:/usr/local/go/bin/go=Exists(true)]
+      | rc=0; changed=0; installed=()
+      | tp_name='go'
+      | tp_tok() { grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
+      | tp_probe() {
+      |   tp_have=0; tp_v=
+      |   if [ -x '/usr/local/go/bin/go' ]; then
+      |     tp_have=1
+      |     tp_v=$( (
+      | /usr/local/go/bin/go version
+      | ) 2>/dev/null | tp_tok)
+      |   fi
+      | }
+      | tp_latest=$( (
+      | curl -fsSL 'https://go.dev/VERSION?m=text' | head -n1
+      | ) 2>/dev/null | tp_tok)
+      | tp_want_v=$tp_latest
+      | if [ -z "$tp_want_v" ]; then echo "telepatch: script "'go'": could not resolve the latest version" >&2; rc=1; fi
+      | tp_probe
+      | tp_had=$tp_have; tp_before=$tp_v; tp_act=
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ "$tp_have" -eq 0 ]; then tp_act=install
+      |   elif [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; then tp_act=update
+      |   fi
+      | fi
+      | if [ "$tp_act" = install ]; then
+      |   ( export TP_WANT="$tp_want_v"
+      | (
+      | set -eu
+      | case "$(uname -m)" in
+      |   x86_64) a=amd64 ;;
+      |   aarch64) a=arm64 ;;
+      |   *) echo "golang: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+      | esac
+      | f="go$TP_WANT.linux-$a.tar.gz"
+      | d=$(mktemp -d)
+      | trap 'rm -rf "$d"' EXIT
+      | curl -fsSL -o "$d/$f" "https://go.dev/dl/$f"
+      | curl -fsSL -o "$d/dl.json" 'https://go.dev/dl/?mode=json'
+      | sum=$(awk -v f="$f" '
+      |   /"filename"/ { hit = (index($0, "\"" f "\"") > 0) }
+      |   hit && /"sha256"/ { gsub(/.*"sha256"[ \t]*:[ \t]*"/, ""); gsub(/".*/, ""); print; exit }
+      | ' "$d/dl.json")
+      | case "$sum" in
+      |   *[!0-9a-f]*|"") echo "golang: no sha256 for $f in go.dev/dl/?mode=json" >&2; exit 1 ;;
+      | esac
+      | [ "${#sum}" -eq 64 ] || { echo "golang: bad sha256 for $f" >&2; exit 1; }
+      | printf '%s  %s\n' "$sum" "$f" > "$d/sum"
+      | (cd "$d" && sha256sum -c sum >/dev/null) || { echo "golang: sha256 mismatch for $f" >&2; exit 1; }
+      | rm -rf /usr/local/go
+      | tar -C /usr/local -xzf "$d/$f"
+      | )
+      |   )
+      |   rc=$?
+      | elif [ "$tp_act" = update ]; then
+      |   ( export TP_WANT="$tp_want_v"
+      | (
+      | set -eu
+      | case "$(uname -m)" in
+      |   x86_64) a=amd64 ;;
+      |   aarch64) a=arm64 ;;
+      |   *) echo "golang: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+      | esac
+      | f="go$TP_WANT.linux-$a.tar.gz"
+      | d=$(mktemp -d)
+      | trap 'rm -rf "$d"' EXIT
+      | curl -fsSL -o "$d/$f" "https://go.dev/dl/$f"
+      | curl -fsSL -o "$d/dl.json" 'https://go.dev/dl/?mode=json'
+      | sum=$(awk -v f="$f" '
+      |   /"filename"/ { hit = (index($0, "\"" f "\"") > 0) }
+      |   hit && /"sha256"/ { gsub(/.*"sha256"[ \t]*:[ \t]*"/, ""); gsub(/".*/, ""); print; exit }
+      | ' "$d/dl.json")
+      | case "$sum" in
+      |   *[!0-9a-f]*|"") echo "golang: no sha256 for $f in go.dev/dl/?mode=json" >&2; exit 1 ;;
+      | esac
+      | [ "${#sum}" -eq 64 ] || { echo "golang: bad sha256 for $f" >&2; exit 1; }
+      | printf '%s  %s\n' "$sum" "$f" > "$d/sum"
+      | (cd "$d" && sha256sum -c sum >/dev/null) || { echo "golang: sha256 mismatch for $f" >&2; exit 1; }
+      | rm -rf /usr/local/go
+      | tar -C /usr/local -xzf "$d/$f"
+      | )
+      |   )
+      |   rc=$?
+      | fi
+      | if [ -n "$tp_act" ]; then
+      |   tp_probe
+      |   if [ "$tp_have" -ne "$tp_had" ] || [ "$tp_v" != "$tp_before" ]; then changed=1; installed=("$tp_name"); fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ "$tp_have" -eq 0 ]; then tp_got=absent; else tp_got=${tp_v:-unknown}; fi
+      |     if [ "$tp_have" -eq 0 ] || { [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; }; then
+      |       echo "telepatch: script $tp_name: installed $tp_got, wanted ${tp_want_v:-present}" >&2; rc=1
+      |     fi
+      |   fi
+      | fi
+  #29 file as shell:root reads [] writes [file:/etc/profile.d/go.sh] post [file:/etc/profile.d/go.sh=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/profile.d/go.sh'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | tp_b='ZXhwb3J0IFBBVEg9IiRQQVRIOi91c3IvbG9jYWwvZ28vYmluIgo='
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && printf %s "$tp_b" | base64 -d | cmp -s - "$tp_p"; }; then
+      |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      |   if [ "$rc" -eq 0 ]; then
+      |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
+      |       if [ -e "$tp_p" ]; then
+      |         chmod --reference="$tp_p" "$tp_t"; chown --reference="$tp_p" "$tp_t" 2>/dev/null
+      |       else
+      |         chmod 644 "$tp_t"
+      |       fi
+      |       mv -f "$tp_t" "$tp_p"; rc=$?
+      |     else
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '644' ]; then
+      |   if chmod 644 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
 role rust_build
-  #28 pkg as shell:root reads [] writes [pkg:clang, pkg:musl, pkg:openssl, pkg:pkgconf] post [pkg:clang=Installed, pkg:musl=Installed, pkg:openssl=Installed, pkg:pkgconf=Installed]
+  #32 pkg as shell:root reads [] writes [pkg:clang, pkg:musl, pkg:openssl, pkg:pkgconf] post [pkg:clang=Installed, pkg:musl=Installed, pkg:openssl=Installed, pkg:pkgconf=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('openssl' 'pkgconf' 'clang' 'musl')
       | tp_missing=()
@@ -607,7 +726,7 @@ role rust_build
 
 window 2 (final)
 role rust_build
-  #29 pkg[rustup] as login:bot reads [] writes [*] post [pkg:rustup:bot:stable=Installed, pkg:rustup:bot:stable/target/x86_64-unknown-linux-musl=Installed]
+  #33 pkg[rustup] as login:bot reads [] writes [*] post [pkg:rustup:bot:stable=Installed, pkg:rustup:bot:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -666,7 +785,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #30 pkg[cargo] as login:bot reads [] writes [*] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
+  #34 pkg[cargo] as login:bot reads [] writes [*] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -695,7 +814,7 @@ role rust_build
       |     done
       |   fi
       | fi
-  #31 pkg[rustup] as login:tpdev reads [] writes [*] post [pkg:rustup:tpdev:stable=Installed, pkg:rustup:tpdev:stable/target/x86_64-unknown-linux-musl=Installed]
+  #35 pkg[rustup] as login:tpdev reads [] writes [*] post [pkg:rustup:tpdev:stable=Installed, pkg:rustup:tpdev:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -754,7 +873,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #32 pkg[cargo] as login:tpdev reads [] writes [*] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
+  #36 pkg[cargo] as login:tpdev reads [] writes [*] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -783,7 +902,7 @@ role rust_build
       |     done
       |   fi
       | fi
-  #33 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
+  #37 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -842,7 +961,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #34 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
+  #38 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -872,7 +991,7 @@ role rust_build
       |   fi
       | fi
 role tmux
-  #37 pkg as shell:root reads [] writes [pkg:tmux, pkg:tmuxp] post [pkg:tmux=Installed, pkg:tmuxp=Installed]
+  #41 pkg as shell:root reads [] writes [pkg:tmux, pkg:tmuxp] post [pkg:tmux=Installed, pkg:tmuxp=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('tmux' 'tmuxp')
       | tp_missing=()
