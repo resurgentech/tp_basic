@@ -12,6 +12,11 @@ pub struct Vars {
     pub rustup_version: String,
     pub cargo_version: String,
     pub rustc_version: String,
+    /// A crypt(3) hash for accounts a run creates (`group_vars/all:26`).
+    /// Empty leaves them locked. A real hash never goes in the repo: pass
+    /// it in a `--vars` file kept outside it.
+    #[serde(default)]
+    pub default_password: String,
 }
 
 impl Default for Vars {
@@ -23,6 +28,7 @@ impl Default for Vars {
             rustup_version: "1.29.0".to_string(),
             cargo_version: "1.94.0".to_string(),
             rustc_version: "1.94.0".to_string(),
+            default_password: String::new(),
         }
     }
 }

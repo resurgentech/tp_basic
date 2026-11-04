@@ -8,6 +8,15 @@ fn container_vars_parse() {
     assert_eq!(v.rustup_version, "1.29.0");
     assert_eq!(v.cargo_version, "1.94.0");
     assert_eq!(v.rustc_version, "1.94.0");
+    assert_eq!(v.default_password, "");
+}
+
+#[test]
+fn desktop_vars_parse() {
+    let text = std::fs::read_to_string("vars/desktop.toml").unwrap();
+    let v: Vars = toml::from_str(&text).unwrap();
+    assert_eq!(v.admin_users, vec!["bot".to_string(), "tpdev".to_string()]);
+    assert_eq!(v.default_password, "");
 }
 
 #[test]

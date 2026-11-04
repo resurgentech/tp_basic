@@ -1,0 +1,13 @@
+# Development desktop: `tp-basic run dev_desktop --vars vars/desktop.toml`.
+# Mirrors inventories/group_vars/all for the roles dev_desktop applies.
+admin_users = ["bot", "tpdev"]
+rustup_version = "1.29.0"
+cargo_version = "1.94.0"
+rustc_version = "1.94.0"
+
+# A crypt(3) hash for accounts the run creates; "" leaves them locked.
+# A real hash never goes in this repo (hard rule 5). To set one, copy this
+# file somewhere outside the repo, put the hash in the copy (make it with
+# `openssl passwd -6`) and pass the copy: `--vars /path/outside/repo.toml`
+# (one --vars file per run; it replaces this one whole).
+default_password = ""

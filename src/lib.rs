@@ -9,5 +9,7 @@ use vars::Vars;
 
 /// Every playbook this binary knows, by name (`container/<playbook>`).
 pub fn playbooks() -> Vec<Playbook<Vars>> {
-    playbooks::container::all()
+    let mut all = playbooks::container::all();
+    all.extend(playbooks::desktop::all());
+    all
 }
