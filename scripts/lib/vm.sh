@@ -28,15 +28,18 @@ vm_key() { echo "$VMTOOL_DIR/.machines/$1/id_ed25519"; }
 # vm_record <name> : remember <name> as created by this run, before creating it.
 vm_record() { VM_RECORDED+=("$1"); }
 
-# vm_up <name> <out dir> <log prefix> : create the VM (ubuntu2404.qcow2, 4 GiB),
+# vm_up <name> <out dir> <log prefix> [<memory GiB>] [<disk GB>] : create the VM
+# (ubuntu2404.qcow2; memory default 4 GiB, disk default the image's own size),
 # wait for tcp/22, onboard bot with setup_bot.yml, wait for cloud-init and a free
 # dpkg lock, and run `apt-get update --fix-missing`. Logs go to
 # <out>/<prefix>{create,onboard,wait,prep}.log. Sets VM_IP, VM_KEY, VM_DEST and
 # VM_KNOWN_HOSTS (<out>/known_hosts) for sshv. The name must be recorded first.
 vm_up() {
-    local name=$1 out=$2 p=$3 crc=0 deadline ready
-    echo "=== creating VM $name (ubuntu2404.qcow2, 4 GiB) ==="
-    vmtool create "$name" ubuntu2404.qcow2 --memory 4 >"$out/${p}create.log" 2>&1 || crc=$?
+    local name=$1 out=$2 p=$3 mem=${4:-4} disk=${5:-} crc=0 deadline ready
+    local size=(--memory "$mem")
+    [[ -z $disk ]] || size+=(--disk-size "$disk")
+    echo "=== creating VM $name (ubuntu2404.qcow2, $mem GiB${disk:+, $disk GB disk}) ==="
+    vmtool create "$name" ubuntu2404.qcow2 "${size[@]}" >"$out/${p}create.log" 2>&1 || crc=$?
     if grep -q 'timed out waiting for IP' "$out/${p}create.log"; then
         tail -5 "$out/${p}create.log"
         vm_warn "the VM got no IP. This is a host environment problem, not a telepatch failure:"

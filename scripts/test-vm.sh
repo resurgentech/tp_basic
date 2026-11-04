@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # VM check over SSH, a proof of the SSH transport: create a fresh VM with
-# ~/repos/jaredeh/vmtool, apply container/<container> to it twice with
-# `tp-basic run --host`, and delete the VM. Usage errors and environment
+# ~/repos/jaredeh/vmtool, apply a playbook to it twice with
+# `tp-basic run --host`, and delete the VM. The playbooks (playbook_config):
+# dev_base (container/dev_base, vars/container.toml, 4 GiB, the docker oracle
+# report) and dev_desktop (vars/desktop.toml, 4 GiB, 30 GB disk, no oracle
+# report; after run 2 the per-user working checks below gate). Usage errors and environment
 # problems (no VM IP, no onboarding) exit 2; a failed first run, a second run
 # that is not STATUS ok / CHANGED 0, or a VM still listed after the delete
-# exits 1. After run 2 it also gates on bot's login shell: `command -v just`
+# exits 1 (a Go release between the passes is the one accepted cause of a
+# nonzero count on dev_desktop, and is printed as such). After run 2 it also gates on bot's login shell: `command -v just`
 # must print /usr/local/share/mise/shims/just and `just --version` must work
 # (dev_common's mise; exit 1 with the output otherwise).
 #
-#   scripts/test-vm.sh [--keep] <distro> <container>   (only: ubuntu2404 dev_base)
+#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base or dev_desktop)
 #   scripts/test-vm.sh --self-test
 #
 # Needs: build/tp-basic (`just musl`). Optional:
@@ -133,6 +137,53 @@ oracle_report() {
     compare_vm "$o" "$v"
 }
 
+# ---- the playbooks this script runs, and the working checks ---------------------
+
+# playbook_config <playbook> : the allowlist. Sets PB_NAME (the registered
+# playbook), PB_VARS (relative to the repo), PB_ORACLE (1 when the docker
+# oracle's record of build/test-container/<playbook>-<distro> is compared),
+# PB_MEMORY (GiB) and PB_DISK (GB, empty for the image's size). Returns 1 for
+# any other name.
+playbook_config() {
+    case $1 in
+        dev_base) PB_NAME=container/dev_base PB_VARS=vars/container.toml PB_ORACLE=1 PB_MEMORY=4 PB_DISK= ;;
+        # docker, libvirt, Go, Node and two rustup trees do not fit the
+        # image's own disk, and the libvirt and docker daemons want memory.
+        dev_desktop) PB_NAME=dev_desktop PB_VARS=vars/desktop.toml PB_ORACLE=0 PB_MEMORY=4 PB_DISK=30 ;;
+        *) return 1 ;;
+    esac
+}
+
+# as_user_cmd <user> <command> : the remote command line that runs <command>
+# in <user>'s login shell. bot is the SSH user; anyone else is reached with
+# `sudo -n -iu`, so the check also proves bot's sudo needs no password.
+as_user_cmd() {
+    local q
+    q=$(printf '%s' "$2" | sed "s/'/'\\\\''/g")
+    if [[ $1 == bot ]]; then echo "bash -lc '$q'"; else echo "sudo -n -iu $1 bash -lc '$q'"; fi
+}
+
+# second_pass <run2.out> <go version after run 1> <go version after run 2> :
+# "ok" for STATUS ok and CHANGED 0; "go-release" when every changed op is in
+# role golang and the installed Go moved between the passes (golang wants
+# Latest, resolved on the host each run: a release between the passes is the
+# one accepted cause of a change); "fail" otherwise.
+second_pass() {
+    local out=$1 g1=$2 g2=$3 ch st roles
+    ch=$(awk '/^HOST  *STATUS/{getline; print $4; exit}' "$out")
+    st=$(awk '/^HOST  *STATUS/{getline; print $2; exit}' "$out")
+    if [[ $st == ok && $ch == 0 ]]; then echo ok; return; fi
+    roles=$(awk '/^== /{h=$0} /^-> changed/{ if (match(h, /\[[^]]*\]/)) print substr(h, RSTART + 1, RLENGTH - 2) }' "$out" | sort -u)
+    if [[ $st == changed && $roles == golang && -n $g1 && $g1 != "$g2" ]]; then echo go-release; else echo fail; fi
+}
+
+# groups_have <id -nG output> <group>... : true when every group is listed.
+groups_have() {
+    local have=" $1 " g
+    shift
+    for g in "$@"; do [[ $have == *" $g "* ]] || return 1; done
+}
+
 self_test() {
     local t fails=0
     t=$(mktemp -d)
@@ -173,6 +224,50 @@ self_test() {
     expect "no oracle record" "$t/none" "NON-GATING: no oracle record; run 'just test-container <distro> <c>' for the comparison"
     rm -f "$t"/o/* "$t"/v/* "$t/out"
     rmdir "$t/o" "$t/v" "$t/none" "$t"
+
+    # the playbook allowlist: what each accepted playbook runs with
+    local got
+    got=$(playbook_config dev_base && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "container/dev_base|vars/container.toml|1|4|" ]]; then echo "ok   playbook dev_base -> $got"
+    else echo "FAIL playbook dev_base -> '$got'"; fails=1; fi
+    got=$(playbook_config dev_desktop && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "dev_desktop|vars/desktop.toml|0|4|30" ]]; then echo "ok   playbook dev_desktop -> $got"
+    else echo "FAIL playbook dev_desktop -> '$got'"; fails=1; fi
+    if (playbook_config rust_build) >/dev/null 2>&1; then echo "FAIL playbook rust_build accepted"; fails=1
+    else echo "ok   playbook rust_build refused"; fi
+
+    # a working check as each user: bot directly, any other through sudo -iu
+    got=$(as_user_cmd bot 'go version')
+    if [[ $got == "bash -lc 'go version'" ]]; then echo "ok   as_user_cmd bot -> $got"
+    else echo "FAIL as_user_cmd bot -> '$got'"; fails=1; fi
+    got=$(as_user_cmd tpdev 'id -nG')
+    if [[ $got == "sudo -n -iu tpdev bash -lc 'id -nG'" ]]; then echo "ok   as_user_cmd tpdev -> $got"
+    else echo "FAIL as_user_cmd tpdev -> '$got'"; fails=1; fi
+
+    # the groups check reads `id -nG` output
+    if groups_have "bot adm sudo docker libvirt" sudo docker libvirt; then echo "ok   groups_have all present"
+    else echo "FAIL groups_have all present"; fails=1; fi
+    if groups_have "tpdev sudo docker" sudo docker libvirt; then echo "FAIL groups_have missing libvirt passed"; fails=1
+    else echo "ok   groups_have missing libvirt fails"; fi
+
+    # the second pass: CHANGED 0, or only golang's op changed because Go released
+    t=$(mktemp -d)
+    local hdr='HOST                 STATUS    OK CHANGED FAILED NOT RUN  DETAIL'
+    printf '%s\n' "$hdr" 'bot@192.0.2.7  ok         9       0      0       0' >"$t/r0"
+    printf '%s\n' '== bot@192.0.2.7 [golang] #30 pkg[script] update go ==' '-> changed' \
+        "$hdr" 'bot@192.0.2.7  changed    8       1      0       0' >"$t/rgo"
+    printf '%s\n' '== bot@192.0.2.7 [docker] #12 sh systemctl enable ==' '-> changed' \
+        '== bot@192.0.2.7 [golang] #30 pkg[script] update go ==' '-> changed' \
+        "$hdr" 'bot@192.0.2.7  changed    7       2      0       0' >"$t/rboth"
+    sp() { # name file go1 go2 want
+        local g; g=$(second_pass "$2" "$3" "$4")
+        if [[ $g == "$5" ]]; then echo "ok   second_pass $1 -> $g"; else echo "FAIL second_pass $1 -> '$g', wanted $5"; fails=1; fi
+    }
+    sp "changed 0" "$t/r0" "go1.25.3" "go1.25.3" ok
+    sp "go released between passes" "$t/rgo" "go1.25.3" "go1.25.4" go-release
+    sp "golang changed, no release" "$t/rgo" "go1.25.3" "go1.25.3" fail
+    sp "another role changed" "$t/rboth" "go1.25.3" "go1.25.4" fail
+    rm -f "$t"/r*; rmdir "$t"
     return $fails
 }
 
@@ -182,13 +277,14 @@ if [[ ${1:-} == --self-test ]]; then self_test; exit $?; fi
 keep=0
 if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
 distro=${1:-}; container=${2:-}
-[[ -n $distro && -n $container ]] || die "usage: test-vm.sh [--keep] <distro> <container> | --self-test"
-[[ $distro == ubuntu2404 && $container == dev_base ]] || die "only 'ubuntu2404 dev_base' is supported, not '$distro $container'"
+[[ -n $distro && -n $container ]] || die "usage: test-vm.sh [--keep] <distro> <playbook> | --self-test"
+[[ $distro == ubuntu2404 ]] || die "only the ubuntu2404 image is supported, not '$distro'"
+playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop"
 
 # ---- preflight --------------------------------------------------------------
 oracle=$ROOT/build/test-container/$container-$distro
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
-[[ -f $ROOT/vars/container.toml ]] || die "vars/container.toml not found"
+[[ -f $ROOT/$PB_VARS ]] || die "$PB_VARS not found"
 [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"
 
 name=tp-$container-$(date -u +%Y%m%dt%H%M%Sz)
@@ -207,7 +303,7 @@ trap cleanup EXIT
 
 # ---- create, onboard bot, wait, apt-get update (scripts/lib/vm.sh) -------------
 vm_record "$name"
-vm_up "$name" "$out" ""
+vm_up "$name" "$out" "" "$PB_MEMORY" "$PB_DISK"
 key=$VM_KEY dest=$VM_DEST
 
 # ---- state before -------------------------------------------------------------
@@ -219,16 +315,20 @@ changed_of() { awk '/^HOST  *STATUS/{getline; print $4; exit}' "$1"; }
 status_of() { awk '/^HOST  *STATUS/{getline; print $2; exit}' "$1"; }
 
 run() { # n
-    echo "=== run $1: tp-basic run container/$container --host $dest ==="
-    local rc=0
-    "$ROOT/build/tp-basic" run "container/$container" --host "$dest" --ssh-key "$key" \
+    echo "=== run $1: tp-basic run $PB_NAME --host $dest --vars $PB_VARS ==="
+    local rc=0 t0=$SECONDS
+    "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" --ssh-key "$key" \
         --ssh-option StrictHostKeyChecking=accept-new \
         --ssh-option UserKnownHostsFile="$out/known_hosts" \
-        --vars "$ROOT/vars/container.toml" --log "$out/run$1.jsonl" \
+        --vars "$ROOT/$PB_VARS" --log "$out/run$1.jsonl" \
         >"$out/run$1.out" 2>&1 || rc=$?
     sed -n '/^HOST  *STATUS/,$p' "$out/run$1.out"
+    echo "run $1 took $((SECONDS - t0))s"
     return $rc
 }
+
+# the installed Go, for second_pass (empty when the playbook has no golang)
+go_now() { sshv '[ -x /usr/local/go/bin/go ] && /usr/local/go/bin/go version || true' 2>/dev/null | awk '{print $3}'; }
 
 rc1=0; run 1 || rc1=$?
 if [[ $rc1 -ne 0 ]]; then
@@ -237,17 +337,25 @@ if [[ $rc1 -ne 0 ]]; then
     exit 1
 fi
 grep '^== .* \[prepare\]' "$out/run1.out" || true
+go1=$(go_now)
 
 rc2=0; run 2 || rc2=$?
 grep '^== .* \[prepare\]' "$out/run2.out" || true
+go2=$(go_now)
 ch=$(changed_of "$out/run2.out"); st=$(status_of "$out/run2.out")
-if [[ $rc2 -ne 0 || $ch != 0 || $st != ok ]]; then
-    echo "FAIL: second run exited $rc2, STATUS ${st:-?}, CHANGED ${ch:-?} (log: $out/run2.out)"
-    echo "changed ops in the second run:"
-    awk '/^== /{h=$0} /^-> changed/{print "  " h}' "$out/run2.out"
-    exit 1
-fi
-echo "second run: STATUS ok, CHANGED 0"
+verdict=fail
+[[ $rc2 -ne 0 ]] || verdict=$(second_pass "$out/run2.out" "$go1" "$go2")
+case $verdict in
+    ok) echo "second run: STATUS ok, CHANGED 0" ;;
+    go-release)
+        echo "second run: STATUS ${st}, CHANGED ${ch}: only golang changed, and Go moved from $go1 to $go2 between the passes"
+        echo "(a Go release between the passes is the one accepted cause of a nonzero count; reported, not hidden)" ;;
+    *)
+        echo "FAIL: second run exited $rc2, STATUS ${st:-?}, CHANGED ${ch:-?} (log: $out/run2.out)"
+        echo "changed ops in the second run:"
+        awk '/^== /{h=$0} /^-> changed/{print "  " h}' "$out/run2.out"
+        exit 1 ;;
+esac
 
 # ---- just through mise's system shims, as bot in a login shell (gating) ----------
 # dev_common puts /usr/local/share/mise/shims on login shells' PATH
@@ -265,8 +373,44 @@ if [[ $jrc -ne 0 ]]; then
 fi
 echo "bot: command -v just -> $jpath; just --version -> $jver"
 
+# ---- dev_desktop: the working checks, per admin user (gating) ---------------------
+# Each admin user of vars/desktop.toml, in a login shell: bot directly, tpdev
+# through `sudo -n -iu` (which also proves bot's sudo needs no password).
+# Every check must pass; all are run and printed before the verdict.
+if [[ $container == dev_desktop ]]; then
+    users=$(sed -n 's/^admin_users *= *\[\(.*\)\]/\1/p' "$ROOT/$PB_VARS" | tr -d '" ' | tr ',' ' ')
+    [[ -n $users ]] || die "no admin_users in $PB_VARS"
+    wrc=0
+    check() { # user label command
+        local r=0 o
+        o=$(sshv "$(as_user_cmd "$1" "$3")" 2>&1) || r=$?
+        if [[ $r -eq 0 ]]; then echo "ok   [$1] $2: $(printf '%s' "$o" | tail -1)"
+        else echo "FAIL [$1] $2 (exit $r):"; printf '%s\n' "$o" | tail -5 | sed 's/^/     | /'; wrc=1; fi
+    }
+    echo "=== working checks (users: $users) ==="
+    for u in $users; do
+        check "$u" "sudo -n true" 'sudo -n true && echo yes'
+        g=$(sshv "$(as_user_cmd "$u" 'id -nG')" 2>&1) || g=""
+        if groups_have "$g" sudo docker libvirt; then echo "ok   [$u] id -nG has sudo docker libvirt: $g"
+        else echo "FAIL [$u] id -nG lacks one of sudo docker libvirt: '$g'"; wrc=1; fi
+        check "$u" "docker run --rm hello-world" 'docker run --rm hello-world | grep -m1 "Hello from Docker"'
+        check "$u" "go version" 'go version'
+        check "$u" "node --version" 'node --version'
+        check "$u" "just --version" 'just --version'
+        check "$u" "tmux -V" 'tmux -V'
+        check "$u" "virsh --version" 'virsh --version'
+        # non-gating: the VM may not offer nested KVM (A-5b-13)
+        v=$(sshv "$(as_user_cmd "$u" 'virsh -c qemu:///system version')" 2>&1) || true
+        echo "info [$u] virsh -c qemu:///system version (non-gating):"
+        printf '%s\n' "$v" | sed 's/^/     | /'
+    done
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: a working check failed"; exit 1; fi
+    echo "working checks: all passed"
+fi
+
 # ---- state after and the non-gating comparison -----------------------------------
-# Neither the capture nor the report decides the exit code.
+# Neither the capture nor the report decides the exit code. Only dev_base has
+# a docker oracle record to compare with.
 crc=0
 { vm_state "$ROOT/scripts/image-state.sh" >"$out/vm-post.state" \
     && vm_state "$ROOT/scripts/image-state.sh" --versions >"$out/vm-post.versions"; } || crc=$?
@@ -274,9 +418,11 @@ if [[ $crc -ne 0 ]]; then
     echo "test-vm: WARNING: the post capture exited $crc; no comparison report" >&2
 else
     echo "captured $out/vm-post.state ($(wc -l <"$out/vm-post.state") lines)"
-    echo "=== comparison with the oracle ($oracle), non-gating ==="
-    rrc=0; oracle_report "$oracle" "$out" || rrc=$?
-    [[ $rrc -eq 0 ]] || echo "test-vm: WARNING: the comparison report returned $rrc" >&2
+    if [[ $PB_ORACLE -eq 1 ]]; then
+        echo "=== comparison with the oracle ($oracle), non-gating ==="
+        rrc=0; oracle_report "$oracle" "$out" || rrc=$?
+        [[ $rrc -eq 0 ]] || echo "test-vm: WARNING: the comparison report returned $rrc" >&2
+    fi
 fi
-echo "PASS: $container on a $distro VM over SSH (run 1 ok; run 2 STATUS ok, CHANGED 0)"
+echo "PASS: $PB_NAME on a $distro VM over SSH (run 1 ok; run 2 $verdict)"
 exit 0

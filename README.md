@@ -79,7 +79,25 @@ alternatives differently and the sets cannot match one to one.
 
 ```
 just test-vm ubuntu2404 dev_base
+just test-vm ubuntu2404 dev_desktop
 ```
+
+`dev_desktop` (vars/desktop.toml, admin users `bot` and `tpdev`, a 30 GB
+disk) has no docker oracle record; after the second run it gates on working
+checks for each admin user in a login shell (`bot` directly, `tpdev` through
+`sudo -n -iu tpdev`): `sudo -n true`, `id -nG` holding `sudo`, `docker` and
+`libvirt`, `docker run --rm hello-world`, `go version`, `node --version`,
+`just --version`, `tmux -V` and `virsh --version` (`virsh -c qemu:///system
+version` is printed, not gated). Go is wanted at latest, so a Go release
+between the two passes is the one accepted cause of a nonzero count, and the
+script prints it as such.
+
+Runs on 2026-11-04 (Ubuntu 24.04 VM, 4 GiB):
+
+| | First run | Second run | Changed on the second run | Whole script |
+|---|---|---|---|---|
+| `dev_desktop` | 14m25s | 9s | 0 (all 16 working checks pass) | 15m48s |
+| `dev_base` | 5m50s | 1s | 0 | 7m11s |
 
 **Ansible against telepatch on a VM** (`scripts/test-vm-oracle.sh`). The
 docker oracle on the base you actually deploy to. Two fresh VMs from the same
