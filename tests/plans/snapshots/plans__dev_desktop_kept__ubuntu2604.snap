@@ -1,0 +1,278 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host ubuntu2604 (os: Debian/Ubuntu 26.04)
+blocking reads: 0
+
+window 1 (final)
+role admin_users
+  #1 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='@includedir /etc/sudoers.d'
+      |   tp_n=$(grep -nE -- '^[#@]includedir\s+/etc/sudoers\.d' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #2 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='Defaults	secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"'
+      |   tp_n=$(grep -nE -- '^Defaults\s+secure_path' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #3 user as shell:root reads [group:sudo] writes [user:bot] post [user:bot=Exists(true)]
+      | created=0
+      | tp_u='bot'
+      | for tp_g in 'sudo'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -s '/bin/bash' -G 'sudo' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   tp_cur=$(getent passwd "$tp_u" | cut -d: -f7)
+      |   if [ "$tp_cur" != '/bin/bash' ]; then
+      |     usermod -s '/bin/bash' -- "$tp_u"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     for tp_g in 'sudo'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g";; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+  #4 file as shell:root reads [] writes [file:~bot/.ssh] post [file:~bot/.ssh=Exists(true)]
+      | rc=0; changed=0
+      | tp_p=~bot/'.ssh'
+      | if [ -d "$tp_p" ]; then :
+      | elif [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   echo "telepatch: $tp_p exists and is not a directory" >&2; rc=1
+      | else
+      |   (umask 022; mkdir -p -- "$tp_p")
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '700' ]; then
+      |   if chmod 700 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'bot:bot' ]; then
+      |   if chown 'bot:bot' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #5 file as shell:root reads [] writes [file:/etc/sudoers.d/bot] post [file:/etc/sudoers.d/bot=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers.d/bot'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_b='Ym90IEFMTD0oQUxMKSAgICAgICBOT1BBU1NXRDogQUxMCkRlZmF1bHRzOmJvdCAhcmVxdWlyZXR0eQpEZWZhdWx0czpib3QgIWVudl9yZXNldAo='
+      |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |     chmod 440 "$tp_c" || rc=$?
+      |     if [ "$rc" -eq 0 ]; then chown 'root:root' "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '440' ]; then
+      |   if chmod 440 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'root:root' ]; then
+      |   if chown 'root:root' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #6 user as shell:root reads [group:sudo] writes [user:tpdev] post [user:tpdev=Exists(true)]
+      | created=0
+      | tp_u='tpdev'
+      | for tp_g in 'sudo'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -s '/bin/bash' -G 'sudo' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   tp_cur=$(getent passwd "$tp_u" | cut -d: -f7)
+      |   if [ "$tp_cur" != '/bin/bash' ]; then
+      |     usermod -s '/bin/bash' -- "$tp_u"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     for tp_g in 'sudo'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g";; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+  #7 file as shell:root reads [] writes [file:~tpdev/.ssh] post [file:~tpdev/.ssh=Exists(true)]
+      | rc=0; changed=0
+      | tp_p=~tpdev/'.ssh'
+      | if [ -d "$tp_p" ]; then :
+      | elif [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   echo "telepatch: $tp_p exists and is not a directory" >&2; rc=1
+      | else
+      |   (umask 022; mkdir -p -- "$tp_p")
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '700' ]; then
+      |   if chmod 700 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'tpdev:tpdev' ]; then
+      |   if chown 'tpdev:tpdev' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #8 file as shell:root reads [] writes [file:/etc/sudoers.d/tpdev] post [file:/etc/sudoers.d/tpdev=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers.d/tpdev'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_b='dHBkZXYgQUxMPShBTEwpICAgICAgIE5PUEFTU1dEOiBBTEwKRGVmYXVsdHM6dHBkZXYgIXJlcXVpcmV0dHkKRGVmYXVsdHM6dHBkZXYgIWVudl9yZXNldAo='
+      |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |     chmod 440 "$tp_c" || rc=$?
+      |     if [ "$rc" -eq 0 ]; then chown 'root:root' "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '440' ]; then
+      |   if chmod 440 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'root:root' ]; then
+      |   if chown 'root:root' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+role tmux
+  #11 pkg as shell:root reads [] writes [pkg:tmux, pkg:tmuxp] post [pkg:tmux=Installed, pkg:tmuxp=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('tmux' 'tmuxp')
+      | tp_missing=()
+      | export DEBIAN_FRONTEND=noninteractive
+      | for tp_n in "${tp_want[@]}"; do
+      |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$tp_n" 2>/dev/null)" = installed ] || tp_missing+=("$tp_n")
+      | done
+      | if [ "$rc" -eq 0 ] && [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   if ! find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock 2>/dev/null | grep -q .; then apt-get -q update || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi

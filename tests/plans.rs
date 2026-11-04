@@ -88,13 +88,87 @@ fn desktop_vars() -> Vars {
     toml::from_str(&text).unwrap()
 }
 
-fn desktop_plan(distro: &str) -> String {
+fn desktop_plan_of(name: &str, distro: &str) -> String {
     let pbs = playbooks();
     let pb = pbs
         .iter()
-        .find(|p| p.name == "dev_desktop")
-        .expect("no playbook dev_desktop");
+        .find(|p| p.name == name)
+        .unwrap_or_else(|| panic!("no playbook {name}"));
     telepatch::testing::plan_for(distro, pb, desktop_vars())
+}
+
+fn desktop_plan(distro: &str) -> String {
+    desktop_plan_of("dev_desktop", distro)
+}
+
+/// The text of one `role <name>` section, up to the next `role ` line.
+fn role_section(text: &str, name: &str) -> String {
+    let from = text
+        .find(&format!("role {name}"))
+        .unwrap_or_else(|| panic!("no role {name} in {text}"));
+    let rest = &text[from + 5..];
+    let to = rest.find("\nrole ").map_or(text.len(), |i| from + 5 + i);
+    text[from..to].to_string()
+}
+
+#[test]
+fn dev_desktop_kept_plans() {
+    for d in DISTROS {
+        let text = desktop_plan_of("dev_desktop_kept", d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("dev_desktop_kept__{d}"), text);
+        });
+    }
+}
+
+/// `node` runs after `dev_common` and asks mise for `node`. The optimizer
+/// merges it into the `just` op of `dev_common` (one mise transaction), so
+/// the plan shows no `role node` section but a `merged from` line naming
+/// both, with `node` after `just`.
+#[test]
+fn dev_desktop_node_and_tmux_focus() {
+    for d in DISTROS {
+        let text = desktop_plan(d);
+        let common = role_section(&text, "dev_common");
+        assert!(
+            common.contains("pkg:mise:root:just=Installed, pkg:mise:root:node=Installed"),
+            "{d}: {common}"
+        );
+        assert!(common.contains("tp_want=('just' 'node')"), "{d}: {common}");
+        assert!(common.contains("merged from dev_common #"), "{d}: {common}");
+        assert!(common.contains(", node #"), "{d}: {common}");
+        let at = |r: &str| text.find(&format!("role {r}")).unwrap_or_else(|| panic!("no role {r}"));
+        assert!(at("dev_common") < at("rust_build") && at("rust_build") < at("tmux"), "{d}");
+    }
+}
+
+/// `tmuxp` only where the distro packages it: Debian family and Arch.
+#[test]
+fn tmux_requests_tmuxp_only_where_packaged() {
+    for d in DISTROS {
+        let text = desktop_plan(d);
+        let tmux = role_section(&text, "tmux");
+        assert!(tmux.contains("tmux"), "{d}: {tmux}");
+        let packaged = matches!(
+            d,
+            "debian12" | "debian13" | "ubuntu2404" | "ubuntu2604" | "arch" | "omarchy"
+        );
+        assert_eq!(tmux.contains("tmuxp"), packaged, "{d}: {tmux}");
+    }
+}
+
+/// The kept set is exactly `admin_users` and `tmux`.
+#[test]
+fn dev_desktop_kept_is_admin_users_and_tmux() {
+    for d in DISTROS {
+        let text = desktop_plan_of("dev_desktop_kept", d);
+        let roles: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("role "))
+            .collect();
+        assert_eq!(roles.len(), 2, "{d}: {roles:?}");
+        assert!(roles[0].starts_with("admin_users") && roles[1].starts_with("tmux"), "{d}: {roles:?}");
+    }
 }
 
 #[test]

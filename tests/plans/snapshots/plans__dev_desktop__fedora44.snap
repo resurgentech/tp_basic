@@ -400,9 +400,9 @@ role dev_common
       | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '644' ]; then
       |   if chmod 644 "$tp_p"; then changed=1; else rc=$?; fi
       | fi
-  #16 pkg[mise] as shell:root reads [] writes [*] post [pkg:mise:root:just=Installed, file:/etc/mise/config.toml=Exists(true)]
+  #16 pkg[mise] as shell:root reads [] writes [*] post [pkg:mise:root:just=Installed, pkg:mise:root:node=Installed, file:/etc/mise/config.toml=Exists(true)]
       | rc=0; changed=0; installed=()
-      | tp_want=('just')
+      | tp_want=('just' 'node')
       | declare -A tp_have=() tp_before=() tp_spec=() tp_wantv=()
       | tp_todo=(); tp_args=()
       | tp_cfgdir=${MISE_SYSTEM_CONFIG_DIR:-/etc/mise}; tp_data=${MISE_SYSTEM_DATA_DIR:-/usr/local/share/mise}
@@ -460,8 +460,9 @@ role dev_common
       |     if "$tp_mise" reshim --system; then changed=1; else rc=$?; fi
       |   fi
       | fi
+      merged from dev_common #16, node #19
 role rust_build
-  #19 pkg as shell:root reads [] writes [pkg:clang, pkg:gcc-c++, pkg:musl-gcc, pkg:openssl-devel, pkg:pkgconf-pkg-config] post [pkg:clang=Installed, pkg:gcc-c++=Installed, pkg:musl-gcc=Installed, pkg:openssl-devel=Installed, pkg:pkgconf-pkg-config=Installed]
+  #22 pkg as shell:root reads [] writes [pkg:clang, pkg:gcc-c++, pkg:musl-gcc, pkg:openssl-devel, pkg:pkgconf-pkg-config] post [pkg:clang=Installed, pkg:gcc-c++=Installed, pkg:musl-gcc=Installed, pkg:openssl-devel=Installed, pkg:pkgconf-pkg-config=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('gcc-c++' 'openssl-devel' 'pkgconf-pkg-config' 'clang' 'musl-gcc')
       | tp_missing=()
@@ -476,11 +477,11 @@ role rust_build
       |   rc=$?
       |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       | fi
-      merged from rust_build #19, rust_build #20
+      merged from rust_build #22, rust_build #23
 
 window 2 (final)
 role rust_build
-  #21 pkg[rustup] as login:bot reads [] writes [*] post [pkg:rustup:bot:stable=Installed, pkg:rustup:bot:stable/target/x86_64-unknown-linux-musl=Installed]
+  #24 pkg[rustup] as login:bot reads [] writes [*] post [pkg:rustup:bot:stable=Installed, pkg:rustup:bot:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -539,7 +540,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #22 pkg[cargo] as login:bot reads [] writes [*] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
+  #25 pkg[cargo] as login:bot reads [] writes [*] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -568,7 +569,7 @@ role rust_build
       |     done
       |   fi
       | fi
-  #23 pkg[rustup] as login:tpdev reads [] writes [*] post [pkg:rustup:tpdev:stable=Installed, pkg:rustup:tpdev:stable/target/x86_64-unknown-linux-musl=Installed]
+  #26 pkg[rustup] as login:tpdev reads [] writes [*] post [pkg:rustup:tpdev:stable=Installed, pkg:rustup:tpdev:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -627,7 +628,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #24 pkg[cargo] as login:tpdev reads [] writes [*] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
+  #27 pkg[cargo] as login:tpdev reads [] writes [*] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -656,7 +657,7 @@ role rust_build
       |     done
       |   fi
       | fi
-  #25 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
+  #28 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
       | rc=0; changed=0; installed=()
       | tp_tc='stable'
       | tp_prof='default'
@@ -715,7 +716,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #26 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
+  #29 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -743,4 +744,20 @@ role rust_build
       |       fi
       |     done
       |   fi
+      | fi
+role tmux
+  #32 pkg as shell:root reads [] writes [pkg:tmux] post [pkg:tmux=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('tmux')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       | fi

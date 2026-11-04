@@ -5,7 +5,9 @@ use telepatch::{Host, Playbook, PlaybookFuture, TraceError};
 
 use crate::roles::admin_users::admin_users;
 use crate::roles::dev_common::dev_common;
+use crate::roles::node::node;
 use crate::roles::rust_build::rust_build;
+use crate::roles::tmux::tmux;
 use crate::vars::Vars;
 
 /// Every desktop playbook, registered under its YAML name.
@@ -28,12 +30,15 @@ fn dev_desktop_entry(h: Host<Vars>) -> PlaybookFuture {
 
 /// `playbooks/dev_desktop.yml:8-17`: roles in YAML order. Only the roles
 /// already ported are here; each later step inserts its role at its YAML
-/// position (docker, vm_server, nvm_node, golang between `dev_common` and
-/// `rust_build`; tmux last). `rust_tools` is dropped.
+/// position (docker and vm_server between `dev_common` and `node`, golang
+/// between `node` and `rust_build`). `node` stands where `nvm_node` did
+/// (dropped, see `roles/node.rs`); `rust_tools` is dropped.
 async fn dev_desktop(h: &Host<Vars>) -> Result<(), TraceError> {
     admin_users(h).await?;
     dev_common(h).await?;
-    rust_build(h).await
+    node(h).await?;
+    rust_build(h).await?;
+    tmux(h).await
 }
 
 fn dev_desktop_kept_entry(h: Host<Vars>) -> PlaybookFuture {
@@ -41,7 +46,8 @@ fn dev_desktop_kept_entry(h: Host<Vars>) -> PlaybookFuture {
 }
 
 /// The roles of `dev_desktop` whose end state the VM oracle compares with
-/// the Ansible run. For now `admin_users` alone; T51 adds `tmux`.
+/// the Ansible run. `admin_users` and `tmux`.
 async fn dev_desktop_kept(h: &Host<Vars>) -> Result<(), TraceError> {
-    admin_users(h).await
+    admin_users(h).await?;
+    tmux(h).await
 }
