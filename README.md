@@ -12,7 +12,7 @@ repo relates to Ansible itself. It compiles to one static binary,
 
 ```
 src/playbooks/container.rs   container/dev_base, container/kernel_build, container/rust, container/latest_kernel_build
-src/playbooks/desktop.rs     dev_desktop, dev_desktop_kept (the VM oracle subset: admin_users, tmux)
+src/playbooks/desktop.rs     dev_desktop, dev_desktop_kept (the VM oracle subset: admin_users, tmux), desktop_services (docker, vm_server: the svc proofs)
 src/roles/                   dev_common, kernel_build, rust_build, rust_kernel, src_repos,
                              admin_users, docker, vm_server, node, golang, tmux
 src/vars.rs                  the typed vars every playbook reads (loaded from TOML)
@@ -69,6 +69,7 @@ difference fails.
 just test-container ubuntu2404 dev_base     # one cell
 just test-acceptance                        # the gate: 7 cells on ubuntu2404, rockylinux10 and ubuntu2604
 just test-idempotent ubuntu2404 rust        # apply twice in one container; the second run must change nothing
+just test-services ubuntu2404               # desktop_services (docker, vm_server) twice in an init-less container; svc prepare lines printed, run 2 CHANGED 0
 just test-matrix                            # every container on every distro; writes build/matrix.md (not a gate)
 ```
 

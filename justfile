@@ -54,6 +54,15 @@ test-acceptance:
 test-idempotent distro container:
     bash scripts/test-idempotent.sh {{distro}} {{container}}
 
+# svc proof in an init-less container (plain `sleep infinity`, `docker exec`,
+# nothing privileged): desktop_services (docker, vm_server) applied twice from
+# the pinned base image. Run 1 must exit 0 and show svc prepare lines (printed
+# verbatim), run 2 must show CHANGED 0, and `systemctl is-enabled docker` must
+# print enabled afterwards wherever systemctl exists.
+# `just test-services ubuntu2404`
+test-services distro:
+    bash scripts/test-services.sh {{distro}}
+
 # Not a gate: every container of every distro's set; writes build/matrix.md.
 test-matrix jobs="3":
     ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-matrix.sh {{jobs}}

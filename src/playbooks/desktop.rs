@@ -24,6 +24,10 @@ pub fn all() -> Vec<Playbook<Vars>> {
             name: "dev_desktop_kept",
             run: dev_desktop_kept_entry,
         },
+        Playbook {
+            name: "desktop_services",
+            run: desktop_services_entry,
+        },
     ]
 }
 
@@ -65,4 +69,19 @@ fn dev_desktop_kept_entry(h: Host<Vars>) -> PlaybookFuture {
 async fn dev_desktop_kept(h: &Host<Vars>) -> Result<(), TraceError> {
     admin_users(h).await?;
     tmux(h).await
+}
+
+fn desktop_services_entry(h: Host<Vars>) -> PlaybookFuture {
+    Box::pin(async move { desktop_services(&h).await })
+}
+
+/// Not in the YAML: the two service-bearing roles of `dev_desktop`, for the
+/// svc proofs (`scripts/test-services.sh` in an init-less container,
+/// `scripts/test-vm.sh` on the VM). `curl` and `ca-certificates` come first
+/// because `docker`'s `repo` op needs them and the pinned Debian-family bases
+/// ship no curl; the rest of `dev_desktop`'s chain would only add minutes.
+async fn desktop_services(h: &Host<Vars>) -> Result<(), TraceError> {
+    h.pkg(["curl", "ca-certificates"]);
+    docker(h).await?;
+    vm_server(h).await
 }

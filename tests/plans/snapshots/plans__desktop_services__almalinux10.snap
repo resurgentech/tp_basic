@@ -1,0 +1,257 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host almalinux10 (os: RedHat/Alma 10.2)
+blocking reads: 0
+
+window 1 (final)
+role (none)
+  #0 pkg as shell:root reads [] writes [pkg:ca-certificates, pkg:curl] post [pkg:ca-certificates=Installed, pkg:curl=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('curl' 'ca-certificates')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+role docker
+  #2 repo as shell:root reads [] writes [file:/etc/yum.repos.d/docker.repo, repo:docker] post [file:/etc/yum.repos.d/docker.repo=Exists(true), repo:docker=Exists(true)]
+      | tp_n='docker'
+      | tp_fetch() {
+      |   if ! command -v curl >/dev/null 2>&1; then
+      |     echo "telepatch: repo $tp_n: curl not found" >&2
+      |     return 1
+      |   fi
+      |   (umask 022; mkdir -p -- "$(dirname -- "$2")") || return 1
+      |   tp_t=$(mktemp "$2.XXXXXX") || return 1
+      |   if curl -fsSL -o "$tp_t" --url "$1" && chmod 0644 "$tp_t" && mv -f -- "$tp_t" "$2"; then
+      |     return 0
+      |   fi
+      |   rm -f -- "$tp_t"
+      |   return 1
+      | }
+      | tp_f='/etc/yum.repos.d/docker.repo'
+      | if [ ! -e "$tp_f" ]; then
+      |   if tp_fetch 'https://download.docker.com/linux/rhel/docker-ce.repo' "$tp_f"; then changed=1; else rc=1; fi
+      | fi
+  #3 pkg as shell:root reads [] writes [pkg:containerd.io, pkg:docker-buildx-plugin, pkg:docker-ce, pkg:docker-ce-cli, pkg:docker-compose-plugin, pkg:libvirt, pkg:libvirt-client, pkg:qemu-kvm, pkg:virt-install] post [pkg:containerd.io=Installed, pkg:docker-buildx-plugin=Installed, pkg:docker-ce=Installed, pkg:docker-ce-cli=Installed, pkg:docker-compose-plugin=Installed, pkg:libvirt=Installed, pkg:libvirt-client=Installed, pkg:qemu-kvm=Installed, pkg:virt-install=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('docker-ce' 'docker-ce-cli' 'containerd.io' 'docker-buildx-plugin' 'docker-compose-plugin' 'qemu-kvm' 'libvirt' 'libvirt-client' 'virt-install')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+      merged from docker #3, vm_server #10
+  #4 svc as shell:root reads [] writes [svc:docker.service] post [svc:docker.service=Exists(true)]
+      | tp_u='docker'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
+      |   esac
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if ! systemctl is-active --quiet -- "$tp_u"; then
+      |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           systemctl daemon-reload
+      |           rc=$?
+      |         fi
+      |         if [ "$rc" -eq 0 ]; then
+      |           systemctl start -- "$tp_u"
+      |           rc=$?
+      |           if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
+      | fi
+  #5 group as shell:root reads [] writes [group:docker] post [group:docker=Exists(true)]
+      | created=0
+      | tp_g='docker'
+      | if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |   groupadd -- "$tp_g"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | fi
+  #6 user as shell:root reads [group:docker] writes [user:bot] post [user:bot=Exists(true)]
+      | created=0
+      | tp_u='bot'
+      | for tp_g in 'docker'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -G 'docker' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     for tp_g in 'docker'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g";; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+  #7 user as shell:root reads [group:docker] writes [user:tpdev] post [user:tpdev=Exists(true)]
+      | created=0
+      | tp_u='tpdev'
+      | for tp_g in 'docker'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -G 'docker' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     for tp_g in 'docker'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g";; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+role vm_server
+  #11 svc as shell:root reads [] writes [svc:virtqemud.socket] post [svc:virtqemud.socket=Exists(true)]
+      | tp_u='virtqemud.socket'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
+      |   esac
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if ! systemctl is-active --quiet -- "$tp_u"; then
+      |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           systemctl daemon-reload
+      |           rc=$?
+      |         fi
+      |         if [ "$rc" -eq 0 ]; then
+      |           systemctl start -- "$tp_u"
+      |           rc=$?
+      |           if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
+      | fi
+  #12 user as shell:root reads [group:libvirt] writes [user:bot] post [user:bot=Exists(true)]
+      | created=0
+      | tp_u='bot'
+      | for tp_g in 'libvirt'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -G 'libvirt' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     for tp_g in 'libvirt'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g";; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+  #13 user as shell:root reads [group:libvirt] writes [user:tpdev] post [user:tpdev=Exists(true)]
+      | created=0
+      | tp_u='tpdev'
+      | for tp_g in 'libvirt'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -G 'libvirt' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     for tp_g in 'libvirt'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g";; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      | fi
+      | fi

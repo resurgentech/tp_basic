@@ -121,6 +121,42 @@ fn dev_desktop_kept_plans() {
     }
 }
 
+#[test]
+fn desktop_services_plans() {
+    for d in DISTROS {
+        let text = desktop_plan_of("desktop_services", d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("desktop_services__{d}"), text);
+        });
+    }
+}
+
+/// `desktop_services` is a pkg op for `curl` and `ca-certificates` (the
+/// `repo` op's precondition), then exactly `docker` and `vm_server`.
+#[test]
+fn desktop_services_is_docker_and_vm_server() {
+    for d in DISTROS {
+        let text = desktop_plan_of("desktop_services", d);
+        let roles: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("role "))
+            .collect();
+        // the pkg op runs outside any role
+        assert_eq!(roles.len(), 3, "{d}: {roles:?}");
+        assert_eq!(roles[0], "(none)", "{d}: {roles:?}");
+        let roles = &roles[1..];
+        assert!(
+            roles[0].starts_with("docker") && roles[1].starts_with("vm_server"),
+            "{d}: {roles:?}"
+        );
+        let head = &text[..text.find("role docker").unwrap()];
+        assert!(
+            head.contains("curl") && head.contains("ca-certificates"),
+            "{d}: {head}"
+        );
+    }
+}
+
 /// `node` runs after `docker`, which runs after `dev_common`. The mise op of
 /// `node` writes `*`, so it cannot hoist over docker's group and user ops
 /// into the `just` op of `dev_common`: each keeps its own mise transaction

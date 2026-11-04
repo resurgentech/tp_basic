@@ -12,6 +12,18 @@
 # must print /usr/local/share/mise/shims/just and `just --version` must work
 # (dev_common's mise; exit 1 with the output otherwise).
 #
+# dev_desktop makes three runs, the only booted-systemd proof of the svc
+# primitive (nothing privileged runs on this machine: no systemd-as-init
+# container): run 1 (ok); then `sudo systemctl disable --now docker` over SSH,
+# gated on `is-enabled docker` = disabled and `is-active docker` = inactive;
+# run 2 must be STATUS changed with CHANGED 1, the one changed op the svc op of
+# docker, and its prepare line `svc docker.service: will enable, will start`
+# (the enable-then-start path, not only the no-op); run 3 must be CHANGED 0
+# (the Go-release tolerance applies to run 3). After the per-user checks,
+# `systemctl is-enabled` of docker and libvirtd.socket must print enabled and
+# `is-active` active. dev_base stays two runs (run 2 CHANGED 0).
+# Not covered: daemon-reload (a unit file changed under a running daemon).
+#
 #   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base or dev_desktop)
 #   scripts/test-vm.sh --self-test
 #
@@ -177,6 +189,19 @@ second_pass() {
     if [[ $st == changed && $roles == golang && -n $g1 && $g1 != "$g2" ]]; then echo go-release; else echo fail; fi
 }
 
+# one_svc_change <run.out> <label> : true when the run is STATUS changed with
+# CHANGED 1 and the one changed op is the svc op whose header label is <label>
+# (the unit as the role wrote it: `svc docker`, while prepare names the key
+# `svc docker.service`).
+one_svc_change() {
+    local out=$1 unit=$2 ch st n
+    ch=$(awk '/^HOST  *STATUS/{getline; print $4; exit}' "$out")
+    st=$(awk '/^HOST  *STATUS/{getline; print $2; exit}' "$out")
+    [[ $st == changed && $ch == 1 ]] || return 1
+    n=$(awk '/^== /{h=$0} /^-> changed/{print h}' "$out")
+    [[ $(printf "%s\n" "$n" | wc -l) -eq 1 && $n == *" svc $unit =="* ]]
+}
+
 # groups_have <id -nG output> <group>... : true when every group is listed.
 groups_have() {
     local have=" $1 " g
@@ -267,6 +292,22 @@ self_test() {
     sp "go released between passes" "$t/rgo" "go1.25.3" "go1.25.4" go-release
     sp "golang changed, no release" "$t/rgo" "go1.25.3" "go1.25.3" fail
     sp "another role changed" "$t/rboth" "go1.25.3" "go1.25.4" fail
+    # the svc pass after `disable --now docker`: one changed op, the svc op
+    printf '%s\n' '== bot@192.0.2.7 [docker] #4 svc docker ==' '-> changed' \
+        "$hdr" 'bot@192.0.2.7  changed    8       1      0       0' >"$t/rsvc"
+    printf '%s\n' '== bot@192.0.2.7 [docker] #4 svc docker ==' '-> changed' \
+        '== bot@192.0.2.7 [golang] #30 pkg[script] update go ==' '-> changed' \
+        "$hdr" 'bot@192.0.2.7  changed    7       2      0       0' >"$t/rsvc2"
+    printf '%s\n' '== bot@192.0.2.7 [docker] #12 sh systemctl enable ==' '-> changed' \
+        "$hdr" 'bot@192.0.2.7  changed    8       1      0       0' >"$t/rsh"
+    osc() { # name file want(0|1)
+        local g=0; one_svc_change "$2" docker || g=1
+        if [[ $g -eq $3 ]]; then echo "ok   one_svc_change $1 -> $g"; else echo "FAIL one_svc_change $1 -> $g, wanted $3"; fails=1; fi
+    }
+    osc "svc op only" "$t/rsvc" 0
+    osc "svc and golang" "$t/rsvc2" 1
+    osc "another op" "$t/rsh" 1
+    osc "changed 0" "$t/r0" 1
     rm -f "$t"/r*; rmdir "$t"
     return $fails
 }
@@ -339,21 +380,58 @@ fi
 grep '^== .* \[prepare\]' "$out/run1.out" || true
 go1=$(go_now)
 
-rc2=0; run 2 || rc2=$?
-grep '^== .* \[prepare\]' "$out/run2.out" || true
+# ---- dev_desktop: the enable-then-start path of svc (gating) ----------------------
+# Between run 1 and the idempotent pass, take docker down on the booted VM:
+# `systemctl disable --now docker`, check it is `disabled` and `inactive`, then
+# run 2 must change exactly one op, the svc op of docker, and its prepare line
+# must say `svc docker.service: will enable, will start`. The pass after it
+# (run 3) is the CHANGED 0 pass. Nothing between the disable and run 2 touches
+# the docker socket (on Ubuntu docker.socket stays enabled and active, so
+# docker.service stays inactive until something connects to it).
+last=2
+if [[ $container == dev_desktop ]]; then
+    last=3
+    echo "=== svc enable-then-start: systemctl disable --now docker ==="
+    drc=0; dout=$(sshv 'sudo -n systemctl disable --now docker' 2>&1) || drc=$?
+    printf '%s\n' "$dout" | sed 's/^/     | /'
+    if [[ $drc -ne 0 ]]; then echo "FAIL: 'sudo systemctl disable --now docker' exited $drc"; exit 1; fi
+    en=$(sshv 'systemctl is-enabled docker' 2>&1) || true
+    ac=$(sshv 'systemctl is-active docker' 2>&1) || true
+    echo "after the disable: is-enabled docker -> $en; is-active docker -> $ac"
+    if [[ $en != disabled || $ac != inactive ]]; then
+        echo "FAIL: after the disable docker is '$en' and '$ac', wanted 'disabled' and 'inactive'"
+        exit 1
+    fi
+    rc2=0; run 2 || rc2=$?
+    grep '^== .* \[prepare\]' "$out/run2.out" || true
+    if [[ $rc2 -ne 0 ]] || ! one_svc_change "$out/run2.out" docker; then
+        echo "FAIL: run 2 (after the disable) exited $rc2, STATUS $(status_of "$out/run2.out"), CHANGED $(changed_of "$out/run2.out"); wanted STATUS changed, CHANGED 1, the svc docker op (log: $out/run2.out)"
+        echo "changed ops in run 2:"
+        awk '/^== /{h=$0} /^-> changed/{print "  " h}' "$out/run2.out"
+        exit 1
+    fi
+    if ! grep -F '[prepare] svc docker.service: will enable, will start' "$out/run2.out"; then
+        echo "FAIL: run 2's prepare block lacks 'svc docker.service: will enable, will start' (log: $out/run2.out)"
+        exit 1
+    fi
+    echo "run 2: STATUS changed, CHANGED 1, the svc docker op; prepare said 'will enable, will start'"
+fi
+
+rc2=0; run "$last" || rc2=$?
+grep '^== .* \[prepare\]' "$out/run$last.out" || true
 go2=$(go_now)
-ch=$(changed_of "$out/run2.out"); st=$(status_of "$out/run2.out")
+ch=$(changed_of "$out/run$last.out"); st=$(status_of "$out/run$last.out")
 verdict=fail
-[[ $rc2 -ne 0 ]] || verdict=$(second_pass "$out/run2.out" "$go1" "$go2")
+[[ $rc2 -ne 0 ]] || verdict=$(second_pass "$out/run$last.out" "$go1" "$go2")
 case $verdict in
-    ok) echo "second run: STATUS ok, CHANGED 0" ;;
+    ok) echo "run $last: STATUS ok, CHANGED 0" ;;
     go-release)
-        echo "second run: STATUS ${st}, CHANGED ${ch}: only golang changed, and Go moved from $go1 to $go2 between the passes"
+        echo "run $last: STATUS ${st}, CHANGED ${ch}: only golang changed, and Go moved from $go1 to $go2 between the passes"
         echo "(a Go release between the passes is the one accepted cause of a nonzero count; reported, not hidden)" ;;
     *)
-        echo "FAIL: second run exited $rc2, STATUS ${st:-?}, CHANGED ${ch:-?} (log: $out/run2.out)"
-        echo "changed ops in the second run:"
-        awk '/^== /{h=$0} /^-> changed/{print "  " h}' "$out/run2.out"
+        echo "FAIL: run $last exited $rc2, STATUS ${st:-?}, CHANGED ${ch:-?} (log: $out/run$last.out)"
+        echo "changed ops in run $last:"
+        awk '/^== /{h=$0} /^-> changed/{print "  " h}' "$out/run$last.out"
         exit 1 ;;
 esac
 
@@ -413,6 +491,15 @@ if [[ $container == dev_desktop ]]; then
         echo "info [$u] virsh -c qemu:///system version (non-gating):"
         printf '%s\n' "$v" | sed 's/^/     | /'
     done
+    # the services, after run 3 (gating): the units the svc ops keep up
+    for verb in is-enabled is-active; do
+        want=enabled; [[ $verb == is-active ]] && want=active
+        for unit in docker libvirtd.socket; do
+            r=0; o=$(sshv "systemctl $verb $unit" 2>&1) || r=$?
+            if [[ $o == "$want" ]]; then echo "ok   systemctl $verb $unit: $o"
+            else echo "FAIL systemctl $verb $unit printed '$o' (exit $r), wanted $want"; wrc=1; fi
+        done
+    done
     if [[ $wrc -ne 0 ]]; then echo "FAIL: a working check failed"; exit 1; fi
     echo "working checks: all passed"
 fi
@@ -433,5 +520,5 @@ else
         [[ $rrc -eq 0 ]] || echo "test-vm: WARNING: the comparison report returned $rrc" >&2
     fi
 fi
-echo "PASS: $PB_NAME on a $distro VM over SSH (run 1 ok; run 2 $verdict)"
+echo "PASS: $PB_NAME on a $distro VM over SSH (run 1 ok; run $last $verdict)"
 exit 0
