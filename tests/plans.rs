@@ -187,8 +187,8 @@ fn dev_desktop_plans() {
     }
 }
 
-/// Bug 1 and 4 of `conversion/admin_users.md`: the current include
-/// directive, and a group that exists on the host's family.
+/// Bug 1 and 4 of the admin_users YAML (see `src/roles/admin_users.rs`): the
+/// current include directive, and a group that exists on the host's family.
 #[test]
 fn dev_desktop_admin_users_focus() {
     // Only the admin_users role: other roles' packages mention `wheel`.
@@ -326,7 +326,7 @@ fn libvirt_want(text: &str) -> String {
     one.to_string()
 }
 
-/// `vm_server` (T54): the packages per family from `vm_server.md`, the
+/// `vm_server` (T54): the packages per family (see `src/roles/vm_server.rs`), the
 /// Debian family on `qemu-system-x86` (never the virtual `qemu-kvm`).
 #[test]
 fn vm_server_packages_per_family() {

@@ -1,19 +1,57 @@
 //! `admin_users`: the people who administer a workstation can use `sudo`
 //! without a password. Port of `roles/admin_users/tasks/{main,per_user}.yml`
-//! and `templates/sudoers_template.j2`; the understanding is in
-//! `conversion/admin_users.md`.
+//! and `templates/sudoers_template.j2` of the ansible repo at commit
+//! 79d1ca1 (accepted by the user 2026-11-04).
 //!
 //! Purpose: `dev_desktop` applies it first, as root. It makes two lines of
 //! `/etc/sudoers` right, then for each name in `admin_users` makes sure the
 //! account exists with `/bin/bash`, is in the group sudo's policy grants,
 //! has a `~/.ssh` directory and has its own drop-in in `/etc/sudoers.d`.
 //! The later roles that loop over `admin_users` rely on the accounts
-//! existing by then.
+//! existing by then: `docker` (`roles/docker/vars/main.yml:2`), `golang`
+//! (`roles/golang/tasks/main.yml:8`) and `vm_server`
+//! (`roles/vm_server/tasks/main.yml:11`) loop over the same list, and the
+//! playbook runs this role first (`playbooks/dev_desktop.yml:8`). No other
+//! playbook applies it. The list is `admin_users: ["{{ ansible_user }}"]`
+//! (`inventories/group_vars/all:16`) and the new account's password is
+//! `default_password` (`:26`), `""` at that commit.
 //!
-//! The port carries the intent of each task, not its text (decision of
-//! 2026-11-04 in `conversion/admin_users.md`): the bugs the doc found are
-//! fixed here, each at its line. What the Docker/VM oracle then sees is
-//! declared in `tests/oracle/intended/dev_desktop_kept.txt` (T56).
+//! The port carries the intent of each task, not its text (decision of the
+//! user, 2026-11-04: "we should always be porting the intent"): the four
+//! bugs of the YAML are fixed here, each at its line. What the Docker/VM
+//! oracle then sees of bugs 1 and 2 is declared as intended differences,
+//! with the bug named, in `tests/oracle/intended/dev_desktop_kept.txt`.
+//! The oracle compares what the host holds afterwards: `/etc/sudoers`
+//! lines (`includedir`, `secure_path`), `getent passwd`, `id -nG`,
+//! `passwd -S` (the status letter, never the hash), `~/.ssh` mode and
+//! owner, and the drop-in's mode, owner and content.
+//!
+//! Probes, 2026-11-03, throwaway containers with `sudo` installed from the
+//! distro first (the stock images have no `/etc/sudoers`): sudo version,
+//! include spelling, group.
+//! - ubuntu:24.04 1.9.15p5 `@includedir` `sudo`; ubuntu:26.04 sudo-rs
+//!   0.2.13 `@includedir` `sudo`; debian:12 1.9.13p3 and debian:13
+//!   1.9.16p2 `@includedir` `sudo`.
+//! - fedora:43 and the EL images (rockylinux 9 and 10, almalinux 9 and 10)
+//!   1.9.17p2 `#includedir` `wheel`; amazonlinux:2023 1.9.15p5
+//!   `#includedir` `wheel`; archlinux 1.9.17p2 `@includedir` `wheel`.
+//! - The EL family ships `#includedir`, not `@includedir` (an earlier
+//!   note assumed the opposite for Rocky); the double include of bug 1 is
+//!   Ubuntu, Debian and Arch.
+//! - ubuntu:26.04's `visudo` is sudo-rs's: `visudo -cf /etc/sudoers`
+//!   prints `parsed OK` and accepts a file with `#includedir` appended
+//!   (rc 0), so the `validate` command works there too.
+//!
+//! Open: `docker run --rm amazonlinux:2 sh -c 'yum -y -q install sudo
+//! >/dev/null && grep -n -E "includedir|secure_path" /etc/sudoers'` for
+//! Amazon Linux 2, which the YAML's playbook mentions and no image here
+//! builds.
+//!
+//! Reproduce a probe row: `docker run --rm ubuntu:24.04 sh -c 'apt-get
+//! update -qq && apt-get install -y -qq sudo && grep -n includedir
+//! /etc/sudoers'`; on `rockylinux/rockylinux:10` use `dnf -y -q install
+//! sudo`, on `archlinux` `pacman -Sy --noconfirm sudo`; `fedora:43` ships
+//! the file already.
 //!
 //! Not done, as in the YAML: `sudo` itself is not installed (every desktop
 //! has it), and `authorized_keys` is not touched (`~/.ssh` is created and
@@ -45,9 +83,16 @@ fn sudoers_dropin(u: &str) -> String {
 
 /// Only the Debian family has a `sudo` group. Ansible chose `wheel` for
 /// `redhat_based` and `sudo` for everything else, which fails on Arch and
-/// Amazon Linux 2023, where no `sudo` group exists (admin_users.md bug 4;
-/// observed `Group sudo does not exist`). Here `wheel` is the answer for
-/// every family without a `sudo` group, an unknown one included.
+/// Amazon Linux 2023, where no `sudo` group exists (bug 4; the YAML
+/// picks the group at `per_user.yml:24` and `redhat_based` omits both,
+/// `inventories/group_vars/all:4`). Observed `Group sudo does not exist`
+/// on archlinux with ansible-core 2.22.0 and on rockylinux:9, 2026-11-03;
+/// so the Ansible role cannot run on those two families. Probed: after
+/// installing sudo the group `sudo` exists on Ubuntu and Debian and is
+/// absent on Rocky, Fedora, Arch and Amazon Linux 2023. Here `wheel` is
+/// the answer for every family without a `sudo` group, an unknown one
+/// included; no oracle image sees the difference, since Ansible fails
+/// there.
 fn sudo_group(os: &Os) -> &'static str {
     if os.family == Family::Debian {
         "sudo"
@@ -57,11 +102,16 @@ fn sudo_group(os: &Os) -> &'static str {
 }
 
 /// The distro's own `secure_path` line with `/usr/local/sbin:/usr/local/bin`
-/// ensured at the front (admin_users.md bug 2). Ansible replaced the line
+/// ensured at the front (bug 2, `main.yml:11-17`). Ansible replaced the line
 /// with `/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin`,
 /// which dropped `/snap/bin` on Ubuntu and `/var/lib/snapd/snap/bin` on
 /// Fedora and Amazon Linux, and put `/usr/local` behind the system
-/// directories. These are the stock lines (probed in docker 2026-11-04,
+/// directories (observed 2026-11-03 with ansible-core 2.21.6 in
+/// ubuntu:24.04: the stock `Defaults	secure_path="/usr/local/sbin:...:/snap/bin"`
+/// became Ansible's line). On the EL family (stock
+/// `/sbin:/bin:/usr/sbin:/usr/bin`) and Arch (`/usr/local/sbin:
+/// /usr/local/bin:/usr/bin`) the Ansible line only added directories.
+/// These are the stock lines (probed in docker 2026-11-04,
 /// `cat -A`, sudo installed from the distro), so on a stock host the line
 /// already equals the wanted one and nothing changes; only the EL family
 /// differs from its stock (`/sbin:/bin:/usr/sbin:/usr/bin`) and gains
@@ -102,9 +152,20 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
     // every supported sudo is, sudo-rs on Ubuntu 26.04 included) and Ansible's
     // `^#includedir` regexp missed it, so it appended a second, old-style
     // include on Ubuntu, Debian and Arch and every drop-in was read twice
-    // (admin_users.md bug 1). `^[#@]includedir` matches either spelling, so
-    // a stock Debian-family or Arch host is unchanged and the EL family's
-    // `#includedir` is rewritten once, never doubled.
+    // (bug 1; observed 2026-11-03, ansible-core 2.21.6, ubuntu:24.04:
+    // `/etc/sudoers` held `57:@includedir /etc/sudoers.d` and
+    // `58:#includedir /etc/sudoers.d`, `"msg": "line added"`; both lines are
+    // valid, so nothing broke). `^[#@]includedir` matches either spelling,
+    // so a stock Debian-family or Arch host is unchanged and the EL
+    // family's `#includedir` is rewritten once, never doubled. `#includedir`
+    // is a directive, not a comment: sudo treats `#include` and
+    // `#includedir` as directives and accepts them for sudo before 1.9.1;
+    // the old spelling must not be lost where `@includedir` is absent.
+    // Source: https://www.sudo.ws/docs/man/sudoers.man/ (accessed 2026-11-03)
+    // Why the old regexp misbehaved: a `lineinfile` whose regexp matches
+    // nothing appends the line at end of file; when it matches, the last
+    // matching line is replaced, so a second run added no third line.
+    // Source: https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/lineinfile_module.html (accessed 2026-11-03)
     h.file("/etc/sudoers")
         .line_re(r"^[#@]includedir\s+/etc/sudoers\.d", "@includedir /etc/sudoers.d")
         .validate(VISUDO);
@@ -124,18 +185,26 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
         // an existing user kept a wrong shell; the op enforces the shell and
         // applies the hash only on creation. An empty `default_password`
         // leaves the new account locked, which is also what the YAML did
-        // (the `user` module ignored `password: ""`; admin_users.md bug 3,
-        // not a bug to fix). The group is added with `append`, never
-        // replacing the user's others (`groups_add`).
+        // (bug 3, not a bug to fix): observed 2026-11-03 that `password: ""`
+        // (`per_user.yml:17`, `default_password` is `""`) does not give an
+        // empty field. ansible-core 2.21.6 on ubuntu:24.04 reported
+        // `changed` for the shell but `/etc/shadow` stayed `!` (`passwd -S`
+        // letter `L`); ansible-core 2.15.13 on rockylinux:9 on an existing
+        // user reported `changed: false`, field `!!` (`LK`). A plain
+        // `usermod -p ""` does give `NP`, so the difference is in the
+        // module. The YAML set shell and password only when the first task
+        // created the account (`per_user.yml:12-18`). The group is added
+        // with `append`, never replacing the user's others (`groups_add`).
         h.user(u)
             .shell("/bin/bash")
             .groups_add([group])
             .password_hash(&h.vars.default_password);
 
         // `per_user.yml:27-33`. The YAML built `/home/<u>/.ssh` from the
-        // name; `~<u>` is the account's own home, the same place wherever
-        // homes live in `/home` and the right one elsewhere. Nothing is
-        // put in the directory (no `authorized_keys`).
+        // name (`per_user.yml:31`) and a group named `<u>`, true only for
+        // accounts `useradd` creates under `/home`; `~<u>` is the account's
+        // own home, the same place there and the right one elsewhere.
+        // Nothing is put in the directory (no `authorized_keys`).
         h.file(&format!("~{u}/.ssh"))
             .dir()
             .mode(0o700)

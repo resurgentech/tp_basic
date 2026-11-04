@@ -1,5 +1,0 @@
-# Install nvm for nodejs
-
-- name: nvm for node
-  include_role:
-    name: stephdewit.nvm

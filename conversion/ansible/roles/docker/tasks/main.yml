@@ -1,9 +1,0 @@
-# Installs docker
-
-- name: docker_debian
-  include_tasks: debian.yml
-  when: debian_based|bool
-
-- name: docker_redhat
-  include_tasks: redhat.yml
-  when: redhat_based|bool

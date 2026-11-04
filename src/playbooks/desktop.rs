@@ -36,7 +36,15 @@ fn dev_desktop_entry(h: Host<Vars>) -> PlaybookFuture {
 /// position. `docker` and `vm_server` sit between `dev_common` and `node`,
 /// so `node`'s mise op no longer merges into `dev_common`'s. `node` stands
 /// where `nvm_node` did (dropped, see `roles/node.rs`); `golang` follows it;
-/// `rust_tools` is dropped.
+/// `rust_tools` is dropped (decided "straight out" by the user, 2026-11-04).
+/// The YAML's play is a bare role list, `hosts: all`, `remote_user: root`
+/// (`playbooks/dev_desktop.yml:4-16`), nine roles in the order above plus
+/// `rust_tools` before `tmux`. `default_password` is `""` in the ansible
+/// repo (`inventories/group_vars/all:26`; its comment says an
+/// `openssl passwd -6` hash, so no secret is mirrored), and `full_users` and
+/// `vnc_users` served only `rust_tools` and a tigervnc role out of scope,
+/// so neither is in `Vars`. `docker` and `vm_server` are also applied by
+/// `playbooks/minikube.yml`, which this repo does not port.
 async fn dev_desktop(h: &Host<Vars>) -> Result<(), TraceError> {
     admin_users(h).await?;
     dev_common(h).await?;

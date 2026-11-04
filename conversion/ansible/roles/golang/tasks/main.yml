@@ -1,8 +1,0 @@
-# Installs golang dev environment
-
-- name: golang
-  include_role:
-    name: gantsign.golang
-
-- include_tasks: godoc.yml
-  loop: "{{ admin_users }}"

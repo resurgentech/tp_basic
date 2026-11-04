@@ -12,19 +12,23 @@ repo relates to Ansible itself. It compiles to one static binary,
 
 ```
 src/playbooks/container.rs   container/dev_base, container/kernel_build, container/rust, container/latest_kernel_build
-src/roles/                   dev_common, kernel_build, rust_build, rust_kernel, src_repos
+src/playbooks/desktop.rs     dev_desktop, dev_desktop_kept (the VM oracle subset: admin_users, tmux)
+src/roles/                   dev_common, kernel_build, rust_build, rust_kernel, src_repos,
+                             admin_users, docker, vm_server, node, golang, tmux
 src/vars.rs                  the typed vars every playbook reads (loaded from TOML)
 vars/container.toml          vars for image builds: admin_users = ["root"], tool versions
+vars/desktop.toml            vars for dev_desktop: admin_users = ["bot", "tpdev"], default_password = ""
 Dockerfiles/telepatch.*      the telepatch twins of docker_images' ansible.* Dockerfiles, one per distro family
 scripts/                     the equivalence oracles and the VM harness (below)
-conversion/                  provenance of the ported originals; a role being ported keeps its YAML and understanding doc here
+conversion/SOURCE            the ansible repo and commit the ports were made from; a role being ported keeps its YAML and understanding doc in conversion/ until it lands
 tests/plans.rs               plan snapshots: every playbook on every supported distro
 ```
 
 Each role carries its understanding as comments: what the playbook is for,
 which branches were kept, dropped or fixed, and why. The YAML it replaced is
 gone; `conversion/SOURCE` records the ansible commit the ports were made
-from, and `just check-conversion` verifies the directory against it.
+from, and `just check-conversion` verifies the directory against it (with
+no port in progress it holds only that header).
 
 ## Build and run
 
@@ -109,7 +113,17 @@ compare on a fresh host and on a converged one.
 
 ```
 just test-vm-oracle ubuntu2404 dev_base
+just test-vm-oracle ubuntu2404 dev_desktop_kept
 ```
+
+`dev_desktop_kept` is the two roles of `dev_desktop` that were ported rather
+than rewritten (`admin_users`, `tmux`). The script writes that two-role
+playbook into its own export of the ansible commit, and both captures add the
+account sections (`image-state.sh --users bot,tpdev`: passwd entry without
+secrets, groups, the `passwd -S` letter, the sudoers include and secure_path
+lines, the drop-ins, `~/.ssh`). A run on 2026-11-04: identical with the three
+declared sudoers differences (admin_users bugs 1 and 2); Ansible 10.6s and
+6.3s, telepatch 3.8s and 0.3s, both changing nothing on the second run.
 
 A run on 2026-11-03, `dev_base` on Ubuntu 24.04, states identical down to
 versions apart from the six intended mise lines:
