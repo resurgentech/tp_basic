@@ -74,7 +74,7 @@
 //! - run `make LLVM=1 rustavailable` as a post-condition in a kernel tree;
 //! - add `--toolchain` to the component add.
 
-use telepatch::facts::os::{Distro, Os};
+use telepatch::facts::os::{Distro, Family, Os};
 use telepatch::{Host, TraceError, role, sh};
 
 use crate::vars::Vars;
@@ -104,9 +104,7 @@ fn users(vars: &Vars) -> Vec<String> {
 #[role]
 pub async fn rust_kernel(h: &Host<Vars>) -> Result<(), TraceError> {
     // `libclang-dev` is the development metapackage for libclang, which
-    // bindgen uses to read the kernel's C. Debian family only: no other
-    // family has the task, and the clang packages `rust_build` installs
-    // there are what bring libclang. On Debian the `clang` package alone left
+    // bindgen uses to read the kernel's C. On Debian the `clang` package alone left
     // no `libclang-dev` (observed in `rust_build-ubuntu2604`: `libclang1-21`
     // present, `libclang-dev` absent), which is why the task exists. The
     // task has no cache update; the image build refreshed the cache before
@@ -114,8 +112,24 @@ pub async fn rust_kernel(h: &Host<Vars>) -> Result<(), TraceError> {
     // 1:21.1.6-71 from universe, depending on `libclang-21-dev` (observed
     // 2026-10-30, both installed in `latest_kernel_build-ubuntu2604` and
     // absent from `rust_build-ubuntu2604`).
+    //
+    // Bug fixed (not oracle-visible): the YAML had this task for the Debian
+    // family only, but bindgen needs a loadable `libclang.so` on every
+    // family. Probed 2026-11-04 in the `resurgentech/base-<d>:latest`
+    // images after `rust_build`'s clang install: fedora43, rockylinux9,
+    // rockylinux10, almalinux9 (clang 21.1.8) and amazonlinux2023 (clang
+    // 15.0.7) have only the versioned `/usr/lib64/libclang.so.<N>` from
+    // `clang-libs`; `clang-devel` adds the `/usr/lib64/libclang.so` link
+    // (`rpm -qf` names `clang-devel`), the RedHat-family twin of
+    // `libclang-dev`. On arch, `/usr/lib/libclang.so` is already there after
+    // `clang`, owned by `clang-libs` 23.1.4 (`pacman -Qo`), so nothing is
+    // added. The oracle builds `latest_kernel_build` only on ubuntu2604
+    // (docker_images' SETS), where nothing changes: no intended line.
+    // Source: https://rust-lang.github.io/rust-bindgen/requirements.html (accessed 2026-10-30)
     if debian_based(&h.os) {
         h.pkg(["libclang-dev"]);
+    } else if h.os.family == Family::RedHat {
+        h.pkg(["clang-devel"]);
     }
 
     for u in users(&h.vars) {

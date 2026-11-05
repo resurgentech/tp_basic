@@ -314,7 +314,22 @@ role rust_build
       |   fi
       | fi
 role rust_kernel
-  #19 sh as login:root reads [] writes [*]
+  #19 pkg as shell:root reads [] writes [pkg:clang-devel] post [pkg:clang-devel=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('clang-devel')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+  #20 sh as login:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
       | tp_out=$(mktemp)
       | {
@@ -323,7 +338,7 @@ role rust_kernel
       | rc=${PIPESTATUS[0]}
       | if [ "$rc" -eq 0 ] && grep -Eq 'downloading' "$tp_out"; then changed=1; fi
       | rm -f "$tp_out"
-  #20 sh as login:root reads [] writes [*]
+  #21 sh as login:root reads [] writes [*]
       | rc=0; changed=0; skipped=0
       | if [ -e ~/.cargo/bin/bindgen ]; then
       |   skipped=1

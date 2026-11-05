@@ -511,3 +511,21 @@ fn dev_base_uv_install_does_not_modify_path() {
         );
     }
 }
+
+/// T64: bindgen needs a loadable `libclang.so` on every family. Debian
+/// family `libclang-dev`, Fedora/EL/Amazon `clang-devel`, Arch nothing
+/// (`clang-libs`, a dependency of `clang`, ships it).
+#[test]
+fn rust_kernel_libclang_on_every_family() {
+    for d in DISTROS {
+        let text = plan("container/latest_kernel_build", d);
+        let sec = role_section(&text, "rust_kernel");
+        let (deb, rpm) = match d {
+            "debian12" | "debian13" | "ubuntu2404" | "ubuntu2604" => (true, false),
+            "arch" | "omarchy" => (false, false),
+            _ => (false, true),
+        };
+        assert_eq!(sec.contains("libclang-dev"), deb, "{d}: {sec}");
+        assert_eq!(sec.contains("clang-devel"), rpm, "{d}: {sec}");
+    }
+}
