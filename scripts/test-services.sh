@@ -4,7 +4,7 @@
 # privileges, no extra mounts, no systemd as init, never), apply the
 # `desktop_services` playbook (docker and vm_server after curl and
 # ca-certificates) twice with the static tp-basic (bind-mounted read-only, with
-# vars/container.toml, as test-idempotent.sh does).
+# build/dist/vars/container.toml, from `just dist`, as test-idempotent.sh does).
 #
 # Gates: run 1 exits 0 and its prepare block has at least one `svc ` line;
 # run 2 exits 0 with CHANGED 0. Then, when the image has systemctl,
@@ -32,6 +32,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=lib/docker-images.sh
 source "$ROOT/scripts/lib/docker-images.sh"
+# shellcheck source=lib/dist-input.sh
+source "$ROOT/scripts/lib/dist-input.sh"
 
 die() { echo "test-services: $*" >&2; exit 2; }
 
@@ -45,7 +47,8 @@ HCL=$DI_DIR/docker-bake.hcl
 family=$(sed -nE "s/^ *$distro += \{ root = .*ansible = \"([^\"]+)\".*/\1/p" "$HCL")
 [[ -n $family ]] || die "distro '$distro' not in $HCL DISTROS"
 
-# The same preamble the Dockerfiles run before tp-basic.
+# The preamble ../docker_images/Dockerfiles/telepatch.<family> runs before
+# tp-basic; checked against the file below, so a drift fails here.
 case $family in
     debian) preamble='apt-get update --fix-missing && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y'; socket=libvirtd.socket ;;
     redhat) preamble='dnf clean all && dnf update -y'; socket=virtqemud.socket ;;
@@ -53,9 +56,9 @@ case $family in
     *) die "unknown family '$family'" ;;
 esac
 
-[[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
-[[ -f $ROOT/vars/container.toml ]] || die "vars/container.toml not found"
-! command -v file >/dev/null || file "$ROOT/build/tp-basic" | grep -Eq 'statically linked|static-pie' || die "build/tp-basic is not a static binary: run 'just musl'"
+dist_require "$ROOT/build/dist" || exit 2
+# the copy above must be what the working tree's Dockerfile runs (fails on drift)
+preamble_check "$family" "$ROOT/../docker_images/Dockerfiles/telepatch.$family" "$preamble" || exit 2
 
 base_ref=resurgentech/base-$distro:latest
 base_id=$(docker image inspect -f '{{.Id}}' "$base_ref" 2>/dev/null) || die "$base_ref not found locally"
@@ -69,7 +72,7 @@ name=tp-svc-$distro-$$
 cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 docker run -d --name "$name" --entrypoint sleep \
-    -v "$ROOT/build/tp-basic:/tmp/tp-basic:ro" -v "$ROOT/vars:/tmp/tp-vars:ro" \
+    -v "$ROOT/build/dist/tp-basic:/tmp/tp-basic:ro" -v "$ROOT/build/dist/vars:/tmp/tp-vars:ro" \
     "$base_id" infinity >/dev/null
 
 echo "=== preamble ($family) ==="

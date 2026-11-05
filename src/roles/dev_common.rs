@@ -10,7 +10,8 @@
 //! `latest_kernel_build`, so every later image re-runs it.
 //!
 //! The package upgrade and the cache cleanup around each image build belong
-//! to the Dockerfiles in `docker_images`, not to this role. Keep the full
+//! to docker_images' Dockerfiles (`telepatch.*` for tp-basic, `ansible.*` for
+//! the original), not to this role. Keep the full
 //! upgrade there: Debian `apt-get upgrade`, RedHat `dnf update`, Arch
 //! `pacman -Syu` (Arch has no partial upgrade).
 //!

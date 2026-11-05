@@ -18,7 +18,6 @@ src/roles/                   dev_common, kernel_build, rust_build, rust_kernel, 
 src/vars.rs                  the typed vars every playbook reads (loaded from TOML)
 vars/container.toml          vars for image builds: admin_users = ["root"], tool versions
 vars/desktop.toml            vars for dev_desktop: admin_users = ["bot", "tpdev"], default_password = ""
-Dockerfiles/telepatch.*      the telepatch twins of docker_images' ansible.* Dockerfiles, one per distro family
 scripts/                     the equivalence oracles and the VM harness (below)
 conversion/SOURCE            the ansible repo and commit the ports were made from; a role being ported keeps its YAML and understanding doc in conversion/ until it lands
 tests/plans.rs               plan snapshots: every playbook on every supported distro
@@ -44,7 +43,7 @@ build/tp-basic run container/dev_base --host bot@10.0.0.7 --ssh-key ~/.ssh/id_ed
 ```
 
 The same binary builds images (bind-mounted into a `docker build`, see
-`Dockerfiles/`), provisions a machine it is copied to, or provisions hosts
+`../docker_images/Dockerfiles/telepatch.*`), provisions a machine it is copied to, or provisions hosts
 over SSH from wherever it runs.
 
 `cargo test` renders every playbook against every supported distro and
@@ -59,7 +58,8 @@ that, from cheap to thorough. Outputs land under `build/`, gitignored.
 
 **Docker oracle** (`scripts/test-container.sh`). Builds a container's image
 chain twice from one pinned base image, once with the Ansible Dockerfiles of
-the pinned `../docker_images` commit and once with the telepatch twins,
+the pinned `../docker_images` commit and once with docker_images' telepatch Dockerfiles (its working tree, with `build/dist` as the
+named context `tp`: run `just dist` first),
 captures the installed state of each final image with
 `scripts/image-state.sh` (packages by name and architecture, pip
 distributions, rustup state, apt sources, `/usr/local/bin`, mise shims,
@@ -173,8 +173,9 @@ adds. Any user's login shell then runs `just` from
 The harnesses read, and never write, three sibling checkouts:
 
 - `../ansible`: the originals, at the commit in `conversion/SOURCE`.
-- `../docker_images`: the pinned base images and the Ansible-side
-  Dockerfiles, which the docker oracle reuses unmodified.
+- `../docker_images`: the pinned base images; the Ansible-side Dockerfiles
+  (from the pinned commit) and the telepatch Dockerfiles (its working
+  tree, run with `build/dist`), which the docker oracle reuses unmodified.
 - `~/repos/jaredeh/vmtool`: the libvirt VM tool the VM harnesses drive
   through its CLI; VMs are named `tp-*` and deleted when the run ends.
 

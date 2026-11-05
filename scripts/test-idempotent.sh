@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Idempotency check: in one container of the pinned resurgentech/base-<distro>
 # image, apply container/<container> twice with the static tp-basic
-# (bind-mounted, as Dockerfiles/telepatch.* do, with vars/container.toml).
+# from build/dist (`just dist`; bind-mounted as docker_images' Dockerfiles/telepatch.* do, with vars/container.toml).
 # Passes when the second run exits 0 and its table shows CHANGED 0; otherwise
 # prints the second run's changed ops and exits 1. Usage errors exit 2.
 #
@@ -15,6 +15,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=lib/docker-images.sh
 source "$ROOT/scripts/lib/docker-images.sh"
+# shellcheck source=lib/dist-input.sh
+source "$ROOT/scripts/lib/dist-input.sh"
 
 die() { echo "test-idempotent: $*" >&2; exit 2; }
 
@@ -32,7 +34,8 @@ HCL=$DI_DIR/docker-bake.hcl
 family=$(sed -nE "s/^ *$distro += \{ root = .*ansible = \"([^\"]+)\".*/\1/p" "$HCL")
 [[ -n $family ]] || die "distro '$distro' not in $HCL DISTROS"
 
-# The same preamble the Dockerfiles run before tp-basic.
+# The preamble ../docker_images/Dockerfiles/telepatch.<family> runs before
+# tp-basic; checked against the file below, so a drift fails here.
 case $family in
     debian) preamble='apt-get update --fix-missing && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y' ;;
     redhat) preamble='dnf clean all && dnf update -y' ;;
@@ -40,9 +43,9 @@ case $family in
     *) die "unknown family '$family'" ;;
 esac
 
-[[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
-[[ -f $ROOT/vars/container.toml ]] || die "vars/container.toml not found"
-! command -v file >/dev/null || file "$ROOT/build/tp-basic" | grep -Eq 'statically linked|static-pie' || die "build/tp-basic is not a static binary: run 'just musl'"
+dist_require "$ROOT/build/dist" || exit 2
+# the copy above must be what the working tree's Dockerfile runs (fails on drift)
+preamble_check "$family" "$ROOT/../docker_images/Dockerfiles/telepatch.$family" "$preamble" || exit 2
 
 base_ref=resurgentech/base-$distro:latest
 base_id=$(docker image inspect -f '{{.Id}}' "$base_ref" 2>/dev/null) || die "$base_ref not found locally"
@@ -56,7 +59,7 @@ name=tp-idem-$container-$distro-$$
 cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 docker run -d --name "$name" --entrypoint sleep \
-    -v "$ROOT/build/tp-basic:/tmp/tp-basic:ro" -v "$ROOT/vars:/tmp/tp-vars:ro" \
+    -v "$ROOT/build/dist/tp-basic:/tmp/tp-basic:ro" -v "$ROOT/build/dist/vars:/tmp/tp-vars:ro" \
     "$base_id" infinity >/dev/null
 
 echo "=== preamble ($family) ==="

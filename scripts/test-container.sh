@@ -6,6 +6,11 @@
 #   scripts/test-container.sh [--side ansible|telepatch|both] <distro> <container>
 #   scripts/test-container.sh --self-test
 #
+#      The telepatch side is built from what ships: the working tree of
+#      ../docker_images (Dockerfiles/telepatch.<family> and its context) with
+#      build/dist as the named context `tp` (`just dist` first; a _dirty
+#      PROVENANCE is printed, not gated). The Ansible side stays on the pinned export.
+#
 # Env: ADMIN_USERS  extra users image-state.sh inspects besides root (default none)
 #      ANSIBLE_SHA  override the resolved `master` commit of the ansible repo
 #      DI_SHA       docker_images commit the Ansible side is built from (required;
@@ -27,6 +32,8 @@ die() { echo "test-container: $*" >&2; exit 2; }
 source "$ROOT/scripts/lib/compare.sh"
 # shellcheck source=lib/docker-images.sh
 source "$ROOT/scripts/lib/docker-images.sh"
+# shellcheck source=lib/dist-input.sh
+source "$ROOT/scripts/lib/dist-input.sh"
 
 self_test() {
     local t fails=0
@@ -56,6 +63,44 @@ self_test() {
     selftest_intended compare_captures "$t" || fails=1
     selftest_no_local_copy "${BASH_SOURCE[0]}" "$ROOT/scripts/test-vm-oracle.sh" || fails=1
     selftest_export || fails=1
+    selftest_dist || fails=1
+    return $fails
+}
+
+# the dist input and the preamble check (no docker; a scratch dist, never build/dist)
+selftest_dist() {
+    local t rc fails=0 d
+    t=$(mktemp -d); d=$t/dist
+    mkdir -p "$d/vars"
+    : >"$d/vars/container.toml"; echo 'tp_basic_hash: abc_dirty' >"$d/PROVENANCE"
+    cp /bin/true "$d/tp-basic"
+    # a missing PROVENANCE: exit 2 naming 'just dist'
+    rm "$d/PROVENANCE"
+    rc=0; (dist_require "$d") >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 2 ]] && grep -q "PROVENANCE not found: run 'just dist' first" "$t/out"; then echo "ok   dist: missing PROVENANCE (exit 2)"; else echo "FAIL dist: missing PROVENANCE: exit $rc"; fails=1; fi
+    # an empty PROVENANCE
+    : >"$d/PROVENANCE"
+    rc=0; (dist_require "$d") >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 2 ]] && grep -q 'PROVENANCE is empty' "$t/out"; then echo "ok   dist: empty PROVENANCE (exit 2)"; else echo "FAIL dist: empty PROVENANCE: exit $rc"; fails=1; fi
+    # a missing binary
+    echo 'tp_basic_hash: abc_dirty' >"$d/PROVENANCE"; rm "$d/tp-basic"
+    rc=0; (dist_require "$d") >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 2 ]] && grep -q 'tp-basic not found' "$t/out"; then echo "ok   dist: missing tp-basic (exit 2)"; else echo "FAIL dist: missing tp-basic: exit $rc"; fails=1; fi
+    # a non-static binary (skipped where /bin/true is static or `file` is absent)
+    cp /bin/true "$d/tp-basic"
+    if command -v file >/dev/null && ! file "$d/tp-basic" | grep -Eq 'statically linked|static-pie'; then
+        rc=0; (dist_require "$d") >"$t/out" 2>&1 || rc=$?
+        if [[ $rc -eq 2 ]] && grep -q 'not a static binary' "$t/out"; then echo "ok   dist: dynamic tp-basic (exit 2)"; else echo "FAIL dist: dynamic tp-basic: exit $rc"; fails=1; fi
+    fi
+    # the preamble: a matching one passes, a drifted one fails with both texts
+    printf '%s\n' 'FROM parent' 'ARG PLAYBOOK' 'RUN --mount=type=bind,from=tp,source=tp-basic,target=/tmp/tp-basic \' \
+        '    --mount=type=bind,from=tp,source=vars,target=/tmp/tp-vars \' '    dnf clean all && \' '    dnf update -y && \' \
+        '    /tmp/tp-basic run "${PLAYBOOK}" --local' '' 'RUN rm -rf /tmp/*' >"$t/Dockerfile.redhat"
+    rc=0; preamble_check redhat "$t/Dockerfile.redhat" 'dnf clean all && dnf update -y' >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "ok   preamble: matching"; else echo "FAIL preamble: matching: exit $rc"; sed 's/^/     | /' "$t/out"; fails=1; fi
+    rc=0; preamble_check redhat "$t/Dockerfile.redhat" 'dnf update -y' >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 2 ]] && grep -q 'preamble drifted' "$t/out" && grep -q 'file:   dnf clean all && dnf update -y' "$t/out"; then echo "ok   preamble: drifted (exit 2)"; else echo "FAIL preamble: drifted: exit $rc"; fails=1; fi
+    rm -rf "$t"
     return $fails
 }
 
@@ -120,9 +165,10 @@ ansible_url=$(sed -nE 's/^variable "ANSIBLE_URL" \{ default = "([^"]+)".*/\1/p' 
 
 # ---- preflight, before any build -------------------------------------------
 if [[ $side != ansible ]]; then
-    [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
-    [[ -f $ROOT/vars/container.toml ]] || die "vars/container.toml not found"
-    ! command -v file >/dev/null || file "$ROOT/build/tp-basic" | grep -Eq 'statically linked|static-pie' || die "build/tp-basic is not a static binary: run 'just musl'"
+    # what ships: the dist (`just dist`) and the working tree's telepatch Dockerfile
+    dist_require "$ROOT/build/dist" || exit 2
+    tp_dockerfile=$ROOT/../docker_images/Dockerfiles/telepatch.$family
+    [[ -f $tp_dockerfile ]] || die "$tp_dockerfile not found"
 fi
 
 out=$ROOT/build/test-container/$container-$distro
@@ -175,13 +221,18 @@ build_ansible() {
 # ---- telepatch side ---------------------------------------------------------
 build_telepatch() {
     local prev=$pin c tag pb
+    echo "telepatch: $tp_dockerfile, dist $(sed -n 's/^tp_basic_hash: //p' "$ROOT/build/dist/PROVENANCE")"
     for c in "${chain[@]}"; do
         tag=tp-test/telepatch/$c-$distro
         pb=$(basename "$(playbook_of "$c")" .yml)
         echo "=== telepatch: $tag (parent $prev, playbook container/$pb) ==="
-        "${bb[@]}" -f "$ROOT/Dockerfiles/telepatch.$family" \
+        "${bb[@]}" -f "$tp_dockerfile" \
             --build-context "parent=docker-image://$prev" \
-            --build-arg PLAYBOOK_NAME="$pb" -t "$tag" "$ROOT"
+            --build-context "tp=$ROOT/build/dist" \
+            --build-arg ORG=tp-test --build-arg IMAGE="$tag" --build-arg BASE_IMAGE="$prev" \
+            --build-arg CREATED="$created" --build-arg GIT_URL=https://example.invalid/tp-test \
+            --build-arg GIT_SHA=tp-test --build-arg PLAYBOOK="container/$pb" \
+            -t "$tag" "$ROOT/../docker_images"
         prev=$tag
     done
 }

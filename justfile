@@ -26,7 +26,9 @@ musl:
 dist:
     bash scripts/dist.sh
 
-# Docker equivalence oracle: build <container>'s chain with Ansible and with
+# Docker equivalence oracle (run `just dist` first; it is not a dependency, so
+# the dist a running docker_images build reads is never rewritten under it):
+# build <container>'s chain with Ansible and with
 # tp-basic from one pinned base image, diff the resulting image state.
 # `just test-container ubuntu2404 dev_base`. Pins the Ansible side to
 # `ported_ansible` like test-acceptance (ANSIBLE_SHA overrides) and reads the

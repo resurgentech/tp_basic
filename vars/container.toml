@@ -1,5 +1,6 @@
 # Container image builds run as root; mirrors inventories/group_vars/all
-# with ansible_user=root (the docker_images ANSIBLE_HACKS).
+# with ansible_user=root (the docker_images ANSIBLE_HACKS). The telepatch
+# Dockerfiles in docker_images run tp-basic with this file (build/dist/vars).
 admin_users = ["root"]
 rustup_version = "1.29.0"
 cargo_version = "1.94.0"
