@@ -17,6 +17,15 @@ musl:
     esac
     build/tp-basic list
 
+# The dist ../docker_images builds images with (bake context `tp`, TP_DIST
+# overrides): build/dist/{tp-basic, vars/container.toml, PROVENANCE}. The
+# binary is built as `just musl` builds it; PROVENANCE names this repo's URL
+# and commit, the [patch] telepatch commit (each `_dirty` when its tree has
+# changes), the binary's sha256 and rustc. The recipe prints the file and
+# fails on a missing field. `just dist`
+dist:
+    bash scripts/dist.sh
+
 # Docker equivalence oracle: build <container>'s chain with Ansible and with
 # tp-basic from one pinned base image, diff the resulting image state.
 # `just test-container ubuntu2404 dev_base`. Pins the Ansible side to

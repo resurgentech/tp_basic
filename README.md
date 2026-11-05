@@ -36,6 +36,7 @@ Rust stable, `just`, and the `x86_64-unknown-linux-musl` target.
 
 ```
 just musl                                   # build/tp-basic, static, then `list`
+just dist                                   # build/dist/{tp-basic, vars/, PROVENANCE} for ../docker_images (bake context `tp`)
 build/tp-basic list
 build/tp-basic plan container/rust --distro rockylinux10
 build/tp-basic run container/dev_base --local --vars vars/container.toml
