@@ -7,11 +7,14 @@
 #
 #   scripts/test-idempotent.sh <distro> <dev_base|rust>
 #
+# Env: DI_SHA  docker_images commit the hcl is read from (required; just passes ported_docker_images)
+#
 # Outputs (gitignored): build/test-idempotent/<container>-<distro>/{run1,run2}.log
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-HCL=$ROOT/../docker_images/docker-bake.hcl
+# shellcheck source=lib/docker-images.sh
+source "$ROOT/scripts/lib/docker-images.sh"
 
 die() { echo "test-idempotent: $*" >&2; exit 2; }
 
@@ -21,6 +24,10 @@ case $container in
     dev_base|rust) ;;
     *) die "container must be dev_base or rust, not '$container'" ;;
 esac
+
+# the pinned docker_images commit, exported once (never the working tree)
+di_export "$ROOT" || exit 2
+HCL=$DI_DIR/docker-bake.hcl
 
 family=$(sed -nE "s/^ *$distro += \{ root = .*ansible = \"([^\"]+)\".*/\1/p" "$HCL")
 [[ -n $family ]] || die "distro '$distro' not in $HCL DISTROS"

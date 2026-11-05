@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Not a gate. Runs the equivalence oracle (test-container.sh) for every
-# container of every distro's set in ../docker_images/docker-bake.hcl,
+# container of every distro's set in the docker-bake.hcl of the pinned docker_images commit (DI_SHA),
 # JOBS distros at a time, and writes a pass/diff table to build/matrix.md.
 #
 #   scripts/test-matrix.sh [jobs]        (default 3)
@@ -8,10 +8,15 @@
 # Result per cell: pass (gating diff empty), diff (gating diff), error
 # (a build or capture failed before a diff was possible).
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$ROOT"
+# shellcheck source=lib/docker-images.sh
+source scripts/lib/docker-images.sh
 
 jobs=${1:-3}
-hcl=../docker_images/docker-bake.hcl
+# export the pinned docker_images commit once, before the parallel test-container runs
+di_export "$ROOT" || exit 2
+hcl=$DI_DIR/docker-bake.hcl
 out=build/matrix
 mkdir -p "$out"
 : > "$out/rows.txt"

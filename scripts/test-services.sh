@@ -24,16 +24,23 @@
 #
 #   scripts/test-services.sh <distro>
 #
+# Env: DI_SHA  docker_images commit the hcl is read from (required; just passes ported_docker_images)
+#
 # Outputs (gitignored): build/test-services/<distro>/{preamble,run1,run2}.log
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-HCL=$ROOT/../docker_images/docker-bake.hcl
+# shellcheck source=lib/docker-images.sh
+source "$ROOT/scripts/lib/docker-images.sh"
 
 die() { echo "test-services: $*" >&2; exit 2; }
 
 [[ $# -eq 1 && -n ${1:-} ]] || die "usage: test-services.sh <distro>"
 distro=$1
+
+# the pinned docker_images commit, exported once (never the working tree)
+di_export "$ROOT" || exit 2
+HCL=$DI_DIR/docker-bake.hcl
 
 family=$(sed -nE "s/^ *$distro += \{ root = .*ansible = \"([^\"]+)\".*/\1/p" "$HCL")
 [[ -n $family ]] || die "distro '$distro' not in $HCL DISTROS"

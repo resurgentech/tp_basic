@@ -57,13 +57,17 @@ and `tp-basic` must leave a machine in the same state. Three harnesses check
 that, from cheap to thorough. Outputs land under `build/`, gitignored.
 
 **Docker oracle** (`scripts/test-container.sh`). Builds a container's image
-chain twice from one pinned base image, once with the Ansible Dockerfiles in
-`../docker_images` at the ported commit and once with the telepatch twins,
+chain twice from one pinned base image, once with the Ansible Dockerfiles of
+the pinned `../docker_images` commit and once with the telepatch twins,
 captures the installed state of each final image with
 `scripts/image-state.sh` (packages by name and architecture, pip
 distributions, rustup state, apt sources, `/usr/local/bin`, mise shims,
 tools, config and `/etc/profile.d` names), and diffs. Any
 difference fails.
+The Ansible side (docker-bake.hcl, `Dockerfiles/ansible.*`, build context) is
+exported with `git archive` from the commit `ported_docker_images` in the
+justfile into `build/docker_images/<sha>/`, never read from the sibling's
+working tree; `DI_SHA=<sha>` overrides it.
 
 ```
 just test-container ubuntu2404 dev_base     # one cell

@@ -8,14 +8,14 @@
 #
 # Env: ADMIN_USERS  extra users image-state.sh inspects besides root (default none)
 #      ANSIBLE_SHA  override the resolved `master` commit of the ansible repo
+#      DI_SHA       docker_images commit the Ansible side is built from (required;
+#                   `just` passes ported_docker_images); exported to build/docker_images/<sha>/
 #
 # Outputs (gitignored): build/test-container/<container>-<distro>/
 #   {ansible,telepatch}.{log,state,versions}, base.state (the pinned base)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-DI=$ROOT/../docker_images
-HCL=$DI/docker-bake.hcl
 
 die() { echo "test-container: $*" >&2; exit 2; }
 
@@ -25,6 +25,8 @@ die() { echo "test-container: $*" >&2; exit 2; }
 # test-vm-oracle.sh.
 # shellcheck source=lib/compare.sh
 source "$ROOT/scripts/lib/compare.sh"
+# shellcheck source=lib/docker-images.sh
+source "$ROOT/scripts/lib/docker-images.sh"
 
 self_test() {
     local t fails=0
@@ -53,6 +55,34 @@ self_test() {
     grep -q '^+curl amd64 8.6' "$t/out" || { echo "FAIL version only: side diff not printed"; fails=1; }
     selftest_intended compare_captures "$t" || fails=1
     selftest_no_local_copy "${BASH_SOURCE[0]}" "$ROOT/scripts/test-vm-oracle.sh" || fails=1
+    selftest_export || fails=1
+    return $fails
+}
+
+# docker_images export (needs git and the sibling repo, no docker)
+selftest_export() {
+    local t rc fails=0 pinned=5df316b67429370105efec0e5c5ac29a6ccbd71a
+    t=$(mktemp -d)
+    # a bogus sha: exit 2, message names the sha and the repo
+    rc=0; (DI_SHA=0000000000000000000000000000000000000bad di_export "$ROOT" "$t") >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 2 ]] && grep -q 'not a commit in .*docker_images: fetch it or set DI_SHA' "$t/out" && grep -q 0000000000000000000000000000000000000bad "$t/out"; then
+        echo "ok   export: bogus sha (exit 2)"; else echo "FAIL export: bogus sha: exit $rc"; sed 's/^/     | /' "$t/out"; fails=1; fi
+    # unset DI_SHA: exit 2, usage message
+    rc=0; (unset DI_SHA; di_export "$ROOT" "$t") >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 2 ]] && grep -q 'DI_SHA is not set' "$t/out"; then echo "ok   export: DI_SHA unset (exit 2)"; else echo "FAIL export: DI_SHA unset: exit $rc"; fails=1; fi
+    # the pinned commit (short form too): full-sha dir, hcl and ansible Dockerfile, marker, reuse
+    if git -C "$ROOT/../docker_images" cat-file -e "$pinned^{commit}" 2>/dev/null; then
+        local d=$t/build/docker_images/$pinned
+        rc=0; (DI_SHA=${pinned:0:10} di_export "$ROOT" "$t") >"$t/out" 2>&1 || rc=$?
+        if [[ $rc -eq 0 && -f $d/docker-bake.hcl && -f $d/Dockerfiles/ansible.debian && -f $d/.export-complete \
+              && -f $d/.dockerignore && -f $d/scripts/image-history.sh ]]; then
+            echo "ok   export: pinned commit (short sha, full-sha dir)"; else echo "FAIL export: pinned commit: exit $rc"; sed 's/^/     | /' "$t/out"; fails=1; fi
+        rc=0; (DI_SHA=$pinned di_export "$ROOT" "$t") >"$t/out" 2>&1 || rc=$?
+        if [[ $rc -eq 0 ]] && ! grep -q exported "$t/out"; then echo "ok   export: complete export reused"; else echo "FAIL export: reuse"; fails=1; fi
+    else
+        echo "FAIL export: pinned commit $pinned not in ../docker_images"; fails=1
+    fi
+    rm -rf "$t"
     return $fails
 }
 
@@ -64,6 +94,11 @@ if [[ ${1:-} == --side ]]; then side=${2:?--side needs a value}; shift 2; fi
 [[ $side =~ ^(ansible|telepatch|both)$ ]] || die "--side must be ansible, telepatch or both"
 distro=${1:-}; container=${2:-}
 [[ -n $distro && -n $container ]] || die "usage: test-container.sh [--side S] <distro> <container> | --self-test"
+
+# ---- the pinned docker_images commit, exported once (never the working tree) --
+di_export "$ROOT" || exit 2
+DI=$DI_DIR
+HCL=$DI/docker-bake.hcl
 
 # ---- docker-bake.hcl, parsed line-oriented (same idea as telepatch's os-fixtures) --
 # DISTROS line:     name = { root = "...", base = "...", ansible = "<family>", ...
