@@ -394,9 +394,12 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // the version `/etc/mise/config.toml` asks for; it works for a non-root
     // user with only that dir on PATH (probed 2026-11-03, T39's live test).
     // Login shells only (`bash -l`, `su -`, `sudo -i` and SSH logins read
-    // `/etc/profile.d`); Docker `RUN` lines and non-login `bash -c` do not
-    // need it, and `/etc/environment` is not edited. The whole file is
-    // these two lines, mode 0644 like the other profile.d files.
+    // `/etc/profile.d`); Docker `RUN` lines do not need it, and
+    // `/etc/environment` is not edited. A process in a built image that is
+    // not a login shell (`docker run IMAGE just`, a CI step) gets the shims
+    // from the image's `ENV PATH`, which docker_images'
+    // `Dockerfiles/telepatch.*` set; this role does not cover it. The whole
+    // file is these two lines, mode 0644 like the other profile.d files.
     // Source: https://mise.jdx.dev/dev-tools/shims.html (accessed 2026-11-03)
     // Source: https://mise.jdx.dev/configuration.html (accessed 2026-11-03)
     h.file("/etc/profile.d/mise.sh")
