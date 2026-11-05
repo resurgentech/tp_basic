@@ -295,7 +295,7 @@ role dev_common
       | fi
       | if [ "$tp_act" = install ]; then
       |   ( export TP_WANT="$tp_want_v"
-      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
+      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 UV_INSTALL_DIR=/usr/local/bin sh)
       |   )
       |   rc=$?
       | elif [ "$tp_act" = update ]; then

@@ -6,3 +6,10 @@
 +mise|config [tools]
 +mise|config just = "latest"
 +mise|profile.d mise.sh
+# T63 (2026-11-04), bug: the YAML asked pip for `pyaml` (a YAML pretty-printer,
+# not PyYAML) on the RedHat family and Amazon; the port asks for PyYAML as the
+# Debian and Arch branches do. PyYAML itself is on both sides (as pyaml's
+# dependency, or from the rpm), so only pyaml and its /usr/local/bin/pyaml
+# script are missing. See dev_common.rs.
+[fedora43,fedora44,rockylinux9,rockylinux10,almalinux9,almalinux10,amazonlinux2023]-pip|pyaml
+[fedora43,fedora44,rockylinux9,rockylinux10,almalinux9,almalinux10,amazonlinux2023]-/usr/local/bin|pyaml

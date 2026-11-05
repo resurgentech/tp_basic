@@ -477,3 +477,37 @@ fn vm_server_sits_between_docker_and_node() {
         );
     }
 }
+
+/// T63: the pip line on the RedHat family and Amazon asks for `PyYAML`, not
+/// `pyaml` (a different library); Debian and Arch install PyYAML as a distro
+/// package and run no pip line.
+#[test]
+fn dev_base_pip_asks_for_pyyaml_not_pyaml() {
+    for d in DISTROS {
+        let text = plan("container/dev_base", d);
+        assert!(!text.contains("pyaml"), "{d}: pyaml in the plan");
+        let pip = matches!(
+            d,
+            "fedora43" | "fedora44" | "rockylinux9" | "rockylinux10" | "almalinux9" | "almalinux10"
+                | "amazonlinux2023"
+        );
+        assert_eq!(text.contains("pkg:pip:PyYAML"), pip, "{d}");
+    }
+}
+
+/// T63: uv's installer must not edit PATH (it writes `env`, `env.fish` and
+/// rc-file lines for a directory already on PATH) on any distro.
+#[test]
+fn dev_base_uv_install_does_not_modify_path() {
+    for d in DISTROS {
+        let text = plan("container/dev_base", d);
+        let line = text
+            .lines()
+            .find(|l| l.contains("astral.sh/uv/install.sh"))
+            .unwrap_or_else(|| panic!("{d}: no uv install line"));
+        assert!(
+            line.contains("UV_INSTALL_DIR=/usr/local/bin") && line.contains("UV_NO_MODIFY_PATH=1"),
+            "{d}: {line}"
+        );
+    }
+}

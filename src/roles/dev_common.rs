@@ -274,17 +274,27 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // on no other of the 13 (2026-10-30). The condition is "not Debian and
     // not Arch", so a host no flag matches also gets pip, as in the YAML.
     // pip itself comes from `python3-pip` in the branch above; no base image
-    // has it. `GitPython` and `pyaml` always arrive by pip here (no base
-    // has them); Jinja2 and PyYAML are already rpm-provided on fedora43,
+    // has it. `GitPython` always arrives by pip here (no base has it);
+    // Jinja2 and PyYAML are already rpm-provided on fedora43,
     // fedora44 and rockylinux10 and pip leaves an installed copy of an
     // unpinned requirement alone, so the pip names the oracle sees depend on
     // the base. Open: almalinux9 and almalinux10 were not probed for
-    // Jinja2 and PyYAML; the `pip list` capture settles them. `pyaml` is not
-    // `PyYAML` (it pulls PyYAML as a dependency); keep both names as written.
+    // Jinja2 and PyYAML; the `pip list` capture settles them.
+    //
+    // Bug fixed (intended difference): the YAML asked pip for `pyaml`, a
+    // different library (a YAML pretty-printer that only pulls PyYAML in as
+    // a dependency), where the Debian (`python3-yaml`) and Arch
+    // (`python-yaml`) branches install PyYAML. The port asks for `PyYAML`.
+    // The oracle sees `pyaml` missing on the telepatch side; PyYAML is on
+    // both sides (Ansible got it as pyaml's dependency or from the rpm), so
+    // the lines are `-pip|pyaml` and `-/usr/local/bin|pyaml` (pyaml's own
+    // console script, seen on the Ansible side of rockylinux10 `dev_base`
+    // 2026-11-04), scoped to the RedHat family and Amazon in
+    // `tests/oracle/intended/<container>.txt`.
     // Source: https://peps.python.org/pep-0668/ (accessed 2026-10-30)
     // Source: https://fedoraproject.org/wiki/Changes/PythonMarkExternallyManaged (accessed 2026-10-30)
     if !(debian_based(&h.os) || arch_based(&h.os)) {
-        h.pip(["jinja2", "GitPython", "pyaml"]);
+        h.pip(["jinja2", "GitPython", "PyYAML"]);
     }
 
     // The uv installer: intent is `uv` and `uvx` present in `/usr/local/bin`
@@ -303,14 +313,31 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // Wanted is `Present` (any version), as the YAML had no pin. The op
     // posts `pkg:script:root:uv` and `file:/usr/local/bin/uv`.
     //
-    // Run exactly as the YAML ran it so the oracle stays identical: with
-    // `UV_INSTALL_DIR` set and `UV_NO_MODIFY_PATH` unset the installer also
-    // writes `env` and `env.fish` beside the binaries (the oracle lists all
-    // four names in `/usr/local/bin`) and appends `. "/usr/local/bin/env"` to
-    // root's `.bashrc`, `.profile` and `.bash_profile`, which point at a
-    // directory already on PATH (probed 2026-10-31 in a rockylinux9
-    // container from the downloaded script). Needs curl: installed by the
-    // Debian branch above, shipped by the other bases (observed 2026-10-30).
+    // Bug fixed (intended difference): the YAML ran the installer with
+    // `UV_INSTALL_DIR` set and `UV_NO_MODIFY_PATH` unset, so it also wrote
+    // `env` and `env.fish` beside the binaries (a file named `env` in a
+    // directory ahead of `/usr/bin` on PATH) and appended
+    // `. "/usr/local/bin/env"` to root's `.bashrc`, `.profile` and
+    // `.bash_profile`, which point at a directory already on PATH (probed
+    // 2026-10-31 in a rockylinux9 container from the downloaded script). The
+    // port sets `UV_NO_MODIFY_PATH=1`: the installer script writes the env
+    // scripts and edits the rc files only inside its `NO_MODIFY_PATH = 0`
+    // branch, so none of it happens (confirmed in the script fetched
+    // 2026-11-04). Not oracle-visible: the script also sets
+    // `NO_MODIFY_PATH=1` itself when the install dir is already on `$PATH`
+    // (its `case :$PATH: in *:$_install_dir:*`), which it is in the image
+    // build, so the Ansible side of `test-container` lists only `uv` and
+    // `uvx` in `/usr/local/bin` (observed 2026-11-04, ubuntu2404 and
+    // rockylinux10 `dev_base`; the declared `-env` lines failed as "not on
+    // the ansible side" and were dropped). The edits happen where the
+    // installer runs with `/usr/local/bin` off PATH, as in the 2026-10-31
+    // probe; the variable makes the result the same whatever the caller's
+    // PATH. No intended line. Hosts that already carry the two files
+    // or the rc lines are not cleaned: removing a line from root's rc files
+    // or a file in `/usr/local/bin` that this role no longer owns is a
+    // destructive guess about hosts the port did not set up (G6-A9).
+    // Needs curl: installed by the Debian branch above, shipped by the other
+    // bases (observed 2026-10-30).
     // The subshell keeps `pipefail` from leaking into the persistent shell.
     // Non-distro sources write `*` by default, so it runs after the merged
     // apt op that installs curl.
@@ -323,7 +350,7 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
             .version("uv self version --short")
             .latest(Latest::github_release("astral-sh/uv"))
             .install(
-                "(set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)",
+                "(set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 UV_INSTALL_DIR=/usr/local/bin sh)",
             )
             .update("uv self update"),
     );

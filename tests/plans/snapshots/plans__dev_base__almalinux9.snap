@@ -22,9 +22,9 @@ role dev_common
       |   rc=$?
       |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       | fi
-  #2 pkg as shell:root reads [] writes [pkg:pip:GitPython, pkg:pip:jinja2, pkg:pip:pyaml] post [pkg:pip:GitPython=Installed, pkg:pip:jinja2=Installed, pkg:pip:pyaml=Installed]
+  #2 pkg as shell:root reads [] writes [pkg:pip:GitPython, pkg:pip:PyYAML, pkg:pip:jinja2] post [pkg:pip:GitPython=Installed, pkg:pip:PyYAML=Installed, pkg:pip:jinja2=Installed]
       | rc=0; changed=0; installed=()
-      | tp_want=('jinja2' 'GitPython' 'pyaml')
+      | tp_want=('jinja2' 'GitPython' 'PyYAML')
       | tp_missing=()
       | if python3 -m pip --version >/dev/null 2>&1; then tp_pip=(python3 -m pip)
       | elif command -v pip3 >/dev/null 2>&1; then tp_pip=(pip3)
@@ -62,7 +62,7 @@ role dev_common
       | fi
       | if [ "$tp_act" = install ]; then
       |   ( export TP_WANT="$tp_want_v"
-      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh)
+      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 UV_INSTALL_DIR=/usr/local/bin sh)
       |   )
       |   rc=$?
       | elif [ "$tp_act" = update ]; then
