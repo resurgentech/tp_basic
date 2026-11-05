@@ -21,8 +21,8 @@
 //!
 //! The port is 1:1 with the Ansible role: every quirk is carried over so the
 //! equivalence oracle can tell a port bug from a chosen change. Changes that
-//! alter what the oracle sees are listed at the end of this file under
-//! "After equivalence" and are not made yet.
+//! alter what the oracle sees are the "Open choices" at the end of this
+//! file; there are no "Intended differences".
 //!
 //! Equivalence (2026-10-30): the docker oracle (package names and arch,
 //! system pip names, rustup state, apt sources, `/usr/local/bin` names)
@@ -166,7 +166,7 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
         h.pip(["pip"]).latest();
         // redhat.yml:7-40. A fixed approximation of what `dnf builddep` on
         // the kernel spec computes; it does not follow the spec when the
-        // spec changes (see "After equivalence"). All 30 names resolved on
+        // spec changes (see "Open choices"). All 30 names resolved on
         // the six RedHat-family images (2026-10-30). No fetched vendor page
         // names `kabi-dw` or `libbabeltrace-devel`.
         // Source: https://fedoraproject.org/wiki/Building_a_custom_kernel (accessed 2026-10-30)
@@ -263,17 +263,25 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
     Ok(())
 }
 
-// After equivalence. Each changes what the oracle sees, so each is its own
-// change with its own oracle diff, made only once the 13-image oracle is
-// green:
-// - Remove the RedHat `pip` latest or pin pip; removing it removes `pip`,
-//   `pip3` and `pip3.N` from `/usr/local/bin` and the second pip tree.
-//   Decide whether the build scripts need a newer pip than the rpm copy.
-// - Replace the fixed RedHat package list with the output of
-//   `dnf builddep --assumeno kernel.spec` (package list changes).
-// - Decide whether `python3-lxml` and the Python libraries belong to the
-//   kernel image or to `dev_common` (package list changes on Ubuntu).
+// Intended differences: none. This role is a 1:1 port (see the header).
+//
+// Open choices (the G6-2 table of 2026-11-04; the user accepted the default
+// for each and none changes in this goal):
+// - Drop or pin the RedHat `pip` upgrade. Accepted: keep. Removing it
+//   removes `pip`, `pip3` and `pip3.N` from `/usr/local/bin` and the second
+//   pip tree on the RedHat cells; the build scripts may need a newer pip
+//   than the rpm copy.
+// - `dnf builddep --assumeno kernel.spec` instead of the fixed RedHat list.
+//   Accepted: keep the list. The names the spec computes would change the
+//   RedHat cells' package lists.
+// - `python3-lxml` and the Python libraries in `kernel_build` or in
+//   `dev_common`. Accepted: stay in `kernel_build`. Moving them adds their
+//   package lines to the `dev_base` cells (the Ansible side has them only
+//   from `kernel_build` on) and removes the difference on the later images.
 // - Name the Ubuntu build-dep source packages instead of the archive default
-//   (package list changes).
+//   `linux`. Accepted: keep the default. Naming them changes the Ubuntu
+//   cells' package lists.
 // - Check the Arch list against `makedepends` from `pkgctl repo clone linux`
-//   and `makepkg --printsrcinfo` (an open check, not needed for equivalence).
+//   and `makepkg --printsrcinfo`. Accepted: an open check, listed. No
+//   oracle change unless the check finds a missing name, which would then
+//   add a package line on the arch cell.

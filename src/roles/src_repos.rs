@@ -106,6 +106,6 @@ pub async fn src_repos(h: &Host<Vars>) -> Result<(), TraceError> {
     Ok(())
 }
 
-// After equivalence: nothing is planned that changes what the oracle sees.
+// Intended differences: none. Open choices: none.
 // Replace the `sh!` with the `repo` primitive when it is built (a sed over a
 // glob has no primitive today).

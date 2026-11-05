@@ -16,9 +16,9 @@
 //!
 //! Unlike `dev_common`, the port is by outcome, not 1:1: same package
 //! tables and same installed set, with the fixes below for bugs the oracle
-//! cannot see. Nothing it changes appears in the oracle's names. Changes
-//! that do alter what the oracle sees are listed at the end of this file
-//! under "After equivalence" and are not made yet.
+//! cannot see. Nothing it changes appears in the oracle's names. The end of
+//! this file lists "Intended differences" (none) and "Open choices", the
+//! changes that would alter what the oracle sees and are left to the user.
 //!
 //! Equivalence (2026-10-30): the docker oracle (package names and arch,
 //! system pip names, for root the rustup toolchains, components and targets
@@ -82,9 +82,9 @@
 //!
 //! The version pins in `group_vars` (`rustup_version` 1.29.0,
 //! `cargo_version` and `rustc_version` 1.94.0) never pinned anything and
-//! this role does not read them; they stay in `Vars`, unread, until
-//! "After equivalence" removes them. The installer ran with `-y` and no
-//! `--default-toolchain`, so it installs whatever `stable` is on the build
+//! this role does not read them; they stay in `Vars`, unread, until a
+//! later step removes them (see "Open choices"). The installer ran with
+//! `-y` and no `--default-toolchain`, so it installs whatever `stable` is on the build
 //! day (observed 2026-10-30: rustup 1.29.2, cargo and rustc 1.99.1 on the
 //! existing images). The YAML compared the pins with `!=`, so any host not
 //! on exactly the pin ran `rustup self update` and `rustup update`, which
@@ -301,34 +301,43 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
     Ok(())
 }
 
-// After equivalence. Each changes what the oracle sees, so each is its own
-// change with its own oracle diff, made only once the 13-image oracle is
-// green:
-// - Pin the toolchain, or state that `stable` is the intent, and delete the
-//   pin variables from `Vars` and `group_vars`. `.pin` is not available on
-//   rustup: name a version toolchain instead (`s.rustup("1.94.0")`), which
-//   changes toolchain names (`1.94.0-...` instead of `stable-...`) and the
-//   component versions, and needs `RUSTUP_VERSION` on the installer if
-//   rustup itself is to be pinned.
-// - Replace the `curl | sh` script download by a checksummed `rustup-init`
-//   download (the `.sha256` file beside it on `static.rust-lang.org`) as the
-//   source's `.installer(..)`; no names change.
+// Intended differences: none. This file's fixes are not oracle-visible
+// (see the header).
+//
+// Open choices (the G6-2 table of 2026-11-04; the user accepted the default
+// for each and none changes in this goal):
+// - Pin the Rust toolchain, or `stable` is the intent; delete the dead
+//   `rustup_version`, `cargo_version` and `rustc_version` variables from
+//   `Vars` and `group_vars`. Accepted: `stable` is the intent; delete the
+//   variables (no oracle change); a later step does it. A version toolchain
+//   instead (`s.rustup("1.94.0")`; `.pin` is not available on rustup)
+//   would change toolchain names (`1.94.0-...` instead of `stable-...`) and
+//   component versions in the rustup capture, and needs `RUSTUP_VERSION`
+//   on the installer if rustup itself is pinned.
+// - A checksummed `rustup-init` download (the `.sha256` beside it on
+//   `static.rust-lang.org`) as the source's `.installer(..)` instead of
+//   `curl | sh`. Accepted: later, with the `fetch` primitive. No names
+//   change.
 //   Source: https://rust-lang.github.io/rustup/installation/other.html (accessed 2026-10-30)
-// - Pin `cargo-deb` and `cargo-generate-rpm` through `.pin(v)` per name on
-//   the `Cargo` source (`--version`; the source adds no `--locked`, so a
-//   locked install needs a `.installer`-style command or an engine change),
-//   or fetch release binaries (build time and versions change). Today's
-//   latest are cargo-deb 3.8.0 and cargo-generate-rpm 0.21.1, so a pin
-//   changes nothing until the next release.
-// - Request `musl-gcc` on Rocky and Alma 9 if a crate needs it; there is no
-//   EPEL 9 build, so the answer is a different package source.
-// - Drop the `rls` and `rust-analyzer` stub names from `~/.cargo/bin` by
-//   choosing the `minimal` profile (`.profile("minimal")`; the component
-//   list changes: `rust-docs` goes, and `clippy` and `rustfmt` come back
+// - Pin `cargo-deb` and `cargo-generate-rpm` (`.pin(v)` per name on the
+//   `Cargo` source, which adds no `--locked`; or fetched release binaries).
+//   Accepted: unpinned. No gating oracle change (names in `~/.cargo/bin`
+//   stay); the versions diff shows it. Today's latest are cargo-deb 3.8.0
+//   and cargo-generate-rpm 0.21.1.
+// - `musl-gcc` on Rocky and Alma 9. Accepted: not until a crate needs it
+//   (there is no EPEL 9 package, so it would be a different package
+//   source). Adding it would add a package line on the rockylinux9 and
+//   almalinux9 cells.
+// - The rustup `minimal` profile (`.profile("minimal")`), which drops the
+//   `rls` and `rust-analyzer` stubs. Accepted: keep `default`. Choosing
+//   `minimal` removes the two stub names from root's `~/.cargo/bin` and
+//   `rust-docs` from the component list (`clippy` and `rustfmt` come back
 //   through `.components` if wanted).
-// - Pass `--no-modify-path` and write one `/etc/profile.d` line instead of
-//   editing each user's rc files (the oracle does not capture them, but
-//   `rust_kernel`, `rust_tools` and interactive users rely on `cargo` being
-//   on the login PATH, so it is a behaviour change for users).
-// - Install `which`, or drop it from `dev_common`'s assumptions; only needed
-//   if another role calls `which`.
+// - `--no-modify-path` plus one `/etc/profile.d` line instead of editing
+//   each user's rc files. Accepted: keep per-user rc edits. No oracle
+//   change (the oracle does not capture rc files); users would see
+//   `cargo` on the login PATH through a different file.
+//
+// Removed from the old list:
+// - Installing `which`: no role calls `which` (grep of `src/roles`,
+//   2026-11-04); presence is tested with `command -v`.

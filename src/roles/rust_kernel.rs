@@ -1,6 +1,7 @@
 //! `rust_kernel`: what the kernel's Rust support needs on top of the
-//! `rust_build` toolchain: libclang (Debian family), the `rust-src`
-//! component and `bindgen`. Port of `roles/rust_kernel/tasks/*.yml`.
+//! `rust_build` toolchain: libclang (`libclang-dev` on the Debian family,
+//! `clang-devel` on the RedHat family and Amazon), the `rust-src` component
+//! and `bindgen`. Port of `roles/rust_kernel/tasks/*.yml`.
 //!
 //! Purpose: `container/latest_kernel_build` (the docker container of that
 //! name, parent `rust_build`) makes an image that can build the latest
@@ -40,7 +41,8 @@
 //! Dropped branches, which no image reaches and which are not ported: the
 //! RedHat, Amazon and Arch families. The role has no task for them (only the
 //! apt task carries a `when`), so on such a host the YAML would have run just
-//! the two per-user tasks and installed no libclang package. No image of
+//! the two per-user tasks and installed no libclang package (the port adds
+//! `clang-devel` on the RedHat family and Amazon, see "Intended differences"). No image of
 //! those families runs `latest_kernel_build` (all 12 other distros are in the
 //! `default` set, which ends at `rust_build`), and none was added. Pop!_OS
 //! and other Debian-family hosts share the Debian arm.
@@ -68,11 +70,22 @@
 //! Source: https://rust-lang.github.io/rustup/concepts/components.html (accessed 2026-10-30)
 //! Source: https://packages.ubuntu.com/resolute/libclang-dev (accessed 2026-10-30)
 //!
-//! After equivalence (each changes what the oracle sees; not made yet):
-//! - pin or upgrade `bindgen-cli`;
-//! - install `libclang-dev` on every family;
-//! - run `make LLVM=1 rustavailable` as a post-condition in a kernel tree;
-//! - add `--toolchain` to the component add.
+//! Intended differences:
+//! - `clang-devel` on the RedHat family and Amazon, where the YAML installed
+//!   libclang for the Debian family only. Bug: bindgen needs a loadable
+//!   `libclang.so` on every family. Not oracle-visible (`latest_kernel_build`
+//!   is built only on ubuntu2604); see the first package call.
+//!
+//! Open choices (the G6-2 table of 2026-11-04; the user accepted the default
+//! for each and none changes in this goal):
+//! - Pin or upgrade `bindgen-cli`. Accepted: unchanged, listed. No gating
+//!   oracle change (`bindgen` stays in `~/.cargo/bin`); the versions diff
+//!   shows it.
+//! - Run `make LLVM=1 rustavailable` in a kernel tree as a post-condition.
+//!   Accepted: unchanged, listed. No oracle change (a check; nothing is
+//!   installed).
+//! - Add `--toolchain` to the component add. Accepted: unchanged, listed.
+//!   No oracle change on ubuntu2604, where there is one toolchain.
 
 use telepatch::facts::os::{Distro, Family, Os};
 use telepatch::{Host, TraceError, role, sh};

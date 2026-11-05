@@ -16,11 +16,12 @@
 //!
 //! The port reaches the Ansible role's end state, with the bugs the oracle
 //! cannot see fixed: the uv installer is a `pkg` with a `Script` source,
-//! probed before it runs (it reran on every run and on every layer),
-//! `rsync` is listed once, and the dnf group is given by
-//! the id dnf5 wants on Fedora. Changes that alter what the oracle sees are
-//! listed at the end of this file under "After equivalence" and are not
-//! made yet.
+//! probed before it runs (it reran on every run and on every layer) and
+//! told not to edit PATH files, `rsync` is listed once, and the dnf group is
+//! given by the id dnf5 wants on Fedora. The one fix the oracle sees (pip
+//! `PyYAML` for `pyaml`) is declared in the intended files. The end of this
+//! file lists those under "Intended differences" and the choices left to
+//! the user under "Open choices".
 //!
 //! Intended divergence (2026-11-03, goal 5a): after uv the role installs
 //! mise system-wide (`/usr/local/bin/mise`, a `Script` source), puts its
@@ -93,7 +94,7 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     if debian_based(&h.os) {
         // `python3-apt` is what Ansible's `apt` module imports on the target;
         // it serves Ansible, not a developer, and stays until the role no
-        // longer runs under Ansible (see "After equivalence").
+        // longer runs under Ansible (see "Open choices").
         // Source: https://docs.ansible.com/ansible/latest/collections/ansible/builtin/apt_module.html (accessed 2026-10-30)
         h.pkg(["python3-apt", "python3-pip"]);
         // The optimizer merges the three Debian calls into one apt install,
@@ -143,7 +144,7 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
         // Pop!_OS); the Ansible task was misnamed "Ubuntu2404 python deps"
         // though it had no condition. `python3-yaml` is PyYAML, not `pyaml`.
         // `python3-hvac` is there for Ansible's vault/openbao lookups, not for
-        // development; it stays until equivalence (see "After equivalence").
+        // development; it stays (see "Open choices").
         h.pkg([
             "python3-jinja2",
             "python3-git",
@@ -370,7 +371,7 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // one mise.run will not install yet); install mise.run with
     // `MISE_INSTALL_PATH` so the binary lands outside root's home; update
     // `mise self-update -y`. Wanted is `Present`, like uv; pinning it is an
-    // "After equivalence" item. Needs curl, as uv does (installed by the
+    // "Open choices" item. Needs curl, as uv does (installed by the
     // Debian branch, shipped by the other bases). The subshell keeps
     // `pipefail` from leaking into the persistent shell.
     // Source: https://mise.jdx.dev/installing-mise.html (accessed 2026-11-03)
@@ -422,25 +423,41 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     Ok(())
 }
 
-// After equivalence. Each changes what the oracle sees, so each is its own
-// change with its own oracle diff, made only once the 13-image oracle is
-// green:
-// - Remove `python3-hvac` and `python3-apt` from Debian-family images once
-//   the role no longer runs under Ansible there (package list changes).
-// - Set `UV_NO_MODIFY_PATH=1` on the uv installer: drops `env` and `env.fish`
-//   from `/usr/local/bin` and the three root profile edits.
-// - Pin uv to a version in `vars/container.toml`: `.pin(v)` on the op, with
-//   the versioned installer URL `https://astral.sh/uv/$TP_WANT/install.sh`
-//   as `install` (the non-gating versions diff shows it).
-// - Pin the mise binary (`.pin(v)` with `MISE_VERSION` in the installer),
-//   and decide whether `just` should be pinned (Ansible master pins 1.59.0)
-//   or `.latest()`; both show only in the non-gating versions diff.
-// - Replace pip `pyaml` with `PyYAML`, matching the Debian and Arch branches
-//   (the pip section loses `pyaml`).
-// - Name the dnf group per family (ID `development-tools` on Fedora, the name
-//   "Development Tools" on EL and Amazon) and decide whether the RedHat
-//   group content is still wanted (package list changes on Fedora if the
-//   content differs).
-// - Decide whether `pyaml` is wanted, or only PyYAML (pip list changes).
-// - Decide whether `python-pytest` on Arch belongs to a development base
-//   (package list changes).
+// Intended differences (what the port does that the Ansible role did not,
+// made on purpose; the oracle applies the lines in
+// `tests/oracle/intended/<container>.txt` to the Ansible side):
+// - pip asks for `PyYAML`, not `pyaml` (RedHat family and Amazon). Bug: the
+//   YAML named a different library. Oracle lines, in `dev_base`,
+//   `kernel_build`, `rust_build` and `latest_kernel_build`, scoped to
+//   fedora43, fedora44, rockylinux9, rockylinux10, almalinux9, almalinux10
+//   and amazonlinux2023: `-pip|pyaml` and `-/usr/local/bin|pyaml`.
+// - `UV_NO_MODIFY_PATH=1` on the uv installer. Bug: the installer edited
+//   root's rc files and wrote `env` and `env.fish`. Not oracle-visible (the
+//   installer already skips them when `/usr/local/bin` is on PATH, as in the
+//   image build).
+// - mise, its login-shell PATH file and `just` through mise (goal 5a, see
+//   the header): not a bug fix, an addition; lines in the same intended
+//   files.
+//
+// Open choices (the G6-2 table of 2026-11-04; the user accepted the default
+// for each and none changes in this goal):
+// - Drop `python3-apt` and `python3-hvac` (Ansible's helpers) from the
+//   Debian family. Accepted: keep for now, someone may still run Ansible
+//   against these images, and `base.ubuntu` installs `python3-apt` anyway.
+//   Dropping them would remove both names from the Debian cells' package
+//   lists (`-packages|python3-hvac`, and `-packages|python3-apt` where the
+//   base does not carry it).
+// - Pin uv, pin the mise binary, pin `just` or make it `.latest()`.
+//   Accepted: stay unpinned, `Present`. Pinning changes no name the gating
+//   oracle captures (`uv`, `uvx`, `mise` stay in `/usr/local/bin`); only
+//   the non-gating versions diff shows it.
+// - Is the RedHat `@Development Tools` group content still wanted. Accepted:
+//   keep the group. Dropping it would remove the group's packages from the
+//   RedHat-family and Amazon cells' package lists.
+// - `python-pytest` on Arch only. Accepted: keep. Dropping it removes
+//   `python-pytest` from the arch cell's package list.
+//
+// Removed from the old list:
+// - Naming the dnf group per family: done (the id on Fedora, the name
+//   elsewhere), see the header.
+// - Deciding whether `pyaml` is wanted: done by the `PyYAML` fix above.
