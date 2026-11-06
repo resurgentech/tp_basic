@@ -760,7 +760,7 @@ role golang
       | tp_name='go'
       | tp_cd="${TP_FETCH_CACHE:-/var/cache/telepatch/sha256}"
       | tp_sd="${TP_FETCH_STAGE:-/var/tmp/telepatch}"
-      | tp_run="$tp_sd"/'RUN_ID'
+      | tp_run="$tp_sd"/"$__tp_run"
       | tp_dec="$tp_run/br-$(printf %s "$tp_name" | sha256sum | cut -c1-32)"
       | tp_tok() { grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
       | if [ -f "$tp_dec" ]; then

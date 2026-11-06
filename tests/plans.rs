@@ -127,10 +127,7 @@ fn desktop_plan_of(name: &str, distro: &str) -> String {
         .iter()
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no playbook {name}"));
-    // A `binary_release` op names its staging directory after the process
-    // (`<unix nanos>-<pid>`); pin it so the snapshots are stable.
     telepatch::testing::plan_for(distro, pb, desktop_vars())
-        .replace(telepatch::ops::fetch::run_id(), "RUN_ID")
 }
 
 fn desktop_plan(distro: &str) -> String {
