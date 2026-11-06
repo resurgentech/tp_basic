@@ -2,7 +2,7 @@
 source: tests/plans.rs
 expression: text
 ---
-host omarchy (os: Arch/Arch 20261025.0.616225)
+host omarchy (os: Arch/Arch rolling)
 blocking reads: 0
 
 window 1 (final)
