@@ -81,6 +81,40 @@ fn latest_kernel_build_plans() {
     }
 }
 
+/// `rust_build` installs `stable` (latest, with a target) and `rust_kernel`
+/// adds `rust-src` to it: one `pkg[rustup]` op per user and toolchain on
+/// every distro, carrying the component.
+#[test]
+fn latest_kernel_build_has_one_rustup_op_per_toolchain() {
+    for d in DISTROS {
+        let text = plan("container/latest_kernel_build", d);
+        let mut seen: Vec<(String, String)> = Vec::new();
+        for line in text.lines().filter(|l| l.contains(" pkg[rustup] as ")) {
+            let post = &line[line.find(" post [").unwrap_or_else(|| panic!("{d}: {line}"))..];
+            // The toolchain's own key: `pkg:rustup:<user>:<tc>=Installed`.
+            let tc_key = post
+                .split(['[', ',', ']'])
+                .map(str::trim)
+                .find(|k| k.starts_with("pkg:rustup:") && !k.contains('/'))
+                .unwrap_or_else(|| panic!("{d}: no toolchain key in {line}"));
+            let tc_key = tc_key.trim_end_matches("=Installed");
+            let mut parts = tc_key.trim_start_matches("pkg:rustup:").splitn(2, ':');
+            let user = parts.next().unwrap().to_string();
+            let tc = parts.next().unwrap().to_string();
+            assert!(
+                post.contains(&format!("{tc_key}/component/rust-src=Installed")),
+                "{d}: {line}"
+            );
+            assert!(
+                !seen.contains(&(user.clone(), tc.clone())),
+                "{d}: a second pkg[rustup] op for {user} {tc}:\n{text}"
+            );
+            seen.push((user, tc));
+        }
+        assert!(!seen.is_empty(), "{d}: no pkg[rustup] op\n{text}");
+    }
+}
+
 /// `vars/desktop.toml`, as `tp-basic run dev_desktop --vars vars/desktop.toml`
 /// loads it (the same layering); `Vars::default()` would plan for `root` only.
 fn desktop_vars() -> Vars {

@@ -273,8 +273,11 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
         // (any version; the YAML had no `--version`). One `cargo install`
         // for the names the host's `cargo install --list` does not show,
         // and none when both are listed, where the YAML's `which` guard
-        // reran on five images. It runs after the toolchain op because both
-        // write `*`, so `cargo` is on PATH by then (the source fails with
+        // reran on five images. It runs after the toolchain op because the
+        // toolchain op writes `*` (the cargo op itself writes only its
+        // `pkg:cargo:<user>:<name>` keys and `home:<user>`, and never moves
+        // across a distro `pkg` op, so the distro packages above stay
+        // before it), so `cargo` is on PATH by then (the source fails with
         // "cargo not found" otherwise). Built from source and unpinned:
         // they take the newest release on the build day (observed on the
         // arch image: cargo-deb v3.8.0, cargo-generate-rpm v0.21.1; the

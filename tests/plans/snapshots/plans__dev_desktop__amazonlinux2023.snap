@@ -926,7 +926,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #41 pkg[cargo] as login:bot reads [] writes [*] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
+  #41 pkg[cargo] as login:bot reads [] writes [pkg:cargo:bot:cargo-deb, pkg:cargo:bot:cargo-generate-rpm, home:bot] post [pkg:cargo:bot:cargo-deb=Installed, pkg:cargo:bot:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -1014,7 +1014,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #43 pkg[cargo] as login:tpdev reads [] writes [*] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
+  #43 pkg[cargo] as login:tpdev reads [] writes [pkg:cargo:tpdev:cargo-deb, pkg:cargo:tpdev:cargo-generate-rpm, home:tpdev] post [pkg:cargo:tpdev:cargo-deb=Installed, pkg:cargo:tpdev:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
@@ -1102,7 +1102,7 @@ role rust_build
       |     fi
       |   fi
       | fi
-  #45 pkg[cargo] as login:root reads [] writes [*] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
+  #45 pkg[cargo] as login:root reads [] writes [pkg:cargo:root:cargo-deb, pkg:cargo:root:cargo-generate-rpm, home:root] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('cargo-deb' 'cargo-generate-rpm')
       | declare -A tp_before=() tp_after=() tp_wantv=()
