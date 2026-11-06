@@ -539,9 +539,14 @@ if [[ $container == services_vm ]]; then
     vexpect "tp-probe-off.service is-enabled" disabled 'systemctl is-enabled tp-probe-off.service || true'
     vexpect "tp-probe-off.service is-active" inactive 'systemctl is-active tp-probe-off.service || true'
     vexpect "tp-probe-masked.service is-enabled" masked 'systemctl is-enabled tp-probe-masked.service || true'
-    r=$(op_result "$out/run1.out" 'svc tp-probe.service reload')
-    if [[ $r == '-> changed' ]]; then ok "run 1: the guarded reload ran ($r)"; else bad "run 1: svc tp-probe.service reload ended '$r', wanted '-> changed'"; fi
-    echo "run 1: svc tp-probe.service restart: $(op_result "$out/run1.out" 'svc tp-probe.service restart')"
+    # Run 1's state op starts the unit, so the restart and the reload guarded
+    # on run 1's unit and file writes are both suppressed by `!started(#4)`
+    # (T77a): a fresh start already has the new unit and config.
+    for a in restart reload; do
+        r=$(op_result "$out/run1.out" "svc tp-probe.service $a")
+        if [[ $r == '-> skipped (when '*'!started('* ]]; then ok "run 1: svc tp-probe.service $a suppressed by the start: $r"
+        else bad "run 1: svc tp-probe.service $a ended '$r', wanted '-> skipped (when .. & !started(..))'"; fi
+    done
     [[ $wrc -eq 0 ]] || { echo "FAIL: a services_vm check after run 1 failed"; exit 1; }
 
     echo "=== services_vm run 2: nothing changes ==="
