@@ -13,22 +13,10 @@ use crate::vars::Vars;
 /// Every container playbook, registered under `container/<name>`.
 pub fn all() -> Vec<Playbook<Vars>> {
     vec![
-        Playbook {
-            name: "container/kernel_build",
-            run: kernel_build_entry,
-        },
-        Playbook {
-            name: "container/dev_base",
-            run: dev_base_entry,
-        },
-        Playbook {
-            name: "container/rust",
-            run: rust_build_entry,
-        },
-        Playbook {
-            name: "container/latest_kernel_build",
-            run: latest_kernel_build_entry,
-        },
+        Playbook::new("container/kernel_build", kernel_build_entry),
+        Playbook::new("container/dev_base", dev_base_entry),
+        Playbook::new("container/rust", rust_build_entry),
+        Playbook::new("container/latest_kernel_build", latest_kernel_build_entry),
     ]
 }
 

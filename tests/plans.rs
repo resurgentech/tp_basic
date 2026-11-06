@@ -24,7 +24,7 @@ fn plan(name: &str, distro: &str) -> String {
         .iter()
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no playbook {name}"));
-    telepatch::testing::plan_for(distro, pb, Vars::default())
+    telepatch::testing::plan_for_playbook(distro, pb, None)
 }
 
 #[test]
@@ -591,13 +591,17 @@ fn services_vm_plans() {
 fn services_vm_description_var_is_the_units_content() {
     let pbs = playbooks();
     let pb = pbs.iter().find(|p| p.name == "services_vm").unwrap();
-    let from_file: Vars =
-        telepatch::vars::load_file(Some(std::path::Path::new("vars/services_vm.toml")), "")
-            .unwrap();
-    assert_eq!(from_file, Vars::default());
-    let mut other = Vars::default();
+    let file = std::path::Path::new("vars/services_vm.toml");
+    // the shipped file is what the playbook defaults to
+    let from_file: Vars = telepatch::vars::load_file_for(pb, Some(file)).unwrap();
+    assert_eq!(from_file, telepatch::vars::load_file_for(pb, None).unwrap());
+    let a = telepatch::testing::plan_for_playbook("ubuntu2404", pb, Some(file));
+    assert_eq!(
+        a,
+        telepatch::testing::plan_for_playbook("ubuntu2404", pb, None)
+    );
+    let mut other: Vars = telepatch::vars::load_file_for(pb, None).unwrap();
     other.services_vm.probe_description = "changed".into();
-    let a = telepatch::testing::plan_for("ubuntu2404", pb, Vars::default());
     let b = telepatch::testing::plan_for("ubuntu2404", pb, other);
     assert_ne!(a, b);
 }

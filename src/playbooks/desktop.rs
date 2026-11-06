@@ -11,27 +11,15 @@ use crate::roles::node::node;
 use crate::roles::rust_build::rust_build;
 use crate::roles::tmux::tmux;
 use crate::roles::vm_server::vm_server;
-use crate::vars::Vars;
+use crate::vars::{ServicesVmVars, Vars};
 
 /// Every desktop playbook, registered under its YAML name.
 pub fn all() -> Vec<Playbook<Vars>> {
     vec![
-        Playbook {
-            name: "dev_desktop",
-            run: dev_desktop_entry,
-        },
-        Playbook {
-            name: "dev_desktop_kept",
-            run: dev_desktop_kept_entry,
-        },
-        Playbook {
-            name: "desktop_services",
-            run: desktop_services_entry,
-        },
-        Playbook {
-            name: "services_vm",
-            run: services_vm_entry,
-        },
+        Playbook::new("dev_desktop", dev_desktop_entry),
+        Playbook::new("dev_desktop_kept", dev_desktop_kept_entry),
+        Playbook::new("desktop_services", desktop_services_entry),
+        Playbook::new("services_vm", services_vm_entry).defaults(services_vm_defaults),
     ]
 }
 
@@ -88,6 +76,17 @@ async fn desktop_services(h: &Host<Vars>) -> Result<(), TraceError> {
     h.pkg(["curl", "ca-certificates"]);
     docker(h).await?;
     vm_server(h).await
+}
+
+/// The playbook's own `Description=` for the probe unit: layer 3, above the
+/// role default and below a vars file (`vars/services_vm.toml`).
+fn services_vm_defaults() -> Vars {
+    Vars {
+        services_vm: ServicesVmVars {
+            probe_description: "telepatch services_vm probe".to_string(),
+        },
+        ..Vars::default()
+    }
 }
 
 fn services_vm_entry(h: Host<Vars>) -> PlaybookFuture {

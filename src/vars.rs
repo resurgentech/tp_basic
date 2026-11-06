@@ -7,11 +7,12 @@
 //! source lines the plan snapshots record.) A vars file is layered per
 //! section by `telepatch::vars`: the role's `[section]`, then a top-level
 //! key of the same name (every role with a field of that name), then the
-//! playbook's defaults (none here), then the role's own `Default`. A
+//! playbook's defaults (`services_vm` alone supplies any), then the role's
+//! own `Default`. A
 //! top-level key no role has, or an unknown key in a section, is an error
 //! naming the file and line.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// The default `admin_users`: the container user. Ansible's default is
 /// `["{{ ansible_user }}"]`; container builds run as root.
@@ -20,7 +21,7 @@ fn root_only() -> Vec<String> {
 }
 
 /// `roles/admin_users`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct AdminUsersVars {
     /// Users the role sets up. Container builds run as root.
@@ -41,7 +42,7 @@ impl Default for AdminUsersVars {
 }
 
 /// `roles/docker`: its users join the `docker` group.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct DockerVars {
     /// Users the role sets up. Container builds run as root.
@@ -57,7 +58,7 @@ impl Default for DockerVars {
 }
 
 /// `roles/vm_server`: its users join the kvm and libvirt groups.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct VmServerVars {
     /// Users the role sets up. Container builds run as root.
@@ -73,7 +74,7 @@ impl Default for VmServerVars {
 }
 
 /// `roles/rust_kernel`: the users that get a toolchain.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct RustKernelVars {
     /// Users the role sets up. Container builds run as root.
@@ -89,7 +90,7 @@ impl Default for RustKernelVars {
 }
 
 /// `roles/rust_build`: the users that get a toolchain.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct RustBuildVars {
     /// Users the role sets up. Container builds run as root.
@@ -109,7 +110,7 @@ impl Default for RustBuildVars {
 
 /// `playbooks/desktop.rs` `services_vm` (test-only, not a role): the one
 /// var `scripts/test-vm.sh` changes between runs 2 and 3.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ServicesVmVars {
     /// The `Description=` line of the probe unit `tp-probe.service`: the
@@ -121,13 +122,13 @@ pub struct ServicesVmVars {
 impl Default for ServicesVmVars {
     fn default() -> Self {
         ServicesVmVars {
-            probe_description: "telepatch services_vm probe".to_string(),
+            probe_description: "telepatch probe (role default)".to_string(),
         }
     }
 }
 
 /// Roles with vars of their own. A role not listed reads none.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Vars {
     pub admin_users: AdminUsersVars,

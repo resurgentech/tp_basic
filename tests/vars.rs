@@ -84,3 +84,43 @@ fn binary_lists_no_playbooks_yet() {
         .unwrap();
     assert!(out.status.success(), "{:?}", out);
 }
+
+fn services_vm_playbook() -> telepatch::Playbook<Vars> {
+    tp_basic::playbooks()
+        .into_iter()
+        .find(|p| p.name == "services_vm")
+        .unwrap()
+}
+
+#[test]
+fn a_playbook_default_beats_the_roles_own_default() {
+    // layer 3 over layer 4, for `services_vm` only
+    let v: Vars = telepatch::vars::load_for(&services_vm_playbook(), "v", "").unwrap();
+    assert_eq!(
+        v.services_vm.probe_description,
+        "telepatch services_vm probe"
+    );
+    assert_eq!(
+        Vars::default().services_vm.probe_description,
+        "telepatch probe (role default)"
+    );
+}
+
+#[test]
+fn a_vars_file_value_beats_the_playbook_default() {
+    let v: Vars = telepatch::vars::load_for(
+        &services_vm_playbook(),
+        "v",
+        "[services_vm]\nprobe_description = \"from the file\"\n",
+    )
+    .unwrap();
+    assert_eq!(v.services_vm.probe_description, "from the file");
+}
+
+#[test]
+fn only_services_vm_supplies_defaults() {
+    for p in tp_basic::playbooks() {
+        let has = !p.defaults_toml().unwrap().is_empty();
+        assert_eq!(has, p.name == "services_vm", "{}", p.name);
+    }
+}
