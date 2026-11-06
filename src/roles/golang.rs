@@ -59,7 +59,7 @@
 //! downloaded into a user's module cache are not this role's.
 //! Source: https://go.dev/doc/toolchain (accessed 2026-11-03)
 
-use telepatch::ops::pkg::{Latest, ScriptSpec};
+use telepatch::ops::pkg::{InstallerScript, Latest};
 use telepatch::{Host, TraceError, role};
 
 use crate::vars::Vars;
@@ -144,16 +144,16 @@ tar -C /usr/local -xzf "$d/$f"
 /// Debian-family hosts, the other bases ship it).
 #[role]
 pub async fn golang(h: &Host<Vars>) -> Result<(), TraceError> {
-    h.script(
-        "go",
-        ScriptSpec::new()
-            .bin("/usr/local/go/bin/go")
-            .version("/usr/local/go/bin/go version")
-            .latest(Latest::command(LATEST))
-            .install(INSTALL)
-            .update(INSTALL),
-    )
-    .latest();
+    h.pkg(["go"])
+        .installer_script(
+            InstallerScript::new()
+                .bin("/usr/local/go/bin/go")
+                .version("/usr/local/go/bin/go version")
+                .latest(Latest::command(LATEST))
+                .install(INSTALL)
+                .update(INSTALL),
+        )
+        .latest();
 
     // `/usr/local/go/bin` on every login shell's PATH: intent is `go` by
     // name for every user. `/etc/profile.d` is read by login shells only

@@ -163,7 +163,7 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
         // `EXTERNALLY-MANAGED` marker (see dev_common).
         // Source: https://pip.pypa.io/en/stable/installation/ (accessed 2026-10-30)
         // Source: https://peps.python.org/pep-0668/ (accessed 2026-10-30)
-        h.pip(["pip"]).latest();
+        h.pkg(["pip"]).pip().latest();
         // redhat.yml:7-40. A fixed approximation of what `dnf builddep` on
         // the kernel spec computes; it does not follow the spec when the
         // spec changes (see "Open choices"). All 30 names resolved on

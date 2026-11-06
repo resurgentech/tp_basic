@@ -263,7 +263,8 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
         // Source: https://rust-lang.github.io/rustup/installation/already-installed-rust.html (accessed 2026-10-30)
         // Source: https://rust-lang.github.io/rustup/concepts/profiles.html (accessed 2026-10-30)
         // Source: https://rust-lang.github.io/rustup/basics.html (accessed 2026-10-30)
-        s.rustup("stable")
+        s.pkg(["stable"])
+            .rustup()
             .targets(["x86_64-unknown-linux-musl"])
             .set_default()
             .latest();
@@ -296,7 +297,7 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
         // side diff shows drift.
         // Source: https://github.com/kornelski/cargo-deb (accessed 2026-10-30)
         // Source: https://doc.rust-lang.org/cargo/commands/cargo-install.html (accessed 2026-10-31)
-        s.cargo(["cargo-deb", "cargo-generate-rpm"]);
+        s.pkg(["cargo-deb", "cargo-generate-rpm"]).cargo();
     }
     Ok(())
 }
@@ -310,7 +311,7 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
 //   `rustup_version`, `cargo_version` and `rustc_version` variables from
 //   `Vars` and `group_vars`. Accepted: `stable` is the intent; delete the
 //   variables (no oracle change); a later step does it. A version toolchain
-//   instead (`s.rustup("1.94.0")`; `.pin` is not available on rustup)
+//   instead (`s.pkg(["1.94.0"]).rustup()`; `.pin` is not available on rustup)
 //   would change toolchain names (`1.94.0-...` instead of `stable-...`) and
 //   component versions in the rustup capture, and needs `RUSTUP_VERSION`
 //   on the installer if rustup itself is pinned.

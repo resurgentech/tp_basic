@@ -51,7 +51,7 @@
 //! as the Ansible flags say.
 
 use telepatch::facts::os::{Distro, Family, Os};
-use telepatch::ops::pkg::{Latest, ScriptSpec};
+use telepatch::ops::pkg::{InstallerScript, Latest};
 use telepatch::{Host, TraceError, role};
 
 use crate::vars::Vars;
@@ -296,7 +296,7 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // Source: https://peps.python.org/pep-0668/ (accessed 2026-10-30)
     // Source: https://fedoraproject.org/wiki/Changes/PythonMarkExternallyManaged (accessed 2026-10-30)
     if !(debian_based(&h.os) || arch_based(&h.os)) {
-        h.pip(["jinja2", "GitPython", "PyYAML"]);
+        h.pkg(["jinja2", "GitPython", "PyYAML"]).pip();
     }
 
     // The uv installer: intent is `uv` and `uvx` present in `/usr/local/bin`
@@ -345,9 +345,8 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // apt op that installs curl.
     // Source: https://docs.astral.sh/uv/getting-started/installation/ (accessed 2026-10-31)
     // Source: https://docs.astral.sh/uv/reference/installer/ (accessed 2026-10-31)
-    h.script(
-        "uv",
-        ScriptSpec::new()
+    h.pkg(["uv"]).installer_script(
+        InstallerScript::new()
             .bin("/usr/local/bin/uv")
             .version("uv self version --short")
             .latest(Latest::github_release("astral-sh/uv"))
@@ -376,9 +375,8 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // Debian branch, shipped by the other bases). The subshell keeps
     // `pipefail` from leaking into the persistent shell.
     // Source: https://mise.jdx.dev/installing-mise.html (accessed 2026-11-03)
-    h.script(
-        "mise",
-        ScriptSpec::new()
+    h.pkg(["mise"]).installer_script(
+        InstallerScript::new()
             .bin("/usr/local/bin/mise")
             .version("mise version")
             .latest(Latest::github_release("jdx/mise"))
@@ -423,7 +421,7 @@ pub async fn dev_common(h: &Host<Vars>) -> Result<(), TraceError> {
     // on 79d1ca1, which has none.
     // Source: https://mise.jdx.dev/cli/install.html (accessed 2026-11-03)
     // Source: https://mise.jdx.dev/cli/config/set.html (accessed 2026-11-03)
-    h.mise(["just"]);
+    h.pkg(["just"]).mise();
     Ok(())
 }
 

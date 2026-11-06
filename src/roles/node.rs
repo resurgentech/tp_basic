@@ -1,7 +1,7 @@
 //! `node`: Node.js for every user of a workstation, through mise's system
 //! layer. Replaces `roles/nvm_node/tasks/main.yml` of the ansible repo at
 //! commit 79d1ca1 (decision of the user, 2026-11-04: nvm_node dropped, Node
-//! from `h.mise(["node"])`, in its own one-line role where `nvm_node` stood
+//! from `h.pkg(["node"]).mise()`, in its own one-line role where `nvm_node` stood
 //! rather than in `dev_common`, which all four container playbooks run and
 //! whose image builds and oracle differences Node would change).
 //!
@@ -54,6 +54,6 @@ use crate::vars::Vars;
 /// Source: https://mise.jdx.dev/lang/node.html (accessed 2026-11-03)
 #[role]
 pub async fn node(h: &Host<Vars>) -> Result<(), TraceError> {
-    h.mise(["node"]);
+    h.pkg(["node"]).mise();
     Ok(())
 }
