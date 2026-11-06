@@ -3,8 +3,13 @@
 # telepatch way from one pinned base image, captures scripts/image-state.sh for
 # the final image of each, and diffs. Exit 1 on a gating diff.
 #
-#   scripts/test-container.sh [--side ansible|telepatch|both] <distro> <container>
+#   scripts/test-container.sh [--prune] [--side ansible|telepatch|both] <distro> <container>
 #   scripts/test-container.sh --self-test
+#
+#      --prune (test-acceptance passes it; needs both sides): after the compare,
+#      the guard is checked again and exactly the images this cell built are
+#      removed, then `docker builder prune -f`; the bases are kept. The VM's
+#      disk use is printed before and after.
 #
 #      The telepatch side is built from what ships: the working tree of
 #      ../docker_images (Dockerfiles/telepatch.<family> and its context) with
@@ -34,6 +39,46 @@ source "$ROOT/scripts/lib/compare.sh"
 source "$ROOT/scripts/lib/docker-images.sh"
 # shellcheck source=lib/dist-input.sh
 source "$ROOT/scripts/lib/dist-input.sh"
+# shellcheck source=lib/docker-guard.sh
+source "$ROOT/scripts/lib/docker-guard.sh"
+# shellcheck source=lib/vm.sh
+source "$ROOT/scripts/lib/vm.sh"
+
+# ---- the per-cell prune (--prune; test-acceptance passes it) -----------------
+
+# cell_disk <before|after> : the docker VM's disk use for /var/lib/docker, over
+# ssh with vmtool's key in place (docker-vm.sh's known_hosts). Never fails the run.
+cell_disk() {
+    local VM_KEY VM_DEST VM_KNOWN_HOSTS line
+    VM_KEY=$(vm_key "$TP_DOCKER_VM") VM_DEST=bot@${TP_DOCKER_VM_IP:-} \
+        VM_KNOWN_HOSTS=$ROOT/build/docker-vm/$TP_DOCKER_VM/known_hosts
+    if line=$(sshv 'df -h /var/lib/docker | tail -1' 2>/dev/null); then
+        echo "disk ($1 prune): $line"
+    else
+        echo "disk ($1 prune): unavailable (ssh to ${TP_DOCKER_VM_IP:-?} failed)"
+    fi
+}
+
+# cell_prune <ids file> : remove exactly the images this cell built (one
+# "<id> <tag>" line per build, both sides, every chain stage), newest first, then
+# `docker builder prune -f`. The guard is checked again first, so this only ever
+# acts on a tp-docker-* VM's daemon (exit 2 otherwise, nothing removed). The
+# pinned bases resurgentech/base-*:latest are kept for the next cell; nothing
+# here prunes by pattern.
+cell_prune() {
+    local ids=$1 bases id tag fails=0
+    (docker_guard) || return 2
+    cell_disk before
+    bases=$(docker image ls --no-trunc -q --filter 'reference=resurgentech/base-*')
+    while read -r id tag; do
+        [[ -n $id ]] || continue
+        if grep -qxF "$id" <<<"$bases"; then echo "prune: kept base $id ($tag)"; continue; fi
+        if docker image rm "$id" >/dev/null; then echo "prune: removed $id ($tag)"; else echo "prune: FAILED to remove $id ($tag)" >&2; fails=1; fi
+    done < <(tac "$ids" | awk '!seen[$1]++')
+    docker builder prune -f >/dev/null || { echo "prune: docker builder prune failed" >&2; fails=1; }
+    cell_disk after
+    return $fails
+}
 
 self_test() {
     local t fails=0
@@ -64,6 +109,61 @@ self_test() {
     selftest_no_local_copy "${BASH_SOURCE[0]}" "$ROOT/scripts/test-vm-oracle.sh" || fails=1
     selftest_export || fails=1
     selftest_dist || fails=1
+    selftest_prune || fails=1
+    return $fails
+}
+
+# cell_prune against a stub docker (first on PATH; it logs every call): refused
+# without the VM's label, and with it removes exactly the recorded ids, never a base
+selftest_prune() {
+    local t rc fails=0 calls
+    t=$(mktemp -d)
+    mkdir -p "$t/bin"
+    cat >"$t/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+echo "docker $*" >>"${DOCKER_STUB_LOG:?}"
+case "$1 ${2:-}" in
+    "info "*) [[ -n ${DOCKER_STUB_LABELS:-} ]] && { echo "$DOCKER_STUB_LABELS"; exit 0; }; exit 1 ;;
+    "image ls") echo sha256:base0; exit 0 ;;
+    "image rm") exit 0 ;;
+    "builder prune") exit 0 ;;
+esac
+exit 99
+STUB
+    chmod +x "$t/bin/docker"
+    printf '%s\n' 'sha256:aaa1 tp-test/ansible/dev_base-x' 'sha256:aaa2 tp-test/ansible/kernel_build-x' \
+        'sha256:base0 tp-test/pin/base-x:0' 'sha256:bbb1 tp-test/telepatch/dev_base-x' >"$t/built.ids"
+    pr() { # labels tp_docker_vm : runs cell_prune in a subshell with the stub
+        : >"$t/calls"; rc=0
+        (
+            export PATH="$t/bin:$PATH" DOCKER_STUB_LOG=$t/calls DOCKER_STUB_LABELS=$1
+            unset DOCKER_HOST DOCKER_CONTEXT BUILDX_BUILDER TP_DOCKER_VM
+            [[ -n $2 ]] && export TP_DOCKER_VM=$2
+            cell_disk() { echo "disk ($1 prune): stub"; }
+            cell_prune "$t/built.ids"
+        ) >"$t/out" 2>&1 || rc=$?
+        calls=$(grep -cE 'docker (image rm|builder|system|image prune)' "$t/calls" || true)
+    }
+    pr '' ''
+    if [[ $rc -eq 2 && $calls -eq 0 && ! -s $t/calls ]] && grep -qF "$DOCKER_GUARD_MSG" "$t/out"; then
+        echo "ok   prune: TP_DOCKER_VM unset (exit 2, no docker call)"
+    else echo "FAIL prune: TP_DOCKER_VM unset: exit $rc"; sed 's/^/     | /' "$t/calls" "$t/out"; fails=1; fi
+    pr '[]' tp-docker-x
+    if [[ $rc -eq 2 && $calls -eq 0 ]] && grep -qF "$DOCKER_GUARD_MSG" "$t/out"; then
+        echo "ok   prune: daemon without the label (exit 2, nothing removed)"
+    else echo "FAIL prune: no label: exit $rc"; sed 's/^/     | /' "$t/calls" "$t/out"; fails=1; fi
+    pr '["tp-docker-vm=tp-docker-x"]' tp-docker-x
+    local got want=$'docker image rm sha256:bbb1\ndocker image rm sha256:aaa2\ndocker image rm sha256:aaa1\ndocker builder prune -f'
+    got=$(grep -E 'docker (image rm|builder|system|image prune)' "$t/calls" || true)
+    if [[ $rc -eq 0 && $got == "$want" ]] && grep -q 'kept base sha256:base0' "$t/out" \
+        && grep -q 'disk (before prune)' "$t/out" && grep -q 'disk (after prune)' "$t/out"; then
+        echo "ok   prune: the VM's label (the 3 recorded ids, newest first; base kept; builder prune; disk lines)"
+    else echo "FAIL prune: the VM's label: exit $rc"; sed 's/^/     | /' "$t/calls" "$t/out"; fails=1; fi
+    # nothing in the script may prune by pattern: that would take the bases
+    if grep -vE '^[[:space:]]*#' "${BASH_SOURCE[0]}" | grep -vF 'grep' | grep -qE 'docker (system|image) prune|prune -a'; then
+        echo "FAIL prune: the script has a pattern prune"; fails=1
+    else echo "ok   prune: no system or image prune in the script"; fi
+    rm -rf "$t"
     return $fails
 }
 
@@ -134,16 +234,21 @@ selftest_export() {
 if [[ ${1:-} == --self-test ]]; then self_test; exit $?; fi
 
 # docker only in a tp-* VM (scripts/docker-vm.sh): refused before anything else
-# shellcheck source=lib/docker-guard.sh
-source "$ROOT/scripts/lib/docker-guard.sh"
 docker_guard
 
 # ---- arguments --------------------------------------------------------------
-side=both
-if [[ ${1:-} == --side ]]; then side=${2:?--side needs a value}; shift 2; fi
+side=both prune=0
+while [[ ${1:-} == --* ]]; do
+    case $1 in
+        --side) side=${2:?--side needs a value}; shift 2 ;;
+        --prune) prune=1; shift ;;
+        *) die "unknown option $1" ;;
+    esac
+done
 [[ $side =~ ^(ansible|telepatch|both)$ ]] || die "--side must be ansible, telepatch or both"
+[[ $prune -eq 0 || $side == both ]] || die "--prune needs both sides"
 distro=${1:-}; container=${2:-}
-[[ -n $distro && -n $container ]] || die "usage: test-container.sh [--side S] <distro> <container> | --self-test"
+[[ -n $distro && -n $container ]] || die "usage: test-container.sh [--prune] [--side S] <distro> <container> | --self-test"
 
 # ---- the pinned docker_images commit, exported once (never the working tree) --
 di_export "$ROOT" || exit 2
@@ -197,6 +302,14 @@ docker run --rm -i --entrypoint sh -e ADMIN_USERS="${ADMIN_USERS:-}" \
 echo "captured $out/base.state ($(wc -l <"$out/base.state") lines)"
 
 created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# every image this cell builds, "<id> <tag>", for cell_prune
+built_ids=$out/built.ids
+: >"$built_ids"
+record_built() {
+    local id
+    id=$(docker image inspect -f '{{.Id}}' "$1") && [[ -n $id ]] || die "built $1 but cannot read its image id"
+    echo "$id $1" >>"$built_ids"
+}
 bb=(docker buildx build --no-cache --provenance=false --sbom=false --load --progress=plain)
 
 # ---- ansible side -----------------------------------------------------------
@@ -221,6 +334,7 @@ build_ansible() {
             --build-arg GIT_SHA=tp-test --build-arg ANSIBLE_URL="$ansible_url" \
             --build-arg ANSIBLE_SHA="$sha" --build-arg PLAYBOOK="$(playbook_of "$c")" \
             -t "$tag" "$DI"
+        record_built "$tag"
         prev=$tag
     done
 }
@@ -240,6 +354,7 @@ build_telepatch() {
             --build-arg CREATED="$created" --build-arg GIT_URL=https://example.invalid/tp-test \
             --build-arg GIT_SHA=tp-test --build-arg PLAYBOOK="container/$pb" \
             -t "$tag" "$ROOT/../docker_images"
+        record_built "$tag"
         prev=$tag
     done
 }
@@ -265,4 +380,12 @@ if [[ $side != both ]]; then
     echo "side=$side: built and captured one side only; no comparison"
     exit 0
 fi
-compare_captures "$out" "$(intended_for "$container")" "$distro"
+rc=0
+compare_captures "$out" "$(intended_for "$container")" "$distro" || rc=$?
+if [[ $prune -eq 1 ]]; then
+    echo "=== prune: $container-$distro ($(wc -l <"$built_ids") images built) ==="
+    prc=0; cell_prune "$built_ids" || prc=$?
+    [[ $prc -eq 2 ]] && exit 2
+    if [[ $prc -ne 0 ]]; then echo "test-container: the prune failed" >&2; [[ $rc -ne 0 ]] || rc=1; fi
+fi
+exit "$rc"

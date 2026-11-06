@@ -71,13 +71,13 @@ ported_docker_images := "5df316b67429370105efec0e5c5ac29a6ccbd71a"
 # default set, plus ubuntu2604 for latest_kernel_build (the latest set).
 test-acceptance:
     bash scripts/lib/docker-guard.sh
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 dev_base
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 dev_base
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 kernel_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 kernel_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 rust_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 rust_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2604 latest_kernel_build
+    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2404 dev_base
+    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune rockylinux10 dev_base
+    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2404 kernel_build
+    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune rockylinux10 kernel_build
+    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2404 rust_build
+    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune rockylinux10 rust_build
+    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2604 latest_kernel_build
 
 # Apply container/<container> (dev_base or rust) twice in one container of the
 # pinned base image; passes when the second run shows CHANGED 0.

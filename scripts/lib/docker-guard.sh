@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The fail-closed guard of every docker workload (containers, image builds,
-# pulls) in tp_basic, telepatch and docker_images: they run only against the
+# pulls) in tp_basic and telepatch: they run only against the
 # daemon of a disposable tp-* VM that scripts/docker-vm.sh made, never against
 # this machine's daemon.
 #
@@ -104,9 +104,11 @@ guard_self_test() {
     gt "guard: the VM's label" 0 1 TP_DOCKER_VM=tp-docker-x DOCKER_STUB_LABELS="$lab" -- "${g[@]}"
     gt "guard: the VM's label, BUILDX_BUILDER=default" 0 1 TP_DOCKER_VM=tp-docker-x BUILDX_BUILDER=default DOCKER_STUB_LABELS="$lab" -- "${g[@]}"
 
-    # every docker recipe and script in the three repos, run outside docker-vm:
-    # exit 2 with the message and no docker call at all
-    local tpb=$root tel=$root/../telepatch di=$root/../docker_images r
+    # every docker recipe and script in tp_basic and telepatch, run outside
+    # docker-vm: exit 2 with the message and no docker call at all.
+    # ../docker_images is not guarded and not run here: its recipes are the
+    # user's release tooling, not tests (T70a's guard there was reverted).
+    local tpb=$root tel=$root/../telepatch r
     for r in "test-container ubuntu2404 dev_base" test-acceptance "test-idempotent ubuntu2404 dev_base" \
              "test-services ubuntu2404" test-matrix; do
         # shellcheck disable=SC2086
@@ -117,14 +119,9 @@ guard_self_test() {
         # shellcheck disable=SC2086
         gt "tp_basic: scripts/$r" 2 0 DI_SHA=HEAD -- bash $tpb/scripts/$r
     done
-    for r in os-fixtures test-live-os test-live-pkg test-live-mise test-live-ssh test-live-user test-live-repo test-live-svc; do
+    for r in os-fixtures test-live-os test-live-pkg test-live-mise test-live-ssh test-live-user test-live-repo test-live-svc test-live-unit; do
         gt "telepatch: just $r" 2 0 -- just --justfile "$tel/justfile" --working-directory "$tel" "$r"
     done
-    for r in check "build ubuntu2404" push clean; do
-        # shellcheck disable=SC2086
-        gt "docker_images: just $r" 2 0 -- just --justfile "$di/justfile" --working-directory "$di" $r
-    done
-    gt "docker_images: scripts/bake.sh ubuntu2404" 2 0 -- bash "$di/scripts/bake.sh" ubuntu2404
     rm -rf "$t"
     return $fails
 }
