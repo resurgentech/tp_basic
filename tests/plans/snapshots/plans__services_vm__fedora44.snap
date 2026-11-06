@@ -1,0 +1,299 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host fedora44 (os: RedHat/Fedora 44)
+blocking reads: 0
+
+window 1 (final)
+role (none)
+  #0 unit as shell:root reads [] writes [file:/etc/systemd/system/tp-probe.service, svc:tp-probe.service] post [file:/etc/systemd/system/tp-probe.service=Exists(true)]
+      | tp_ud="${TP_UNIT_DIR:-/etc/systemd/system}"
+      | [ -d "$tp_ud" ] || (umask 022; mkdir -p -- "$tp_ud")
+      | rc=0; changed=0
+      | tp_p="$tp_ud"/'tp-probe.service'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_b='W1VuaXRdCkRlc2NyaXB0aW9uPXRlbGVwYXRjaCBzZXJ2aWNlc192bSBwcm9iZQoKW1NlcnZpY2VdCkV4ZWNTdGFydD0vYmluL3NsZWVwIGluZmluaXR5CkV4ZWNSZWxvYWQ9L2Jpbi90cnVlCgpbSW5zdGFsbF0KV2FudGVkQnk9bXVsdGktdXNlci50YXJnZXQK'
+      |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     chmod 644 "$tp_c" || rc=$?
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='if ! command -v systemd-analyze >/dev/null 2>&1; then
+      |   echo '\''telepatch: no systemd-analyze: tp-probe.service not verified'\'' >&2
+      |   exit 0
+      | fi
+      | tp_vf=--man=no
+      | if systemd-analyze --help 2>/dev/null | grep -q -- --recursive-errors; then tp_vf="$tp_vf --recursive-errors=no"; fi
+      | tp_vd=$(mktemp -d) || exit 1
+      | cp -- "$tp_c" "$tp_vd"/'\''tp-probe.service'\'' || { rm -rf -- "$tp_vd"; exit 1; }
+      | systemd-analyze verify $tp_vf "$tp_vd"/'\''tp-probe.service'\''
+      | tp_vr=$?
+      | rm -rf -- "$tp_vd"
+      | exit "$tp_vr"
+      | '
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '644' ]; then
+      |   if chmod 644 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #1 unit as shell:root reads [] writes [file:/etc/systemd/system/tp-probe.service.d/override.conf, svc:tp-probe.service] post [file:/etc/systemd/system/tp-probe.service.d/override.conf=Exists(true)]
+      | tp_ud="${TP_UNIT_DIR:-/etc/systemd/system}"
+      | [ -d "$tp_ud"/'tp-probe.service.d' ] || (umask 022; mkdir -p -- "$tp_ud"/'tp-probe.service.d')
+      | rc=0; changed=0
+      | tp_p="$tp_ud"/'tp-probe.service.d/override.conf'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_b='W1NlcnZpY2VdCkVudmlyb25tZW50PVRQX1BST0JFPTEK'
+      |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='if ! command -v systemd-analyze >/dev/null 2>&1; then
+      |   echo '\''telepatch: no systemd-analyze: tp-probe.service.d/override.conf not verified'\'' >&2
+      |   exit 0
+      | fi
+      | tp_vf=--man=no
+      | if systemd-analyze --help 2>/dev/null | grep -q -- --recursive-errors; then tp_vf="$tp_vf --recursive-errors=no"; fi
+      | tp_vb=
+      | for tp_vx in "$tp_ud" /run/systemd/system /usr/local/lib/systemd/system /usr/lib/systemd/system /lib/systemd/system; do
+      |   for tp_vn in '\''tp-probe.service'\''; do
+      |     if [ -f "$tp_vx/$tp_vn" ]; then tp_vb="$tp_vx/$tp_vn"; break 2; fi
+      |   done
+      | done
+      | if [ -z "$tp_vb" ]; then
+      |   echo '\''telepatch: unit tp-probe.service not found: drop-in tp-probe.service.d/override.conf not verified'\'' >&2
+      |   exit 0
+      | fi
+      | tp_vd=$(mktemp -d) || exit 1
+      | { mkdir -- "$tp_vd"/'\''tp-probe.service.d'\'' && cp -- "$tp_vb" "$tp_vd"/'\''tp-probe.service'\'' && cp -- "$tp_c" "$tp_vd"/'\''tp-probe.service.d'\''/'\''override.conf'\''; } || { rm -rf -- "$tp_vd"; exit 1; }
+      | systemd-analyze verify $tp_vf "$tp_vd"/'\''tp-probe.service'\''
+      | tp_vr=$?
+      | rm -rf -- "$tp_vd"
+      | exit "$tp_vr"
+      | '
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #2 file as shell:root reads [] writes [file:/etc/tp-probe.conf] post [file:/etc/tp-probe.conf=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/tp-probe.conf'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | tp_b='cHJvYmU9MQo='
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      |   if [ "$rc" -eq 0 ]; then
+      |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
+      |       if [ -e "$tp_p" ]; then
+      |         chmod --reference="$tp_p" "$tp_t"; chown --reference="$tp_p" "$tp_t" 2>/dev/null
+      |       else
+      |         chmod 644 "$tp_t"
+      |       fi
+      |       mv -f "$tp_t" "$tp_p"; rc=$?
+      |     else
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi
+  #3 unit as shell:root reads [] writes [file:/etc/systemd/system/tp-probe-off.service, svc:tp-probe-off.service] post [file:/etc/systemd/system/tp-probe-off.service=Exists(true)]
+      | tp_ud="${TP_UNIT_DIR:-/etc/systemd/system}"
+      | [ -d "$tp_ud" ] || (umask 022; mkdir -p -- "$tp_ud")
+      | rc=0; changed=0
+      | tp_p="$tp_ud"/'tp-probe-off.service'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_b='W1VuaXRdCkRlc2NyaXB0aW9uPXRlbGVwYXRjaCBzZXJ2aWNlc192bSBwcm9iZSwgb2ZmCgpbU2VydmljZV0KRXhlY1N0YXJ0PS9iaW4vc2xlZXAgaW5maW5pdHkKCltJbnN0YWxsXQpXYW50ZWRCeT1tdWx0aS11c2VyLnRhcmdldAo='
+      |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='if ! command -v systemd-analyze >/dev/null 2>&1; then
+      |   echo '\''telepatch: no systemd-analyze: tp-probe-off.service not verified'\'' >&2
+      |   exit 0
+      | fi
+      | tp_vf=--man=no
+      | if systemd-analyze --help 2>/dev/null | grep -q -- --recursive-errors; then tp_vf="$tp_vf --recursive-errors=no"; fi
+      | tp_vd=$(mktemp -d) || exit 1
+      | cp -- "$tp_c" "$tp_vd"/'\''tp-probe-off.service'\'' || { rm -rf -- "$tp_vd"; exit 1; }
+      | systemd-analyze verify $tp_vf "$tp_vd"/'\''tp-probe-off.service'\''
+      | tp_vr=$?
+      | rm -rf -- "$tp_vd"
+      | exit "$tp_vr"
+      | '
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #4 svc as shell:root reads [] writes [svc:tp-probe.service] post [svc:tp-probe.service=Exists(true)]
+      | tp_u='tp-probe.service'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
+      |   esac
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if ! systemctl is-active --quiet -- "$tp_u"; then
+      |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           systemctl daemon-reload
+      |           rc=$?
+      |         fi
+      |         if [ "$rc" -eq 0 ]; then
+      |           systemctl start -- "$tp_u"
+      |           rc=$?
+      |           if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
+      | fi
+  #5 svc as shell:root reads [] writes [svc:tp-probe.service] when changed(#0) post [svc:tp-probe.service=Exists(true)]
+      | tp_u='tp-probe.service'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   if [ -d "$tp_run" ]; then
+      |     if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |       systemctl daemon-reload
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       systemctl restart -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   else
+      |     skipped=1
+      |   fi
+      | fi
+  #6 svc as shell:root reads [] writes [svc:tp-probe.service] when changed(#2) post [svc:tp-probe.service=Exists(true)]
+      | tp_u='tp-probe.service'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   if [ -d "$tp_run" ]; then
+      |     if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |       systemctl daemon-reload
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       if systemctl is-active --quiet -- "$tp_u"; then
+      |         systemctl reload -- "$tp_u"
+      |       else
+      |         systemctl start -- "$tp_u"
+      |       fi
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   else
+      |     skipped=1
+      |   fi
+      | fi
+  #7 svc as shell:root reads [] writes [svc:tp-probe-off.service] post [svc:tp-probe-off.service=Exists(true)]
+      | tp_u='tp-probe-off'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if systemctl is-active --quiet -- "$tp_u"; then
+      |         systemctl stop -- "$tp_u"
+      |         rc=$?
+      |         if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |       enabled|enabled-runtime)
+      |         systemctl disable -- "$tp_u"
+      |         rc=$?
+      |         if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         ;;
+      |     esac
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
+      | fi
+  #8 svc as shell:root reads [] writes [svc:tp-probe-masked.service] post [svc:tp-probe-masked.service=Exists(true)]
+      | tp_u='tp-probe-masked'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if systemctl is-active --quiet -- "$tp_u"; then
+      |         systemctl stop -- "$tp_u"
+      |         rc=$?
+      |         if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |       masked|masked-runtime) ;;
+      |       *)
+      |         systemctl mask -- "$tp_u"
+      |         rc=$?
+      |         if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         ;;
+      |     esac
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
+      | fi

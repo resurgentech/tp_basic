@@ -527,3 +527,77 @@ fn rust_kernel_libclang_on_every_family() {
         assert_eq!(sec.contains("clang-devel"), rpm, "{d}: {sec}");
     }
 }
+
+/// `services_vm` (test-only, see `playbooks/desktop.rs`): the plan holds a
+/// unit op and a drop-in for `tp-probe.service`, a state op (enabled and
+/// started) with a guarded restart, a disabled and stopped unit, a masked
+/// one, a file and a guarded reload.
+#[test]
+fn services_vm_plan_has_every_state() {
+    for d in DISTROS {
+        let text = plan("services_vm", d);
+        // one op line per op: `  #<id> <kind> as ... writes [..] [when ..] post ..`
+        let ops: Vec<&str> = text.lines().filter(|l| l.starts_with("  #")).collect();
+        let n = |pred: &dyn Fn(&str) -> bool| ops.iter().filter(|l| pred(l)).count();
+        let has = |what: &str, c: usize| assert_eq!(c, 1, "{d}: {what}:\n{}", ops.join("\n"));
+        has("unit op for tp-probe.service", n(&|l| {
+            l.contains(" unit ") && l.contains("file:/etc/systemd/system/tp-probe.service,")
+        }));
+        has("drop-in on tp-probe.service", n(&|l| {
+            l.contains(" unit ") && l.contains("tp-probe.service.d/override.conf")
+        }));
+        has("unit op for tp-probe-off.service", n(&|l| {
+            l.contains(" unit ") && l.contains("file:/etc/systemd/system/tp-probe-off.service")
+        }));
+        has("file op", n(&|l| l.contains(" file ") && l.contains("file:/etc/tp-probe.conf")));
+        // svc ops of tp-probe.service: the state op (no guard), the restart
+        // guarded on the unit op (#0), the reload guarded on the file op
+        let probe: Vec<&&str> = ops
+            .iter()
+            .filter(|l| l.contains(" svc ") && l.contains("svc:tp-probe.service]"))
+            .collect();
+        assert_eq!(probe.len(), 3, "{d}: {probe:?}");
+        assert!(!probe[0].contains(" when "), "{d}: state op is unguarded: {}", probe[0]);
+        assert!(probe[1].contains("when changed(#0)"), "{d}: restart: {}", probe[1]);
+        assert!(probe[2].contains("when changed(#2)"), "{d}: reload: {}", probe[2]);
+        has("svc tp-probe-off.service", n(&|l| l.contains(" svc ") && l.contains("svc:tp-probe-off.service]")));
+        has("svc tp-probe-masked.service", n(&|l| l.contains(" svc ") && l.contains("svc:tp-probe-masked.service]")));
+        // what the scripts do: enable+start, restart, reload, disable+stop, mask
+        assert!(text.contains("systemctl restart -- \"$tp_u\""), "{d}");
+        assert!(text.contains("systemctl reload -- \"$tp_u\""), "{d}");
+        assert!(text.contains("systemctl enable -- \"$tp_u\""), "{d}");
+        assert!(text.contains("systemctl start -- \"$tp_u\""), "{d}");
+        assert!(text.contains("systemctl disable -- \"$tp_u\""), "{d}");
+        assert!(text.contains("systemctl stop -- \"$tp_u\""), "{d}");
+        assert!(text.contains("systemctl mask -- \"$tp_u\""), "{d}");
+    }
+}
+
+#[test]
+fn services_vm_plans() {
+    for d in DISTROS {
+        let text = plan("services_vm", d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("services_vm__{d}"), text);
+        });
+    }
+}
+
+/// The unit's `Description=` is the one var of `services_vm`; the VM script
+/// changes it between runs 2 and 3, so the unit file is the only thing that
+/// differs: the plan of `vars/services_vm.toml` equals the default's, and a
+/// different description changes the plan's unit op only.
+#[test]
+fn services_vm_description_var_is_the_units_content() {
+    let pbs = playbooks();
+    let pb = pbs.iter().find(|p| p.name == "services_vm").unwrap();
+    let from_file: Vars =
+        telepatch::vars::load_file(Some(std::path::Path::new("vars/services_vm.toml")), "")
+            .unwrap();
+    assert_eq!(from_file, Vars::default());
+    let mut other = Vars::default();
+    other.services_vm.probe_description = "changed".into();
+    let a = telepatch::testing::plan_for("ubuntu2404", pb, Vars::default());
+    let b = telepatch::testing::plan_for("ubuntu2404", pb, other);
+    assert_ne!(a, b);
+}

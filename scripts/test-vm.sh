@@ -22,9 +22,21 @@
 # (the Go-release tolerance applies to run 3). After the per-user checks,
 # `systemctl is-enabled` of docker and libvirtd.socket must print enabled and
 # `is-active` active. dev_base stays two runs (run 2 CHANGED 0).
-# Not covered: daemon-reload (a unit file changed under a running daemon).
+# The daemon-reload of a changed unit is proved by services_vm (below).
 #
-#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base or dev_desktop)
+# services_vm (test-only, vars/services_vm.toml, 1 GiB, the image's disk, three
+# runs, every check prints ok or FAIL and all gate): run 1 exits 0 and
+# tp-probe.service is enabled and active with its drop-in, tp-probe-off.service
+# is disabled and inactive, tp-probe-masked.service is masked, and the guarded
+# reload ran; run 2 is CHANGED 0 and its guarded restart and reload end
+# `-> skipped (when ..)`; then run 3 is given a vars copy
+# (build/test-vm/<c>-<distro>/vars-run3.toml) that changes the one var,
+# `services_vm.probe_description`, i.e. the unit file's Description= line:
+# the changed ops are exactly the unit's content and the probe's restart,
+# `systemctl show -p ExecMainStartTimestamp` moves, and the journal gains
+# exactly one `Reloading requested from client` line (one daemon-reload).
+#
+#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop or services_vm)
 #   scripts/test-vm.sh --self-test
 #
 # Needs: build/tp-basic (`just musl`). Optional:
@@ -162,6 +174,9 @@ playbook_config() {
         # docker, libvirt, Go, Node and two rustup trees do not fit the
         # image's own disk, and the libvirt and docker daemons want memory.
         dev_desktop) PB_NAME=dev_desktop PB_VARS=vars/desktop.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK=30 ;;
+        # test-only (src/playbooks/desktop.rs): a few units, nothing is
+        # installed, so the image's own disk is plenty.
+        services_vm) PB_NAME=services_vm PB_VARS=vars/services_vm.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
         *) return 1 ;;
     esac
 }
@@ -200,6 +215,31 @@ one_svc_change() {
     [[ $st == changed && $ch == 1 ]] || return 1
     n=$(awk '/^== /{h=$0} /^-> changed/{print h}' "$out")
     [[ $(printf "%s\n" "$n" | wc -l) -eq 1 && $n == *" svc $unit =="* ]]
+}
+
+# op_result <run.out> <op description> : the `-> ...` line that ends the first
+# op whose header names the description exactly (`svc tp-probe.service
+# restart`; the header is `== <host> [<roles>] #<id> <desc> ==`).
+op_result() {
+    awk -v d=" $2 ==" '/^== /{h = (substr($0, length($0) - length(d) + 1) == d); next} h && /^-> /{print; exit}' "$1"
+}
+
+# changed_ops <run.out> : the description of every op that ended `-> changed`.
+changed_ops() {
+    awk '/^== /{h = $0; sub(/^== [^]]*\] #[0-9]+ /, "", h); sub(/ ==$/, "", h); next} /^-> changed/{print h}' "$1"
+}
+
+# restarts_of <run.out> : how many times the probe's restart op changed.
+restarts_of() { changed_ops "$1" | grep -cxF 'svc tp-probe.service restart' || true; }
+
+# reloads_in <journal text file> : how many daemon-reloads systemd logged
+# (`Reloading requested from client PID <n> ('systemctl') ...`, one per
+# reload; `Reloading finished in <t>` follows it).
+reloads_in() { grep -c 'Reloading requested from client' "$1" || true; }
+
+# services_vm_vars3 <file> : run 3's vars file, the one var changed.
+services_vm_vars3() {
+    printf '%s\n' '# services_vm run 3: the probe unit'"'"'s Description= changed' '[services_vm]' 'probe_description = "telepatch services_vm probe, changed"' >"$1"
 }
 
 # groups_have <id -nG output> <group>... : true when every group is listed.
@@ -243,6 +283,58 @@ vm_lib_self_test() {
         echo "ok   memory report: free -m and peak used 797, swap 700"
     else echo "FAIL memory report"; sed 's/^/     | /' "$t/out"; fails=1; fi
     rm -rf "$t"
+    return $fails
+}
+# services_vm_self_test : the log readers of the services_vm checks, on
+# synthetic run output (the wording is telepatch's executor: a header
+# `== <host> [<roles>] #<id> <desc> ==`, then the op's result line).
+services_vm_self_test() {
+    local t fails=0 got hdr='HOST                 STATUS    OK CHANGED FAILED NOT RUN  DETAIL'
+    t=$(mktemp -d)
+    # run 2: nothing changed, the guarded ops skipped
+    printf '%s\n' \
+        '== bot@h [(none)] #4 svc tp-probe.service ==' '-> ok' \
+        '== bot@h [(none)] #5 svc tp-probe.service restart ==' '-> skipped (when changed(#0) & !started(#4))' \
+        '== bot@h [(none)] #6 svc tp-probe.service reload ==' '-> skipped (when changed(#2))' \
+        "$hdr" 'bot@h  ok  9  0  0  0' >"$t/r2"
+    # run 3: the unit changed, restarted once
+    printf '%s\n' \
+        '== bot@h [(none)] #0 unit tp-probe.service content ==' '-> changed' \
+        '== bot@h [(none)] #4 svc tp-probe.service ==' '-> ok' \
+        '== bot@h [(none)] #5 svc tp-probe.service restart ==' '-> changed' \
+        '== bot@h [(none)] #6 svc tp-probe.service reload ==' '-> skipped (when changed(#2))' \
+        "$hdr" 'bot@h  changed  7  2  0  0' >"$t/r3"
+    got=$(op_result "$t/r2" 'svc tp-probe.service restart')
+    if [[ $got == '-> skipped (when changed(#0) & !started(#4))' ]]; then echo "ok   op_result restart in run 2 -> $got"
+    else echo "FAIL op_result restart in run 2 -> '$got'"; fails=1; fi
+    got=$(op_result "$t/r2" 'svc tp-probe.service')
+    if [[ $got == '-> ok' ]]; then echo "ok   op_result state op is not the restart op -> $got"
+    else echo "FAIL op_result state op -> '$got'"; fails=1; fi
+    got=$(op_result "$t/r2" 'svc nothing')
+    if [[ -z $got ]]; then echo "ok   op_result of an absent op is empty"
+    else echo "FAIL op_result of an absent op -> '$got'"; fails=1; fi
+    got=$(changed_ops "$t/r3" | tr '\n' ';')
+    if [[ $got == 'unit tp-probe.service content;svc tp-probe.service restart;' ]]; then echo "ok   changed_ops run 3 -> $got"
+    else echo "FAIL changed_ops run 3 -> '$got'"; fails=1; fi
+    got=$(changed_ops "$t/r2" | wc -l)
+    if [[ $got -eq 0 ]]; then echo "ok   changed_ops run 2 -> none"
+    else echo "FAIL changed_ops run 2 -> $got"; fails=1; fi
+    got=$(restarts_of "$t/r3"); if [[ $got -eq 1 ]]; then echo "ok   restarts_of run 3 -> 1"; else echo "FAIL restarts_of run 3 -> $got"; fails=1; fi
+    got=$(restarts_of "$t/r2"); if [[ $got -eq 0 ]]; then echo "ok   restarts_of run 2 -> 0"; else echo "FAIL restarts_of run 2 -> $got"; fails=1; fi
+    # the manager's journal lines for daemon-reloads
+    printf '%s\n' 'Started tp-probe.service.' \
+        "Reloading requested from client PID 811 ('systemctl') (unit session-1.scope)..." 'Reloading finished in 40 ms.' \
+        "Reloading requested from client PID 905 ('systemctl') (unit session-2.scope)..." 'Reloading finished in 38 ms.' >"$t/j"
+    got=$(reloads_in "$t/j"); if [[ $got -eq 2 ]]; then echo "ok   reloads_in -> 2"; else echo "FAIL reloads_in -> $got"; fails=1; fi
+    : >"$t/j0"
+    got=$(reloads_in "$t/j0"); if [[ $got -eq 0 ]]; then echo "ok   reloads_in of nothing -> 0"; else echo "FAIL reloads_in of nothing -> $got"; fails=1; fi
+    # run 3's vars file: the one var, a value other than the default's
+    services_vm_vars3 "$t/v3"
+    if grep -q '^\[services_vm\]' "$t/v3" && grep -q '^probe_description = ' "$t/v3" \
+        && ! cmp -s "$t/v3" "$ROOT/vars/services_vm.toml" \
+        && grep -q '^probe_description = ' "$ROOT/vars/services_vm.toml"; then echo "ok   services_vm_vars3 sets probe_description, differs from vars/services_vm.toml"
+    else echo "FAIL services_vm_vars3"; fails=1; fi
+    rm -f "$t"/*; rmdir "$t"
     return $fails
 }
 
@@ -297,6 +389,10 @@ self_test() {
     else echo "FAIL playbook dev_desktop -> '$got'"; fails=1; fi
     if (playbook_config rust_build) >/dev/null 2>&1; then echo "FAIL playbook rust_build accepted"; fails=1
     else echo "ok   playbook rust_build refused"; fi
+    got=$(playbook_config services_vm && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "services_vm|vars/services_vm.toml|0|1|" ]]; then echo "ok   playbook services_vm -> $got"
+    else echo "FAIL playbook services_vm -> '$got'"; fails=1; fi
+    services_vm_self_test || fails=1
     vm_lib_self_test || fails=1
 
     # a working check as each user: bot directly, any other through sudo -iu
@@ -358,7 +454,7 @@ if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
 distro=${1:-}; container=${2:-}
 [[ -n $distro && -n $container ]] || die "usage: test-vm.sh [--keep] <distro> <playbook> | --self-test"
 [[ $distro == ubuntu2404 ]] || die "only the ubuntu2404 image is supported, not '$distro'"
-playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop"
+playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm"
 
 # ---- preflight --------------------------------------------------------------
 oracle=$ROOT/build/test-container/$container-$distro
@@ -397,13 +493,13 @@ changed_of() { awk '/^HOST  *STATUS/{getline; print $4; exit}' "$1"; }
 status_of() { awk '/^HOST  *STATUS/{getline; print $2; exit}' "$1"; }
 
 run() { # n
-    echo "=== run $1: tp-basic run $PB_NAME --host $dest --vars $PB_VARS ==="
+    echo "=== run $1: tp-basic run $PB_NAME --host $dest --vars ${RUN_VARS:+(changed copy) }$PB_VARS ==="
     VM_STEP="run $1: tp-basic run $PB_NAME --host $dest"
     local rc=0 t0=$SECONDS
     "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" --ssh-key "$key" \
         --ssh-option StrictHostKeyChecking=accept-new \
         --ssh-option UserKnownHostsFile="$out/known_hosts" \
-        --vars "$ROOT/$PB_VARS" --log "$out/run$1.jsonl" \
+        --vars "${RUN_VARS:-$ROOT/$PB_VARS}" --log "$out/run$1.jsonl" \
         >"$out/run$1.out" 2>&1 || rc=$?
     sed -n '/^HOST  *STATUS/,$p' "$out/run$1.out"
     echo "run $1 took $((SECONDS - t0))s"
@@ -421,6 +517,83 @@ if [[ $rc1 -ne 0 ]]; then
 fi
 grep '^== .* \[prepare\]' "$out/run1.out" || true
 go1=$(go_now)
+
+# ---- services_vm: states, units and guarded restarts on a booted VM (gating) -------
+# Run 1 is done (exit 0). Every check prints ok or FAIL; the verdict comes after
+# all of them.
+if [[ $container == services_vm ]]; then
+    wrc=0
+    ok() { echo "ok   $1"; }
+    bad() { echo "FAIL $1"; wrc=1; }
+    # vexpect <label> <want> <command>: the command's stdout, run over SSH, is <want>
+    vexpect() {
+        local o r=0
+        o=$(sshv "$3" 2>&1) || r=$?
+        if [[ $o == "$2" ]]; then ok "$1: $o"; else bad "$1 printed '$o' (exit $r), wanted '$2'"; fi
+    }
+    echo "=== services_vm after run 1 ==="
+    grep '^== .* \[prepare\] \(unit\|svc\)' "$out/run1.out" || true
+    vexpect "tp-probe.service is-enabled" enabled 'systemctl is-enabled tp-probe.service'
+    vexpect "tp-probe.service is-active" active 'systemctl is-active tp-probe.service'
+    vexpect "tp-probe.service drop-in applied (Environment)" 'Environment=TP_PROBE=1' 'systemctl show -p Environment tp-probe.service'
+    vexpect "tp-probe-off.service is-enabled" disabled 'systemctl is-enabled tp-probe-off.service || true'
+    vexpect "tp-probe-off.service is-active" inactive 'systemctl is-active tp-probe-off.service || true'
+    vexpect "tp-probe-masked.service is-enabled" masked 'systemctl is-enabled tp-probe-masked.service || true'
+    r=$(op_result "$out/run1.out" 'svc tp-probe.service reload')
+    if [[ $r == '-> changed' ]]; then ok "run 1: the guarded reload ran ($r)"; else bad "run 1: svc tp-probe.service reload ended '$r', wanted '-> changed'"; fi
+    echo "run 1: svc tp-probe.service restart: $(op_result "$out/run1.out" 'svc tp-probe.service restart')"
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a services_vm check after run 1 failed"; exit 1; }
+
+    echo "=== services_vm run 2: nothing changes ==="
+    rc2=0; run 2 || rc2=$?
+    grep '^== .* \[prepare\]' "$out/run2.out" || true
+    if [[ $rc2 -eq 0 && $(status_of "$out/run2.out") == ok && $(changed_of "$out/run2.out") == 0 ]]; then ok "run 2: STATUS ok, CHANGED 0"
+    else
+        bad "run 2 exited $rc2, STATUS $(status_of "$out/run2.out"), CHANGED $(changed_of "$out/run2.out") (log: $out/run2.out)"
+        changed_ops "$out/run2.out" | sed 's/^/     changed: /'
+    fi
+    for a in restart reload; do
+        r=$(op_result "$out/run2.out" "svc tp-probe.service $a")
+        if [[ $r == '-> skipped (when '* ]]; then ok "run 2: svc tp-probe.service $a shown as skipped: $r"
+        else bad "run 2: svc tp-probe.service $a ended '$r', wanted '-> skipped (when ..)'"; fi
+    done
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a services_vm check after run 2 failed"; exit 1; }
+
+    echo "=== services_vm run 3: the unit's content var changes ==="
+    ts_cmd='systemctl show -p ExecMainStartTimestamp --value tp-probe.service'
+    rel_cmd='sudo -n journalctl -b -o cat _PID=1 --no-pager'
+    ts0=$(sshv "$ts_cmd" 2>&1) || ts0="(failed: $ts0)"
+    sshv "$rel_cmd" >"$out/journal-before.txt" 2>&1 || true
+    n0=$(reloads_in "$out/journal-before.txt")
+    RUN_VARS=$out/vars-run3.toml
+    services_vm_vars3 "$RUN_VARS"
+    echo "run 3's vars: $RUN_VARS"; sed 's/^/     | /' "$RUN_VARS"
+    echo "before run 3: ExecMainStartTimestamp=$ts0; daemon-reloads logged: $n0"
+    rc3=0; run 3 || rc3=$?
+    grep '^== .* \[prepare\]' "$out/run3.out" || true
+    sleep 1   # the start timestamp has a one-second resolution
+    ts1=$(sshv "$ts_cmd" 2>&1) || ts1="(failed: $ts1)"
+    sshv "$rel_cmd" >"$out/journal-after.txt" 2>&1 || true
+    n1=$(reloads_in "$out/journal-after.txt")
+    echo "after run 3: ExecMainStartTimestamp=$ts1; daemon-reloads logged: $n1"
+    if [[ $rc3 -eq 0 && $(status_of "$out/run3.out") == changed ]]; then ok "run 3: exit 0, STATUS changed"
+    else bad "run 3 exited $rc3, STATUS $(status_of "$out/run3.out") (log: $out/run3.out)"; fi
+    ch3=$(changed_ops "$out/run3.out" | sort | tr '\n' ';')
+    if [[ $ch3 == 'svc tp-probe.service restart;unit tp-probe.service content;' ]]; then ok "run 3: the changed ops are the unit's content and the restart"
+    else bad "run 3 changed '$ch3', wanted the unit's content and the restart only"; fi
+    nr=$(restarts_of "$out/run3.out")
+    if [[ $nr -eq 1 ]]; then ok "run 3: exactly one restart of tp-probe.service"; else bad "run 3: $nr restarts of tp-probe.service, wanted 1"; fi
+    if [[ -n $ts0 && -n $ts1 && $ts0 != "$ts1" && $ts1 != '(failed'* && $ts0 != '(failed'* ]]; then ok "run 3: ExecMainStartTimestamp moved ($ts0 -> $ts1)"
+    else bad "run 3: ExecMainStartTimestamp did not move ('$ts0' -> '$ts1')"; fi
+    if [[ $((n1 - n0)) -eq 1 ]]; then ok "run 3: exactly one daemon-reload (journal: $n0 -> $n1)"
+    else bad "run 3: $((n1 - n0)) daemon-reloads in the journal ($n0 -> $n1), wanted 1"; fi
+    vexpect "after run 3 tp-probe.service is-active" active 'systemctl is-active tp-probe.service'
+    vexpect "after run 3 the unit file carries the new Description" 'Description=telepatch services_vm probe, changed' 'systemctl show -p Description tp-probe.service'
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: a services_vm check failed"; exit 1; fi
+    echo "services_vm checks: all passed"
+    echo "PASS: services_vm on a $distro VM over SSH (run 1 ok; run 2 CHANGED 0, restart skipped; run 3 one restart, one daemon-reload)"
+    exit 0
+fi
 
 # ---- dev_desktop: the enable-then-start path of svc (gating) ----------------------
 # Between run 1 and the idempotent pass, take docker down on the booted VM:

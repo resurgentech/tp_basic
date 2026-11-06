@@ -107,6 +107,25 @@ impl Default for RustBuildVars {
     }
 }
 
+/// `playbooks/desktop.rs` `services_vm` (test-only, not a role): the one
+/// var `scripts/test-vm.sh` changes between runs 2 and 3.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ServicesVmVars {
+    /// The `Description=` line of the probe unit `tp-probe.service`: the
+    /// only part of the unit file a var sets, so changing it changes the
+    /// unit's content and nothing else.
+    pub probe_description: String,
+}
+
+impl Default for ServicesVmVars {
+    fn default() -> Self {
+        ServicesVmVars {
+            probe_description: "telepatch services_vm probe".to_string(),
+        }
+    }
+}
+
 /// Roles with vars of their own. A role not listed reads none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -116,4 +135,5 @@ pub struct Vars {
     pub vm_server: VmServerVars,
     pub rust_kernel: RustKernelVars,
     pub rust_build: RustBuildVars,
+    pub services_vm: ServicesVmVars,
 }

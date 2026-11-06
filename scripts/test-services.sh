@@ -6,6 +6,16 @@
 # ca-certificates) twice with the static tp-basic (copied in with `docker cp`, with
 # build/dist/vars/container.toml, from `just dist`, as test-idempotent.sh does).
 #
+# Then, in the same container, the test-only `services_vm` playbook (units,
+# a drop-in, enabled/disabled/masked states, a guarded restart and reload;
+# `h.unit` and the svc states offline) is applied twice: run 1 exits 0, its
+# unit writes say `will create`, no daemon-reload is tried (no running
+# systemd), the guarded restart and reload end `ok (skipped)` (or
+# `skipped (when ..)`), and with systemctl `is-enabled` of tp-probe.service,
+# tp-probe-off.service and tp-probe-masked.service print enabled, disabled and
+# masked; run 2 is CHANGED 0 with both guarded ops `skipped (when ..)`.
+# Logs: build/test-services/<distro>/{sv1,sv2}.log.
+#
 # Gates: run 1 exits 0 and its prepare block has at least one `svc ` line;
 # run 2 exits 0 with CHANGED 0. Then, when the image has systemctl,
 # `systemctl is-enabled docker` and the kit's libvirt socket (libvirtd.socket,
@@ -86,14 +96,19 @@ docker start "$name" >/dev/null
 echo "=== preamble ($family) ==="
 docker exec "$name" sh -c "$preamble" >"$out/preamble.log" 2>&1 || { tail -20 "$out/preamble.log"; die "preamble failed (log: $out/preamble.log)"; }
 
-run() { # n
-    echo "=== run $1: tp-basic run desktop_services --local ==="
+run() { # n [playbook [log prefix]]
+    local pb=${2:-desktop_services} log=${3:-run}
+    echo "=== run $1: tp-basic run $pb --local ==="
     local rc=0
-    docker exec "$name" /tmp/tp-basic run desktop_services --local --vars /tmp/tp-vars/container.toml \
-        >"$out/run$1.log" 2>&1 || rc=$?
-    sed -n '/^HOST  *STATUS/,$p' "$out/run$1.log"
+    docker exec "$name" /tmp/tp-basic run "$pb" --local --vars /tmp/tp-vars/container.toml \
+        >"$out/$log$1.log" 2>&1 || rc=$?
+    sed -n '/^HOST  *STATUS/,$p' "$out/$log$1.log"
     return $rc
 }
+
+# result_of <log> <op description> : the `-> ...` line that ends the op whose
+# header names the description (`svc tp-probe.service restart`), the first one
+result_of() { awk -v d=" $2 ==" '/^== /{h=(index($0, d) > 0); next} h && /^-> /{print; exit}' "$1"; }
 
 # changed_of <log> : the CHANGED cell of the table's single host row
 changed_of() { awk '/^HOST  *STATUS/{getline; print $4; exit}' "$1"; }
@@ -142,8 +157,10 @@ if docker exec "$name" sh -c 'command -v systemctl' >/dev/null 2>&1; then
         echo "FAIL: systemctl exists after run 1, but its prepare promised 'no systemctl: skipped'"; fail=1
     fi
     [[ $fail -eq 0 ]] || exit 1
+    have_systemctl=1
     echo "PASS: desktop_services on $distro, init-less: run 1 ok, run 2 CHANGED 0, docker and $socket enabled"
 else
+    have_systemctl=0
     echo "no systemctl in the image"
     if ! grep -Eq 'no systemctl: skipped|no systemctl yet: decided at run time' <<<"$svc_lines"; then
         echo "FAIL: no systemctl in the image, but run 1's prepare did not say 'no systemctl'"
@@ -151,4 +168,67 @@ else
     fi
     echo "PASS: desktop_services on $distro, init-less: run 1 ok (no systemctl: skipped), run 2 CHANGED 0"
 fi
+
+# ---- services_vm: unit files and the svc states offline ------------------------
+# Same container: no init, so the unit files are written and verified, the
+# enable, disable and mask links are made offline, start, stop, restart and
+# reload are skipped, and no daemon-reload is tried.
+echo "=== services_vm, init-less ==="
+rc1=0; run 1 services_vm sv || rc1=$?
+if [[ $rc1 -ne 0 ]]; then
+    tail -40 "$out/sv1.log"
+    echo "FAIL: services_vm run 1 exited $rc1 (log: $out/sv1.log)"
+    exit 1
+fi
+echo "--- services_vm run 1 prepare block (verbatim) ---"
+grep '^== .* \[prepare\]' "$out/sv1.log" || true
+echo "--- services_vm run 1 op results ---"
+fail=0
+for d in "svc tp-probe.service" "svc tp-probe.service restart" "svc tp-probe.service reload" "svc tp-probe-off" "svc tp-probe-masked"; do
+    echo "  $d: $(result_of "$out/sv1.log" "$d")"
+done
+for u in tp-probe.service tp-probe-off.service tp-probe.service.d/override.conf; do
+    if ! grep -qF "[prepare] unit $u: will create ==" "$out/sv1.log"; then
+        echo "FAIL: run 1's prepare lacks 'unit $u: will create'"; fail=1
+    fi
+done
+# the offline skip lines: the guarded restart and reload did nothing, said so
+for a in restart reload; do
+    r=$(result_of "$out/sv1.log" "svc tp-probe.service $a")
+    if [[ $r != '-> ok (skipped)' && $r != '-> skipped (when '* ]]; then
+        echo "FAIL: run 1's svc tp-probe.service $a ended '$r', wanted '-> ok (skipped)' or '-> skipped (when ..)'"; fail=1
+    fi
+done
+if grep -qE 'daemon-reload|has not been booted' "$out/sv1.log"; then
+    echo "FAIL: run 1 mentions daemon-reload or 'has not been booted' (no running systemd: nothing to reload)"
+    grep -nE 'daemon-reload|has not been booted' "$out/sv1.log"; fail=1
+fi
+if [[ $have_systemctl -eq 1 ]]; then
+    for pair in tp-probe.service:enabled tp-probe-off.service:disabled tp-probe-masked.service:masked; do
+        u=${pair%%:*} want=${pair##*:}
+        rc=0; got=$(docker exec "$name" systemctl is-enabled "$u" 2>&1) || rc=$?
+        echo "systemctl is-enabled $u: $(printf '%s' "$got" | tr '\n' ' ') (exit $rc)"
+        [[ $got == "$want" ]] || { echo "FAIL: systemctl is-enabled $u printed '$got', wanted $want"; fail=1; }
+    done
+fi
+for f in /etc/systemd/system/tp-probe.service /etc/systemd/system/tp-probe.service.d/override.conf /etc/systemd/system/tp-probe-off.service /etc/tp-probe.conf; do
+    docker exec "$name" test -f "$f" || { echo "FAIL: $f is missing"; fail=1; }
+done
+[[ $fail -eq 0 ]] || exit 1
+
+rc2=0; run 2 services_vm sv || rc2=$?
+grep '^== .* \[prepare\]' "$out/sv2.log" || true
+ch=$(changed_of "$out/sv2.log")
+if [[ $rc2 -ne 0 || $ch != 0 ]]; then
+    echo "FAIL: services_vm run 2 exited $rc2, CHANGED ${ch:-?} (log: $out/sv2.log)"
+    awk '/^== /{h=$0} /^-> changed/{print "  " h}' "$out/sv2.log"
+    exit 1
+fi
+for a in restart reload; do
+    r=$(result_of "$out/sv2.log" "svc tp-probe.service $a")
+    echo "  run 2 svc tp-probe.service $a: $r"
+    [[ $r == '-> skipped (when '* ]] || { echo "FAIL: run 2's svc tp-probe.service $a ended '$r', wanted '-> skipped (when ..)'"; fail=1; }
+done
+[[ $fail -eq 0 ]] || exit 1
+echo "PASS: services_vm on $distro, init-less: run 1 ok (units written, restart and reload skipped), run 2 CHANGED 0 (guards skipped)"
 exit 0

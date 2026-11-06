@@ -28,6 +28,10 @@ pub fn all() -> Vec<Playbook<Vars>> {
             name: "desktop_services",
             run: desktop_services_entry,
         },
+        Playbook {
+            name: "services_vm",
+            run: services_vm_entry,
+        },
     ]
 }
 
@@ -84,4 +88,46 @@ async fn desktop_services(h: &Host<Vars>) -> Result<(), TraceError> {
     h.pkg(["curl", "ca-certificates"]);
     docker(h).await?;
     vm_server(h).await
+}
+
+fn services_vm_entry(h: Host<Vars>) -> PlaybookFuture {
+    Box::pin(async move { services_vm(&h).await })
+}
+
+/// Not in the YAML: the proof of service states, units and guarded restarts
+/// on a booted VM (`scripts/test-vm.sh services_vm`) and offline in an
+/// init-less container (`scripts/test-services.sh`). No role: the units are
+/// the playbook's own, named `tp-probe*`.
+///
+/// * `tp-probe.service` runs `sleep infinity`, with a drop-in; it is
+///   enabled and started, and restarts when its unit file changes. It has
+///   `ExecReload=/bin/true` so the guarded reload (when `/etc/tp-probe.conf`
+///   changes) has something to run. The `Description=` comes from the var
+///   `services_vm.probe_description`: the VM script changes it between
+///   runs 2 and 3.
+/// * `tp-probe-off.service` exists (an `[Install]` section, so "disabled"
+///   is a state of a real unit) and is disabled and stopped.
+/// * `tp-probe-masked.service` has no file: `systemctl mask` links it to
+///   /dev/null, and refuses when a file of that name is in /etc/systemd.
+async fn services_vm(h: &Host<Vars>) -> Result<(), TraceError> {
+    let desc = &h.vars.services_vm.probe_description;
+    let unit = h
+        .unit("tp-probe.service")
+        .content(format!(
+            "[Unit]\nDescription={desc}\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n"
+        ))
+        .mode(0o644);
+    h.unit("tp-probe.service")
+        .drop_in("override", "[Service]\nEnvironment=TP_PROBE=1\n");
+    let conf = h.file("/etc/tp-probe.conf").content("probe=1\n");
+    h.unit("tp-probe-off.service")
+        .content("[Unit]\nDescription=telepatch services_vm probe, off\n\n[Service]\nExecStart=/bin/sleep infinity\n\n[Install]\nWantedBy=multi-user.target\n");
+    h.svc("tp-probe.service")
+        .enabled()
+        .started()
+        .restart_on(&unit);
+    h.svc("tp-probe.service").reload().when(conf.changed());
+    h.svc("tp-probe-off").disabled().stopped();
+    h.svc("tp-probe-masked").masked().stopped();
+    Ok(())
 }

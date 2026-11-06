@@ -1,0 +1,3 @@
+# services_vm (test-only): the one var scripts/test-vm.sh changes between runs 2 and 3.
+[services_vm]
+probe_description = "telepatch services_vm probe"
