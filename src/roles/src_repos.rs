@@ -96,6 +96,7 @@ pub async fn src_repos(h: &Host<Vars>) -> Result<(), TraceError> {
     // is static, so the refresh runs on every play, not only when the sed
     // changed something as in the YAML (cost: one oracle-invisible
     // `apt-get update`).
+    // HACK(repo: deb-src on the distro's own sources): no primitive edits the distro's .sources files
     sh!(
         h,
         "sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/*.sources\necho SOURCES_CHANGED",

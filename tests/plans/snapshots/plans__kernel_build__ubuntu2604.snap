@@ -240,3 +240,5 @@ role kernel_build
       |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       |   fi
       | fi
+
+warning: sh! in a role body at src/roles/src_repos.rs:100

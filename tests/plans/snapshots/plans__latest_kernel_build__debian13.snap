@@ -380,3 +380,7 @@ role rust_kernel
       | rc=$?
       | if [ "$rc" -eq 0 ]; then changed=1; fi
       | fi
+
+warning: sh! in a role body at src/roles/src_repos.rs:100
+warning: sh! in a role body at src/roles/rust_kernel.rs:172
+warning: sh! in a role body at src/roles/rust_kernel.rs:193

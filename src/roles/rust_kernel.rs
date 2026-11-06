@@ -168,6 +168,7 @@ pub async fn rust_kernel(h: &Host<Vars>) -> Result<(), TraceError> {
         // rustup component add rust-src 2>&1'` should be repeated if rustup
         // moves.
         // Source: https://rust-lang.github.io/rustup/concepts/components.html (accessed 2026-10-30)
+        // HACK(pkg: rustup components): a second rustup op for rust_build's toolchain does not merge yet (T80), so the component is added by hand (removed again in T84)
         sh!(
             s,
             ". ~/.cargo/env && rustup component add rust-src",
@@ -188,6 +189,7 @@ pub async fn rust_kernel(h: &Host<Vars>) -> Result<(), TraceError> {
         // superseded. It also avoids the `/home/<name>` form that `rust_build`
         // would give (`/home/root` for root, which does not exist).
         // Source: https://docs.kernel.org/rust/quick-start.html (accessed 2026-10-30)
+        // HACK(pkg: cargo --locked): the cargo source has no `--locked` option (removed again in T84)
         sh!(
             s,
             ". ~/.cargo/env && cargo install --locked bindgen-cli",
