@@ -119,7 +119,7 @@ guard_self_test() {
         # shellcheck disable=SC2086
         gt "tp_basic: scripts/$r" 2 0 DI_SHA=HEAD -- bash $tpb/scripts/$r
     done
-    for r in os-fixtures test-live-os test-live-pkg test-live-mise test-live-ssh test-live-user test-live-repo test-live-svc test-live-unit; do
+    for r in os-fixtures test-live-os test-live-pkg test-live-mise test-live-ssh test-live-user test-live-repo test-live-svc test-live-unit test-live-fetch; do
         gt "telepatch: just $r" 2 0 -- just --justfile "$tel/justfile" --working-directory "$tel" "$r"
     done
     rm -rf "$t"
