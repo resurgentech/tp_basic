@@ -35,7 +35,7 @@ role admin_users
       |   fi
       | fi
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
       |     if [ "$rc" -eq 0 ]; then
@@ -77,7 +77,7 @@ role admin_users
       |   fi
       | fi
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
       |     if [ "$rc" -eq 0 ]; then
@@ -155,7 +155,7 @@ role admin_users
       |   tp_b='Ym90IEFMTD0oQUxMKSAgICAgICBOT1BBU1NXRDogQUxMCkRlZmF1bHRzOmJvdCAhcmVxdWlyZXR0eQpEZWZhdWx0czpib3QgIWVudl9yZXNldAo='
       |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     chmod 440 "$tp_c" || rc=$?
       |     if [ "$rc" -eq 0 ]; then chown 'root:root' "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ]; then
@@ -239,7 +239,7 @@ role admin_users
       |   tp_b='dHBkZXYgQUxMPShBTEwpICAgICAgIE5PUEFTU1dEOiBBTEwKRGVmYXVsdHM6dHBkZXYgIXJlcXVpcmV0dHkKRGVmYXVsdHM6dHBkZXYgIWVudl9yZXNldAo='
       |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     chmod 440 "$tp_c" || rc=$?
       |     if [ "$rc" -eq 0 ]; then chown 'root:root' "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ]; then

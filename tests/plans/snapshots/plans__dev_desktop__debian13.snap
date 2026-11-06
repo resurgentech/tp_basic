@@ -35,7 +35,7 @@ role admin_users
       |   fi
       | fi
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
       |     if [ "$rc" -eq 0 ]; then
@@ -77,7 +77,7 @@ role admin_users
       |   fi
       | fi
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
       |     if [ "$rc" -eq 0 ]; then
@@ -155,7 +155,7 @@ role admin_users
       |   tp_b='Ym90IEFMTD0oQUxMKSAgICAgICBOT1BBU1NXRDogQUxMCkRlZmF1bHRzOmJvdCAhcmVxdWlyZXR0eQpEZWZhdWx0czpib3QgIWVudl9yZXNldAo='
       |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     chmod 440 "$tp_c" || rc=$?
       |     if [ "$rc" -eq 0 ]; then chown 'root:root' "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ]; then
@@ -239,7 +239,7 @@ role admin_users
       |   tp_b='dHBkZXYgQUxMPShBTEwpICAgICAgIE5PUEFTU1dEOiBBTEwKRGVmYXVsdHM6dHBkZXYgIXJlcXVpcmV0dHkKRGVmYXVsdHM6dHBkZXYgIWVudl9yZXNldAo='
       |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
       |   changed=0
-      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || ! cmp -s "$tp_c" "$tp_p"; }; then
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |     chmod 440 "$tp_c" || rc=$?
       |     if [ "$rc" -eq 0 ]; then chown 'root:root' "$tp_c" || rc=$?; fi
       |     if [ "$rc" -eq 0 ]; then
@@ -366,7 +366,7 @@ role dev_common
       | tp_p='/etc/profile.d/mise.sh'
       | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
       | tp_b='IyBtaXNlIHN5c3RlbSBzaGltcyBmb3IgbG9naW4gc2hlbGxzICh0ZWxlcGF0Y2ggZGV2X2NvbW1vbikKZXhwb3J0IFBBVEg9Ii91c3IvbG9jYWwvc2hhcmUvbWlzZS9zaGltczokUEFUSCIK'
-      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && printf %s "$tp_b" | base64 -d | cmp -s - "$tp_p"; }; then
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
       |   if [ "$rc" -eq 0 ]; then
       |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
@@ -462,7 +462,7 @@ role docker
       |   return 1
       | }
       | tp_put() {
-      |   if tp_render "$2" | cmp -s - "$1"; then return 0; fi
+      |   if [ -f "$1" ] && [ "$(tp_render "$2" | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$1" | cut -d' ' -f1)" ]; then return 0; fi
       |   (umask 022; mkdir -p -- "$(dirname -- "$1")") || return 1
       |   tp_t=$(mktemp "$1.XXXXXX") || return 1
       |   if tp_render "$2" > "$tp_t" && chmod 0644 "$tp_t" && mv -f -- "$tp_t" "$1"; then
@@ -862,7 +862,7 @@ role golang
       | tp_p='/etc/profile.d/go.sh'
       | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
       | tp_b='ZXhwb3J0IFBBVEg9IiRQQVRIOi91c3IvbG9jYWwvZ28vYmluIgo='
-      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && printf %s "$tp_b" | base64 -d | cmp -s - "$tp_p"; }; then
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
       |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
       |   if [ "$rc" -eq 0 ]; then
       |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
