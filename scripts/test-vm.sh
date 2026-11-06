@@ -2,8 +2,8 @@
 # VM check over SSH, a proof of the SSH transport: create a fresh VM with
 # ~/repos/jaredeh/vmtool, apply a playbook to it twice with
 # `tp-basic run --host`, and delete the VM. The playbooks (playbook_config):
-# dev_base (container/dev_base, vars/container.toml, 4 GiB, the docker oracle
-# report) and dev_desktop (vars/desktop.toml, 4 GiB, 30 GB disk, no oracle
+# dev_base (container/dev_base, vars/container.toml, 1 GiB, the docker oracle
+# report) and dev_desktop (vars/desktop.toml, 1 GiB, 30 GB disk, no oracle
 # report; after run 2 the per-user working checks below gate). Usage errors and environment
 # problems (no VM IP, no onboarding) exit 2; a failed first run, a second run
 # that is not STATUS ok / CHANGED 0, or a VM still listed after the delete
@@ -158,10 +158,10 @@ oracle_report() {
 # any other name.
 playbook_config() {
     case $1 in
-        dev_base) PB_NAME=container/dev_base PB_VARS=vars/container.toml PB_ORACLE=1 PB_MEMORY=4 PB_DISK= ;;
+        dev_base) PB_NAME=container/dev_base PB_VARS=vars/container.toml PB_ORACLE=1 PB_MEMORY=1 PB_DISK= ;;
         # docker, libvirt, Go, Node and two rustup trees do not fit the
         # image's own disk, and the libvirt and docker daemons want memory.
-        dev_desktop) PB_NAME=dev_desktop PB_VARS=vars/desktop.toml PB_ORACLE=0 PB_MEMORY=4 PB_DISK=30 ;;
+        dev_desktop) PB_NAME=dev_desktop PB_VARS=vars/desktop.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK=30 ;;
         *) return 1 ;;
     esac
 }
@@ -209,6 +209,43 @@ groups_have() {
     for g in "$@"; do [[ $have == *" $g "* ]] || return 1; done
 }
 
+# vm_lib_self_test : scripts/lib/vm.sh's memory rule, OOM check and memory
+# report, with sshv replaced by a stub (no VM, no ssh, no vmtool).
+vm_lib_self_test() {
+    local t fails=0 rc
+    t=$(mktemp -d)
+    # every tp-* VM at 1 GiB: vm_up refuses any other size before vmtool runs
+    rc=0; (vmtool() { echo "vmtool ran" >"$t/vmtool"; }; vm_up tp-x "$t" "" 4) >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 2 && ! -e $t/vmtool ]] && grep -q 'every tp-\* VM gets 1 GiB' "$t/out"; then echo "ok   vm_up refuses 4 GiB before vmtool"
+    else echo "FAIL vm_up 4 GiB: exit $rc"; sed 's/^/     | /' "$t/out"; fails=1; fi
+    [[ $VM_MEMORY_GIB == 1 && $VM_SWAP_GIB == 4 ]] && echo "ok   VM_MEMORY_GIB=1 VM_SWAP_GIB=4" || { echo "FAIL VM_MEMORY_GIB=$VM_MEMORY_GIB VM_SWAP_GIB=$VM_SWAP_GIB"; fails=1; }
+    # no script passes any other memory to vm_up or vmtool
+    if grep -nE -- '--memory [^"$]|PB_MEMORY=[^1]' "$ROOT"/scripts/*.sh "$ROOT"/scripts/lib/*.sh | grep -v 'vm_lib_self_test\|grep -nE\|t "unknown flag"'; then
+        echo "FAIL a script asks for another memory size"; fails=1; else echo "ok   no script asks for more than 1 GiB"; fi
+    # the OOM check: a kernel log with an oom-kill
+    local kern=$'[ 812.1] cc1plus invoked oom-killer: gfp_mask=0x140cca\n[ 812.3] Out of memory: Killed process 4242 (cc1plus) total-vm:900000kB\n[ 812.4] oom_reaper: reaped process 4242 (cc1plus)'
+    rc=0; (sshv() { printf '%s\n' "$kern"; }; VM_DEST=bot@192.0.2.7 VM_STEP="run 1: tp-basic run dev_desktop"; vm_oom_check "$t" "") >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 1 ]] && grep -q 'MEMORY FAILURE' "$t/out" && grep -q 'step running: run 1: tp-basic run dev_desktop' "$t/out" \
+        && grep -q 'killed: Killed process 4242 (cc1plus)' "$t/out" && grep -q 'Out of memory: Killed process 4242' "$t/kernel.log"; then
+        echo "ok   oom: line, killed process and step printed, kernel.log kept"
+    else echo "FAIL oom check: exit $rc"; sed 's/^/     | /' "$t/out"; fails=1; fi
+    rc=0; (sshv() { echo '[ 1.0] Linux version 6.8'; }; VM_DEST=bot@192.0.2.7; vm_oom_check "$t" "") >"$t/out" 2>&1 || rc=$?
+    [[ $rc -eq 0 && ! -s $t/out ]] && echo "ok   no oom: silent, 0" || { echo "FAIL no-oom check: exit $rc"; fails=1; }
+    # vm_end: a failure with an OOM returns 3, without one keeps the status
+    rc=0; (sshv() { printf '%s\n' "$kern"; }; VM_DEST=bot@192.0.2.7; vm_end "$t" "" 1) >"$t/out" 2>&1 || rc=$?
+    [[ $rc -eq 3 ]] && echo "ok   vm_end: failure with oom -> 3" || { echo "FAIL vm_end oom: $rc"; fails=1; }
+    rc=0; (sshv() { echo quiet; }; VM_DEST=bot@192.0.2.7; vm_end "$t" "" 0) >"$t/out" 2>&1 || rc=$?
+    [[ $rc -eq 0 ]] && echo "ok   vm_end: success -> 0" || { echo "FAIL vm_end ok: $rc"; fails=1; }
+    # the memory report: peak used = total - free - buff - cache, peak swap
+    local rep=$'== free -m\n               total        used        free      shared  buff/cache   available\nMem:             957         300         400           1         257         657\nSwap:           4095          12        4083\n== swapon --show\nNAME     TYPE SIZE USED PRIO\n/tp-swap file   4G  12M   -2\n== vmstat -S M -s\n 957 M total memory\n== vmstat -n -S M 5 (sampler)\nprocs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----\n r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st\n 1  0      0    600     20    200    0    0     1     1   10   10  1  1 98  0  0\n 2  0    700     50     10    100    0    0     1     1   10   10  1  1 98  0  0\n 1  0     12    400     17    240    0    0     1     1   10   10  1  1 98  0  0'
+    (sshv() { printf '%s\n' "$rep"; }; VM_DEST=bot@192.0.2.7; vm_mem_report "$t" "") >"$t/out" 2>&1
+    if grep -q 'memory: total 957 MiB; peak used 797 MiB, peak swap used 700 MiB (3 vmstat samples' "$t/out" && grep -q '^Mem: ' "$t/out"; then
+        echo "ok   memory report: free -m and peak used 797, swap 700"
+    else echo "FAIL memory report"; sed 's/^/     | /' "$t/out"; fails=1; fi
+    rm -rf "$t"
+    return $fails
+}
+
 self_test() {
     local t fails=0
     t=$(mktemp -d)
@@ -253,13 +290,14 @@ self_test() {
     # the playbook allowlist: what each accepted playbook runs with
     local got
     got=$(playbook_config dev_base && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
-    if [[ $got == "container/dev_base|vars/container.toml|1|4|" ]]; then echo "ok   playbook dev_base -> $got"
+    if [[ $got == "container/dev_base|vars/container.toml|1|1|" ]]; then echo "ok   playbook dev_base -> $got"
     else echo "FAIL playbook dev_base -> '$got'"; fails=1; fi
     got=$(playbook_config dev_desktop && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
-    if [[ $got == "dev_desktop|vars/desktop.toml|0|4|30" ]]; then echo "ok   playbook dev_desktop -> $got"
+    if [[ $got == "dev_desktop|vars/desktop.toml|0|1|30" ]]; then echo "ok   playbook dev_desktop -> $got"
     else echo "FAIL playbook dev_desktop -> '$got'"; fails=1; fi
     if (playbook_config rust_build) >/dev/null 2>&1; then echo "FAIL playbook rust_build accepted"; fails=1
     else echo "ok   playbook rust_build refused"; fi
+    vm_lib_self_test || fails=1
 
     # a working check as each user: bot directly, any other through sudo -iu
     got=$(as_user_cmd bot 'go version')
@@ -335,8 +373,11 @@ out=$ROOT/build/test-vm/$container-$distro
 mkdir -p "$out"
 rm -f "$out"/*
 
+# the memory report always; on a failure the OOM check (exit 3 when the
+# kernel killed for memory: the gate stops, the memory is not raised)
 cleanup() {
     local rc=$?
+    vm_end "$out" "" "$rc" || rc=$?
     vm_cleanup "$keep" || exit 1
     exit $rc
 }
@@ -357,6 +398,7 @@ status_of() { awk '/^HOST  *STATUS/{getline; print $2; exit}' "$1"; }
 
 run() { # n
     echo "=== run $1: tp-basic run $PB_NAME --host $dest --vars $PB_VARS ==="
+    VM_STEP="run $1: tp-basic run $PB_NAME --host $dest"
     local rc=0 t0=$SECONDS
     "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" --ssh-key "$key" \
         --ssh-option StrictHostKeyChecking=accept-new \

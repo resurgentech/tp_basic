@@ -105,6 +105,8 @@ cleanup() {
     trap - EXIT INT TERM
     if [[ -n $tunnel_pid ]]; then kill "$tunnel_pid" 2>/dev/null || true; wait "$tunnel_pid" 2>/dev/null || true; fi
     rm -f "$sock"; rmdir "$scratch" 2>/dev/null || true
+    # the memory report always; on a failure the OOM check (3: memory failure)
+    vm_end "$out" "" "$rc" || rc=$?
     vm_cleanup "$DV_KEEP" || crc=1
     if [[ $crc -ne 0 ]]; then
         echo "docker-vm: FAIL: $name is still listed by 'vmtool list'" >&2
@@ -127,6 +129,7 @@ vm_record "$name"
 vm_up "$name" "$out" "" 1 "$DV_DISK"
 
 echo "=== docker in the VM: docker.io and docker-buildx from apt ==="
+VM_STEP="installing docker.io and docker-buildx"
 sshv 'sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y -q docker.io docker-buildx' >"$out/docker-install.log" 2>&1 \
     || { tail -20 "$out/docker-install.log"; die "installing docker in $name failed (log: $out/docker-install.log)"; }
 # the label is what docker-guard.sh looks for; bot reaches the socket through
@@ -157,6 +160,7 @@ bash "$ROOT/scripts/lib/docker-guard.sh" || die "the guard refused the VM's own 
 echo "guard: ok"
 
 echo "=== running: ${DV_CMD[*]} ==="
+VM_STEP="the command: ${DV_CMD[*]} (its last lines are above)"
 rc=0; "${DV_CMD[@]}" || rc=$?
 echo "=== command exited $rc ==="
 exit "$rc"

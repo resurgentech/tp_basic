@@ -46,6 +46,7 @@ test-container-selftest:
 test-oracle-selftest:
     bash scripts/test-container.sh --self-test
     bash scripts/test-vm-oracle.sh --self-test
+    bash scripts/test-vm.sh --self-test
     bash scripts/docker-vm.sh --self-test
     bash scripts/lib/docker-guard.sh --self-test
 

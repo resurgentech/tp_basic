@@ -298,6 +298,8 @@ echo "ansible-playbook: $(head -1 "$out/ansible-version.txt")"
 
 cleanup() {
     local rc=$?
+    # the VM still up (a failure before side_down): memory report, OOM check
+    vm_end "$out" "${VM_PREFIX:-}" "$rc" || rc=$?
     if ! vm_cleanup "$keep"; then
         echo "test-vm-oracle: WARNING: a VM of this run is still listed by 'vmtool list'" >&2
         exit 1
@@ -310,6 +312,7 @@ trap cleanup EXIT
 # <side>-pre.state.
 side_up() {
     vm_record "$2"
+    VM_PREFIX=$1-
     vm_up "$2" "$out" "$1-"
     vm_state "$ROOT/scripts/image-state.sh" "${state_args[@]}" >"$out/$1-pre.state"
     echo "captured $out/$1-pre.state ($(wc -l <"$out/$1-pre.state") lines)"
@@ -321,6 +324,8 @@ side_down() {
     vm_state "$ROOT/scripts/image-state.sh" "${state_args[@]}" >"$out/$1.state"
     vm_state "$ROOT/scripts/image-state.sh" --versions >"$out/$1.versions"
     echo "captured $out/$1.state ($(wc -l <"$out/$1.state") lines)"
+    vm_mem_report "$out" "$1-"
+    VM_DEST= VM_PREFIX=
     if [[ $keep -eq 0 ]]; then
         vm_delete "$2" || exit 1
     fi
@@ -331,6 +336,7 @@ side_down() {
 run_ansible() {
     local log=$1 rc=0 t0
     echo "=== ansible-playbook $playbook on $VM_DEST (become; ansible-src/inventories/vm.yml) -> $(basename "$log") ==="
+    VM_STEP="ansible-playbook $playbook -> $(basename "$log")"
     t0=$(now_s)
     (cd "$out/ansible-src" && ANSIBLE_ROLES_PATH="$out/ansible-src/roles" ansible-playbook \
         --inventory inventories/vm.yml "$playbook" \
@@ -351,6 +357,7 @@ run_ansible() {
 run_telepatch() {
     local jsonl=$1 txt=$2 rc=0 t0
     echo "=== tp-basic run $OC_TP --host $VM_DEST --vars $OC_VARS -> $(basename "$txt") ==="
+    VM_STEP="tp-basic run $OC_TP -> $(basename "$txt")"
     t0=$(now_s)
     "$ROOT/build/tp-basic" run "$OC_TP" --host "$VM_DEST" --ssh-key "$VM_KEY" \
         --ssh-option StrictHostKeyChecking=accept-new \

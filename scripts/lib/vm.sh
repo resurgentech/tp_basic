@@ -13,6 +13,15 @@
 
 VMTOOL_DIR=${VMTOOL_DIR:-$HOME/repos/jaredeh/vmtool}
 VM_RECORDED=()
+# Every tp-* VM gets 1 GiB ("no reason to have them use more than 1GB of RAM
+# each"); vm_up refuses any other size. Swap is a file enabled with swapon only.
+VM_MEMORY_GIB=1
+VM_SWAP_GIB=4
+# The image's own disk (GB): a default-size VM gets this plus the swap file,
+# so the swap does not eat the free space a playbook had before.
+VM_IMAGE_DISK_GB=10
+# What the current script is doing, for the memory-failure report.
+VM_STEP=
 
 vm_warn() { echo "${VM_TAG:-vm}: $*" >&2; }
 
@@ -29,15 +38,21 @@ vm_key() { echo "$VMTOOL_DIR/.machines/$1/id_ed25519"; }
 vm_record() { VM_RECORDED+=("$1"); }
 
 # vm_up <name> <out dir> <log prefix> [<memory GiB>] [<disk GB>] : create the VM
-# (ubuntu2404.qcow2; memory default 4 GiB, disk default the image's own size),
-# wait for tcp/22, onboard bot with setup_bot.yml, wait for cloud-init and a free
-# dpkg lock, and run `apt-get update --fix-missing`. Logs go to
-# <out>/<prefix>{create,onboard,wait,prep}.log. Sets VM_IP, VM_KEY, VM_DEST and
-# VM_KNOWN_HOSTS (<out>/known_hosts) for sshv. The name must be recorded first.
+# (ubuntu2404.qcow2; memory 1 GiB, the only size allowed: any other value is a
+# usage error; disk default the image's own size plus the swap file), wait for
+# tcp/22, onboard bot with setup_bot.yml, wait for cloud-init and a free dpkg
+# lock, run `apt-get update --fix-missing`, add a VM_SWAP_GIB swap file
+# (/tp-swap, `swapon` only: no /etc/fstab line, so nothing a playbook or the
+# state capture sees changes, and a reboot drops it) and start a vmstat
+# sampler for vm_mem_report. Logs go to <out>/<prefix>{create,onboard,wait,
+# prep,swap}.log. Sets VM_IP, VM_KEY, VM_DEST and VM_KNOWN_HOSTS
+# (<out>/known_hosts) for sshv. The name must be recorded first.
 vm_up() {
-    local name=$1 out=$2 p=$3 mem=${4:-4} disk=${5:-} crc=0 deadline ready grow_late=0
-    local size=(--memory "$mem")
-    [[ -z $disk ]] || size+=(--disk-size "$disk")
+    local name=$1 out=$2 p=$3 mem=${4:-$VM_MEMORY_GIB} disk=${5:-} crc=0 deadline ready grow_late=0
+    [[ $mem == "$VM_MEMORY_GIB" ]] || die "vm_up: $mem GiB asked for $name; every tp-* VM gets $VM_MEMORY_GIB GiB (swap is allowed, more memory is not)"
+    [[ -n $disk ]] || disk=$((VM_IMAGE_DISK_GB + VM_SWAP_GIB))
+    local size=(--memory "$mem" --disk-size "$disk")
+    VM_STEP="creating $name"
     echo "=== creating VM $name (ubuntu2404.qcow2, $mem GiB${disk:+, $disk GB disk}) ==="
     vmtool create "$name" ubuntu2404.qcow2 "${size[@]}" >"$out/${p}create.log" 2>&1 || crc=$?
     if grep -q 'timed out waiting for IP' "$out/${p}create.log"; then
@@ -115,6 +130,65 @@ fi'
     echo "=== apt-get update on the VM (as the oracle's Dockerfile does) ==="
     sshv 'sudo -n apt-get -q update --fix-missing' >"$out/${p}prep.log" 2>&1 \
         || { tail -10 "$out/${p}prep.log"; die "apt-get update on the VM failed (log: $out/${p}prep.log)"; }
+
+    echo "=== swap: a $VM_SWAP_GIB GiB file, swapon only (no /etc/fstab line) ==="
+    sshv "sudo -n sh -c 'fallocate -l ${VM_SWAP_GIB}G /tp-swap && chmod 600 /tp-swap && mkswap /tp-swap >/dev/null && swapon /tp-swap' && swapon --show && free -m" \
+        >"$out/${p}swap.log" 2>&1 || { cat "$out/${p}swap.log"; die "adding swap on $name failed (log: $out/${p}swap.log)"; }
+    grep -q '/tp-swap' "$out/${p}swap.log" || { cat "$out/${p}swap.log"; die "swapon --show lacks /tp-swap on $name"; }
+    # memory and swap every 5 s until the VM is deleted, for vm_mem_report
+    sshv 'nohup vmstat -n -S M 5 >/var/tmp/tp-vmstat.log 2>&1 </dev/null &' >/dev/null 2>&1 \
+        || vm_warn "WARNING: could not start the vmstat sampler on $name"
+    VM_STEP=
+}
+
+# vm_mem_report <out dir> <log prefix> : on the current VM, `free -m`, `vmstat
+# -s` and the sampler's log into <out>/<prefix>memory.log, and a summary line:
+# total memory, peak used (total - free - buffers - cache over the samples) and
+# peak swap used. Never fails the caller.
+vm_mem_report() {
+    local out=$1 p=$2 f
+    f=$out/${p}memory.log
+    sshv 'echo "== free -m"; free -m; echo "== swapon --show"; swapon --show; echo "== vmstat -S M -s"; vmstat -S M -s; echo "== vmstat -n -S M 5 (sampler)"; cat /var/tmp/tp-vmstat.log 2>/dev/null' >"$f" 2>&1 || {
+        vm_warn "WARNING: no memory report from $VM_DEST"; return 0; }
+    echo "=== memory on the VM ($VM_MEMORY_GIB GiB, $VM_SWAP_GIB GiB swap file) ==="
+    sed -n '/^== free -m/,/^== swapon/p' "$f" | sed '1d;$d'
+    awk '/^== free -m/ { s = "free" } /^== vmstat -n/ { s = "vm"; next }
+         s == "free" && $1 == "Mem:" { total = $2 }
+         s == "vm" && $1 ~ /^[0-9]+$/ && NF >= 6 {
+             n++; used = total - $4 - $5 - $6; if (used > pu) pu = used; if ($3 > ps) ps = $3 }
+         END { printf "memory: total %d MiB; peak used %d MiB, peak swap used %d MiB (%d vmstat samples, 5 s apart)\n", total, pu, ps, n }' "$f"
+    return 0
+}
+
+# vm_oom_check <out dir> <log prefix> : the kernel log of the current VM into
+# <out>/<prefix>kernel.log; when it has an `Out of memory` or `oom-kill` line,
+# print those lines, the process the kernel killed and VM_STEP, and return 1.
+# The caller then stops the gate, keeps the evidence and deletes the VM; the
+# memory is never raised.
+vm_oom_check() {
+    local out=$1 p=$2 f
+    f=$out/${p}kernel.log
+    sshv 'sudo -n journalctl -k --no-pager -o short-monotonic 2>/dev/null || sudo -n dmesg' >"$f" 2>&1 || return 0
+    grep -Eq 'Out of memory|oom-kill|oom_reaper' "$f" || return 0
+    echo "=== MEMORY FAILURE on $VM_DEST at $VM_MEMORY_GIB GiB: the gate stops (memory is not raised) ==="
+    echo "step running: ${VM_STEP:-unknown}"
+    echo "kernel:"
+    grep -E 'Out of memory|oom-kill|oom_reaper' "$f" | sed 's/^/  /'
+    echo "killed: $(grep -oE 'Killed process [0-9]+ \([^)]*\)' "$f" | sort -u | tr '\n' ' ')"
+    echo "evidence: $f (and the memory report beside it)"
+    return 1
+}
+
+# vm_end <out dir> <log prefix> <rc> : at the end of a run on the current VM,
+# before it is deleted: the memory report, and on a failure (rc != 0) the
+# memory-failure check. Returns 3 when the failure was a memory failure,
+# else <rc>.
+vm_end() {
+    local out=$1 p=$2 rc=$3
+    [[ -n ${VM_DEST:-} ]] || return "$rc"
+    vm_mem_report "$out" "$p"
+    if [[ $rc -ne 0 ]] && ! vm_oom_check "$out" "$p"; then return 3; fi
+    return "$rc"
 }
 
 # sshv <remote command> : ssh to the current VM as bot, key in place, accept-new
