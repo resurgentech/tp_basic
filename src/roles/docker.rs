@@ -233,7 +233,7 @@ pub async fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
     // root-equivalent ("grants root-level privileges to the user", Docker's
     // post-install page), which is why only these users get it.
     // Source: https://docs.docker.com/engine/install/linux-postinstall/ (accessed 2026-11-03)
-    for u in &h.vars.admin_users {
+    for u in &h.vars.docker.admin_users {
         h.user(u).groups_add(["docker"]);
     }
     Ok(())

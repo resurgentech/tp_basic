@@ -1,8 +1,6 @@
 # Development desktop: `tp-basic run dev_desktop --vars vars/desktop.toml`.
 # Mirrors inventories/group_vars/all for the roles dev_desktop applies.
 admin_users = ["bot", "tpdev"]
-rustup_version = "1.29.0"
-cargo_version = "1.94.0"
 rustc_version = "1.94.0"
 
 # A crypt(3) hash for accounts the run creates; "" leaves them locked.

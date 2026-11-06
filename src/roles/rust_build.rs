@@ -82,8 +82,8 @@
 //!
 //! The version pins in `group_vars` (`rustup_version` 1.29.0,
 //! `cargo_version` and `rustc_version` 1.94.0) never pinned anything and
-//! this role does not read them; they stay in `Vars`, unread, until a
-//! later step removes them (see "Open choices"). The installer ran with
+//! this role does not read them; `rustup_version` and `cargo_version` are
+//! gone, `rustc_version` stays in `RustBuildVars`, unread. The installer ran with
 //! `-y` and no `--default-toolchain`, so it installs whatever `stable` is on the build
 //! day (observed 2026-10-30: rustup 1.29.2, cargo and rustc 1.99.1 on the
 //! existing images). The YAML compared the pins with `!=`, so any host not
@@ -101,7 +101,7 @@
 use telepatch::facts::os::{Distro, Family, Os};
 use telepatch::{Host, TraceError, role};
 
-use crate::vars::Vars;
+use crate::vars::{RustBuildVars, Vars};
 
 /// Amazon is not in this family (`inventories/group_vars/all:4`); it has its
 /// own branch below. A copy of the flag in `dev_common.rs`, which keeps its
@@ -137,7 +137,7 @@ fn amazonlinux2023_based(os: &Os) -> bool {
 /// installed and, because the versions never equal the pins, ran the update
 /// commands again. The second loop exists so root is covered on a workstation
 /// where `admin_users` is a human. The union, each user once, in that order.
-fn users(vars: &Vars) -> Vec<String> {
+fn users(vars: &RustBuildVars) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for u in vars.admin_users.iter().map(String::as_str).chain(["root"]) {
         if !out.iter().any(|x| x == u) {
@@ -187,7 +187,7 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
     }
 
     // Once per user.
-    for u in users(&h.vars) {
+    for u in users(&h.vars.rust_build) {
         // Every op through `s` runs in a fresh `bash -l` of `u`, not the
         // passwd shell the YAML parsed. The installer adds
         // `. "$HOME/.cargo/env"` to `~/.profile` (observed 2026-10-30), which

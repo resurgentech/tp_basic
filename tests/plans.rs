@@ -82,10 +82,9 @@ fn latest_kernel_build_plans() {
 }
 
 /// `vars/desktop.toml`, as `tp-basic run dev_desktop --vars vars/desktop.toml`
-/// loads it; `Vars::default()` would plan for `root` only.
+/// loads it (the same layering); `Vars::default()` would plan for `root` only.
 fn desktop_vars() -> Vars {
-    let text = std::fs::read_to_string("vars/desktop.toml").unwrap();
-    toml::from_str(&text).unwrap()
+    telepatch::vars::load_file(Some(std::path::Path::new("vars/desktop.toml")), "").unwrap()
 }
 
 fn desktop_plan_of(name: &str, distro: &str) -> String {

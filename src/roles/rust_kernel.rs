@@ -90,7 +90,7 @@
 use telepatch::facts::os::{Distro, Family, Os};
 use telepatch::{Host, TraceError, role, sh};
 
-use crate::vars::Vars;
+use crate::vars::{RustKernelVars, Vars};
 
 /// `inventories/group_vars/all:6`. Tests the distribution, not the family.
 /// A copy of the fn in `rust_build.rs` (private there).
@@ -104,7 +104,7 @@ fn debian_based(os: &Os) -> bool {
 /// nothing (`rustup component add` reports "is up to date" and `creates`
 /// skips the build), so the oracle could not see it. The union, each user
 /// once, in that order. A copy of the fn in `rust_build.rs` (private there).
-fn users(vars: &Vars) -> Vec<String> {
+fn users(vars: &RustKernelVars) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for u in vars.admin_users.iter().map(String::as_str).chain(["root"]) {
         if !out.iter().any(|x| x == u) {
@@ -145,7 +145,7 @@ pub async fn rust_kernel(h: &Host<Vars>) -> Result<(), TraceError> {
         h.pkg(["clang-devel"]);
     }
 
-    for u in users(&h.vars) {
+    for u in users(&h.vars.rust_kernel) {
         // A fresh login environment of `u`: `~` is u's home and
         // `~/.cargo/bin` is on PATH. Components are per toolchain per user,
         // so each user gets its own `rust-src` and `bindgen`.

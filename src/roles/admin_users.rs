@@ -179,7 +179,7 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
     }
 
     let group = sudo_group(&h.os);
-    for u in &h.vars.admin_users {
+    for u in &h.vars.admin_users.admin_users {
         // `per_user.yml:3-24`, three tasks as one op. The YAML set the shell
         // and the password only when the first task created the account, so
         // an existing user kept a wrong shell; the op enforces the shell and
@@ -198,7 +198,7 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
         h.user(u)
             .shell("/bin/bash")
             .groups_add([group])
-            .password_hash(&h.vars.default_password);
+            .password_hash(&h.vars.admin_users.default_password);
 
         // `per_user.yml:27-33`. The YAML built `/home/<u>/.ssh` from the
         // name (`per_user.yml:31`) and a group named `<u>`, true only for

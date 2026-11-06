@@ -189,7 +189,7 @@ pub async fn vm_server(h: &Host<Vars>) -> Result<(), TraceError> {
     // after `libvirt` + `qemu-base` (the sysusers entry
     // `/usr/lib/sysusers.d/libvirt.conf`). The YAML asked for it on Arch and
     // Amazon Linux too and failed there, having installed nothing.
-    for u in &h.vars.admin_users {
+    for u in &h.vars.vm_server.admin_users {
         h.user(u).groups_add(["libvirt"]);
     }
     Ok(())
