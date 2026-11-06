@@ -41,3 +41,24 @@ di_export() {
     fi
     echo "docker_images: exported $sha to $dest" >&2
 }
+
+# di_base <distro> : make sure resurgentech/base-<distro>:latest is in the
+# daemon DOCKER_HOST reaches (a tp-* VM's: every caller runs docker_guard
+# first). When it is missing (a fresh VM's daemon starts empty) it is built
+# with bake from the export's docker-bake.hcl and Dockerfiles (di_export first,
+# for DI_DIR), so it is built once per VM and never taken from another daemon.
+# Returns 2 with a message on stderr when the build fails.
+di_base() {
+    local distro=$1 ref=resurgentech/base-$1:latest
+    if docker image inspect "$ref" >/dev/null 2>&1; then
+        echo "base: $ref already in this daemon"
+        return 0
+    fi
+    echo "=== base: building $ref from docker_images ${DI_FULL_SHA:?} (bake base-$distro) ==="
+    if ! (cd "$DI_DIR" && GIT_SHA=${DI_FULL_SHA:0:7} CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            docker buildx bake --progress=plain --load -f docker-bake.hcl "base-$distro"); then
+        echo "bake base-$distro from $DI_DIR failed" >&2
+        return 2
+    fi
+    docker image inspect "$ref" >/dev/null 2>&1 || { echo "bake built base-$distro but $ref is not in the daemon" >&2; return 2; }
+}

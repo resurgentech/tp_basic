@@ -34,16 +34,27 @@ dist:
 # `ported_ansible` like test-acceptance (ANSIBLE_SHA overrides) and reads the
 # docker_images side from `ported_docker_images` (DI_SHA overrides).
 test-container distro container:
+    bash scripts/lib/docker-guard.sh
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh {{distro}} {{container}}
 
 # Self-test of the oracle's diff/exit logic (no docker needed).
 test-container-selftest:
     bash scripts/test-container.sh --self-test
 
-# Self-tests of both oracles' comparison logic (no docker, VM or network).
+# Self-tests of both oracles' comparison logic, docker-vm.sh's arguments and
+# the docker guard of the three repos (no daemon, VM or network: a stub docker).
 test-oracle-selftest:
     bash scripts/test-container.sh --self-test
     bash scripts/test-vm-oracle.sh --self-test
+    bash scripts/docker-vm.sh --self-test
+    bash scripts/lib/docker-guard.sh --self-test
+
+# Run a docker recipe of this justfile against the daemon of a fresh 1 GiB
+# tp-* VM (scripts/docker-vm.sh: docker.io in ubuntu2404, the socket forwarded
+# over ssh, the VM deleted afterwards). Every docker recipe refuses to run
+# outside it (exit 2). `just docker-vm test-container ubuntu2404 dev_base`
+docker-vm +recipe:
+    bash scripts/docker-vm.sh run -- just {{recipe}}
 
 # The ansible commit the ports were made from (conversion/SOURCE at port
 # time). The oracle compares against it, not ansible master.
@@ -58,6 +69,7 @@ ported_docker_images := "5df316b67429370105efec0e5c5ac29a6ccbd71a"
 # Goal-1 gate: the acceptance set. ubuntu2404 and rockylinux10 for the
 # default set, plus ubuntu2604 for latest_kernel_build (the latest set).
 test-acceptance:
+    bash scripts/lib/docker-guard.sh
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 dev_base
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh rockylinux10 dev_base
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh ubuntu2404 kernel_build
@@ -70,6 +82,7 @@ test-acceptance:
 # pinned base image; passes when the second run shows CHANGED 0.
 # `just test-idempotent ubuntu2404 dev_base`
 test-idempotent distro container:
+    bash scripts/lib/docker-guard.sh
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} bash scripts/test-idempotent.sh {{distro}} {{container}}
 
 # svc proof in an init-less container (plain `sleep infinity`, `docker exec`,
@@ -79,10 +92,12 @@ test-idempotent distro container:
 # print enabled afterwards wherever systemctl exists.
 # `just test-services ubuntu2404`
 test-services distro:
+    bash scripts/lib/docker-guard.sh
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} bash scripts/test-services.sh {{distro}}
 
 # Not a gate: every container of every distro's set; writes build/matrix.md.
 test-matrix jobs="3":
+    bash scripts/lib/docker-guard.sh
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-matrix.sh {{jobs}}
 
 # Goal-3 check, a proof of the SSH transport: a fresh VM made with

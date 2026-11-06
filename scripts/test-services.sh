@@ -3,7 +3,7 @@
 # resurgentech/base-<distro> image (`sleep infinity`, `docker exec` only: no
 # privileges, no extra mounts, no systemd as init, never), apply the
 # `desktop_services` playbook (docker and vm_server after curl and
-# ca-certificates) twice with the static tp-basic (bind-mounted read-only, with
+# ca-certificates) twice with the static tp-basic (copied in with `docker cp`, with
 # build/dist/vars/container.toml, from `just dist`, as test-idempotent.sh does).
 #
 # Gates: run 1 exits 0 and its prepare block has at least one `svc ` line;
@@ -37,6 +37,11 @@ source "$ROOT/scripts/lib/dist-input.sh"
 
 die() { echo "test-services: $*" >&2; exit 2; }
 
+# docker only in a tp-* VM (scripts/docker-vm.sh): refused before anything else
+# shellcheck source=lib/docker-guard.sh
+source "$ROOT/scripts/lib/docker-guard.sh"
+docker_guard
+
 [[ $# -eq 1 && -n ${1:-} ]] || die "usage: test-services.sh <distro>"
 distro=$1
 
@@ -61,7 +66,8 @@ dist_require "$ROOT/build/dist" || exit 2
 preamble_check "$family" "$ROOT/../docker_images/Dockerfiles/telepatch.$family" "$preamble" || exit 2
 
 base_ref=resurgentech/base-$distro:latest
-base_id=$(docker image inspect -f '{{.Id}}' "$base_ref" 2>/dev/null) || die "$base_ref not found locally"
+di_base "$distro" || exit 2
+base_id=$(docker image inspect -f '{{.Id}}' "$base_ref" 2>/dev/null) || die "$base_ref not found in the VM's daemon"
 echo "base: $base_ref = $base_id"
 
 out=$ROOT/build/test-services/$distro
@@ -71,9 +77,11 @@ rm -f "$out"/*
 name=tp-svc-$distro-$$
 cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-docker run -d --name "$name" --entrypoint sleep \
-    -v "$ROOT/build/dist/tp-basic:/tmp/tp-basic:ro" -v "$ROOT/build/dist/vars:/tmp/tp-vars:ro" \
-    "$base_id" infinity >/dev/null
+# the dist goes in with docker cp (no bind mount: the daemon is the VM's)
+docker create --name "$name" --entrypoint sleep "$base_id" infinity >/dev/null
+docker cp -q "$ROOT/build/dist/tp-basic" "$name:/tmp/tp-basic"
+docker cp -q "$ROOT/build/dist/vars" "$name:/tmp/tp-vars"
+docker start "$name" >/dev/null
 
 echo "=== preamble ($family) ==="
 docker exec "$name" sh -c "$preamble" >"$out/preamble.log" 2>&1 || { tail -20 "$out/preamble.log"; die "preamble failed (log: $out/preamble.log)"; }

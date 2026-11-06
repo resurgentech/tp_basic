@@ -35,7 +35,7 @@ vm_record() { VM_RECORDED+=("$1"); }
 # <out>/<prefix>{create,onboard,wait,prep}.log. Sets VM_IP, VM_KEY, VM_DEST and
 # VM_KNOWN_HOSTS (<out>/known_hosts) for sshv. The name must be recorded first.
 vm_up() {
-    local name=$1 out=$2 p=$3 mem=${4:-4} disk=${5:-} crc=0 deadline ready
+    local name=$1 out=$2 p=$3 mem=${4:-4} disk=${5:-} crc=0 deadline ready grow_late=0
     local size=(--memory "$mem")
     [[ -z $disk ]] || size+=(--disk-size "$disk")
     echo "=== creating VM $name (ubuntu2404.qcow2, $mem GiB${disk:+, $disk GB disk}) ==="
@@ -45,6 +45,16 @@ vm_up() {
         vm_warn "the VM got no IP. This is a host environment problem, not a telepatch failure:"
         vm_warn "see $VMTOOL_DIR/README.md, \"Troubleshooting\" > \"A new VM never gets an IP\"."
         exit 2
+    fi
+    # With --disk-size, vmtool resizes the image, boots, and then grows the root
+    # partition with an ansible ad-hoc command right after the IP, racing sshd's
+    # start like `create --playbook` (observed: "growing disk: running command:
+    # exit status 4", ansible's unreachable). The VM is up with the larger disk;
+    # the grow is redone below once sshd answers.
+    if [[ $crc -ne 0 && -n $disk ]] && grep -q 'growing disk: running command' "$out/${p}create.log" \
+        && grep -q 'created and started' "$out/${p}create.log"; then
+        vm_warn "vmtool's in-guest disk grow ran before sshd answered; growing the root filesystem after onboarding"
+        crc=0 grow_late=1
     fi
     [[ $crc -eq 0 ]] || { tail -20 "$out/${p}create.log"; die "vmtool create exited $crc (log: $out/${p}create.log)"; }
 
@@ -86,6 +96,16 @@ fi'
         sleep 5
     done
     echo "ready after $((SECONDS - deadline + 600))s"
+
+    if [[ $grow_late -eq 1 ]]; then
+        # growpart exits 1 with NOCHANGE when cloud-init already grew it
+        echo "=== growing the root filesystem to the ${disk} GB disk (vmtool's grow raced sshd) ==="
+        sshv 'sudo -n growpart /dev/vda 2; sudo -n resize2fs /dev/vda2; df -BG --output=size / | tail -1' >"$out/${p}grow.log" 2>&1 || true
+        local got
+        got=$(tail -1 "$out/${p}grow.log" | tr -dc 0-9)
+        [[ -n $got && $got -ge $((disk * 9 / 10)) ]] || { tail -10 "$out/${p}grow.log"; die "the root filesystem of $name is ${got:-?} GB, wanted about $disk (log: $out/${p}grow.log)"; }
+        echo "root filesystem: ${got} GB"
+    fi
 
     # The cloud image ships package lists from its build date, whose archive
     # files are gone (observed: 404 on the first install). The oracle's

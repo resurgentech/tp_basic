@@ -12,6 +12,10 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 # shellcheck source=lib/docker-images.sh
 source scripts/lib/docker-images.sh
+# docker only in a tp-* VM (scripts/docker-vm.sh): refused before anything else
+# shellcheck source=lib/docker-guard.sh
+source "$ROOT/scripts/lib/docker-guard.sh"
+docker_guard
 
 jobs=${1:-3}
 # export the pinned docker_images commit once, before the parallel test-container runs

@@ -133,6 +133,11 @@ selftest_export() {
 
 if [[ ${1:-} == --self-test ]]; then self_test; exit $?; fi
 
+# docker only in a tp-* VM (scripts/docker-vm.sh): refused before anything else
+# shellcheck source=lib/docker-guard.sh
+source "$ROOT/scripts/lib/docker-guard.sh"
+docker_guard
+
 # ---- arguments --------------------------------------------------------------
 side=both
 if [[ ${1:-} == --side ]]; then side=${2:?--side needs a value}; shift 2; fi
@@ -177,16 +182,18 @@ rm -f "$out"/*
 
 # ---- pin the base: the image id of base-<distro>:latest, once ---------------
 base_ref=resurgentech/base-$distro:latest
-base_id=$(docker image inspect -f '{{.Id}}' "$base_ref" 2>/dev/null) || die "$base_ref not found locally (build it with docker_images first)"
+di_base "$distro" || exit 2
+base_id=$(docker image inspect -f '{{.Id}}' "$base_ref" 2>/dev/null) || die "$base_ref not found in the VM's daemon"
 # buildx's docker-image:// context won't take a bare id, so alias the id with a
 # local tag; the tag is only ever this id, and both chains start from it.
 hex=${base_id#sha256:}
 pin=tp-test/pin/base-$distro:${hex:0:12}
 docker tag "$base_id" "$pin"
 echo "base: $base_ref = $base_id (pinned as $pin)"
-# the pinned base's own state, so what a chain added can be computed later
-docker run --rm --entrypoint sh -e ADMIN_USERS="${ADMIN_USERS:-}" \
-    -v "$ROOT/scripts/image-state.sh:/image-state.sh:ro" "$pin" /image-state.sh >"$out/base.state"
+# the pinned base's own state, so what a chain added can be computed later;
+# image-state.sh goes in on stdin (no bind mount: the daemon is the VM's)
+docker run --rm -i --entrypoint sh -e ADMIN_USERS="${ADMIN_USERS:-}" \
+    "$pin" -s <"$ROOT/scripts/image-state.sh" >"$out/base.state"
 echo "captured $out/base.state ($(wc -l <"$out/base.state") lines)"
 
 created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -239,9 +246,10 @@ build_telepatch() {
 
 capture() { # side
     local img=tp-test/$1/$container-$distro
-    local run=(docker run --rm --entrypoint sh -e ADMIN_USERS="${ADMIN_USERS:-}" -v "$ROOT/scripts/image-state.sh:/image-state.sh:ro" "$img" /image-state.sh)
-    "${run[@]}" >"$out/$1.state"
-    "${run[@]}" --versions >"$out/$1.versions"
+    # image-state.sh on stdin (no bind mount: the daemon is the VM's)
+    local run=(docker run --rm -i --entrypoint sh -e ADMIN_USERS="${ADMIN_USERS:-}" "$img" -s --)
+    "${run[@]}" <"$ROOT/scripts/image-state.sh" >"$out/$1.state"
+    "${run[@]}" --versions <"$ROOT/scripts/image-state.sh" >"$out/$1.versions"
 }
 
 for s in ansible telepatch; do
