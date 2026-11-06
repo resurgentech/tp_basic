@@ -29,12 +29,13 @@
 //! apt sources, `/usr/local/bin`, toolchains and targets do not change.
 //!
 //! Fixes made in the port, none visible to the oracle:
-//! - `changed_if = "downloading"` (see the first `sh!`): the YAML's
-//!   `changed_when: "'installing' in rust_src_result.stderr"` never matches
-//!   the output of rustup 1.29.2, so the Ansible task reported unchanged on
-//!   a real install and on a no-op alike. Only the report was wrong; the
-//!   component is installed either way, which is why the oracle cannot see
-//!   it.
+//! - The component's `changed` comes from the rustup source's own listing
+//!   (`rustup component list --installed`), not from output words: the
+//!   YAML's `changed_when: "'installing' in rust_src_result.stderr"` never
+//!   matches the output of rustup 1.29.2, so the Ansible task reported
+//!   unchanged on a real install and on a no-op alike. Only the report was
+//!   wrong; the component is installed either way, which is why the oracle
+//!   cannot see it.
 //! - Users are `admin_users` plus root, deduplicated (see `users`): the YAML
 //!   ran the per-user tasks twice for root.
 //!
@@ -47,11 +48,13 @@
 //! `default` set, which ends at `rust_build`), and none was added. Pop!_OS
 //! and other Debian-family hosts share the Debian arm.
 //!
-//! Kept as written: the order `rust_build` then `rust_kernel`; the
-//! `. ~/.cargo/env &&` prefix; no `--toolchain` on the component add, so
-//! `rust-src` goes to the user's default toolchain (on this image the only
-//! one, `stable-x86_64-unknown-linux-gnu`); `cargo install --locked
-//! bindgen-cli` unpinned.
+//! Kept as written: the order `rust_build` then `rust_kernel`; `cargo
+//! install --locked bindgen-cli` unpinned. Changed with the shell (T84):
+//! `rust-src` goes to the toolchain `stable` that `rust_build` declares,
+//! named, rather than to whatever the user's default is (on this image the
+//! same, the only one, `stable-x86_64-unknown-linux-gnu`); the rustup and
+//! cargo sources put `~/.cargo/bin` on PATH themselves, so no `.
+//! ~/.cargo/env &&` prefix.
 //!
 //! Open: `make LLVM=1 rustavailable` in a kernel tree inside
 //! `resurgentech/latest_kernel_build-ubuntu2604:latest`. The oracle compares
@@ -59,8 +62,6 @@
 //! (0.73.2 observed) suit a given kernel tree, and the kernel quick-start
 //! gives no numeric minimum; this check is the role's own acceptance test and
 //! was not run.
-//! Open: rustup's progress wording is not a documented interface, so the
-//! `downloading` regex rests on one observation (see the first `sh!`).
 //!
 //! Method current (2026-10-30): the three things the role installs are the
 //! three the kernel documentation lists (the standard library source, bindgen,
@@ -168,12 +169,12 @@ pub async fn rust_kernel(h: &Host<Vars>) -> Result<(), TraceError> {
         // rustup component add rust-src 2>&1'` should be repeated if rustup
         // moves.
         // Source: https://rust-lang.github.io/rustup/concepts/components.html (accessed 2026-10-30)
-        // HACK(pkg: rustup components): a second rustup op for rust_build's toolchain does not merge yet (T80), so the component is added by hand (removed again in T84)
-        sh!(
-            s,
-            ". ~/.cargo/env && rustup component add rust-src",
-            changed_if = "downloading"
-        );
+        // Presence is decided by the rustup source's own probe now: the
+        // component `rust-src` is listed for toolchain `stable` or it is
+        // added. This replaces `changed_if = "downloading"`. The toolchain
+        // name is the one `rust_build` declares, so the engine merges the
+        // component into that op when the two are adjacent.
+        s.pkg(["stable"]).rustup().components(["rust-src"]);
 
         // `cargo install --locked` builds from source with the published
         // lockfile, takes minutes, needs network and a C linker (`gcc`, from
@@ -189,12 +190,11 @@ pub async fn rust_kernel(h: &Host<Vars>) -> Result<(), TraceError> {
         // superseded. It also avoids the `/home/<name>` form that `rust_build`
         // would give (`/home/root` for root, which does not exist).
         // Source: https://docs.kernel.org/rust/quick-start.html (accessed 2026-10-30)
-        // HACK(pkg: cargo --locked): the cargo source has no `--locked` option (removed again in T84)
-        sh!(
-            s,
-            ". ~/.cargo/env && cargo install --locked bindgen-cli",
-            creates = "~/.cargo/bin/bindgen"
-        );
+        // Presence is the cargo source's own probe (`cargo install --list`
+        // names `bindgen-cli`), replacing the `creates` guard on
+        // `~/.cargo/bin/bindgen`; the guard semantics hold: an installed
+        // `bindgen-cli` is never rebuilt, whatever version it is.
+        s.pkg(["bindgen-cli"]).cargo().locked();
     }
     Ok(())
 }

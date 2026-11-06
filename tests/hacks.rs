@@ -93,3 +93,20 @@ fn the_scan_itself_catches_the_bad_forms() {
     // comments and other macros are not calls
     assert!(unmarked("f", "// sh!(h, \"x\")\nssh!(h);\n").is_empty());
 }
+
+/// T84: `rust_kernel` has no `sh!` left (rustup components and `cargo
+/// install --locked` are pkg ops now).
+#[test]
+fn rust_kernel_has_no_sh() {
+    let src = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/roles/rust_kernel.rs"),
+    )
+    .unwrap();
+    let hits: Vec<usize> = src
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| calls_sh(code(l)))
+        .map(|(i, _)| i + 1)
+        .collect();
+    assert!(hits.is_empty(), "rust_kernel.rs calls sh! at lines {hits:?}");
+}
