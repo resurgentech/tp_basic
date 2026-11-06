@@ -755,99 +755,92 @@ role node
       |   fi
       | fi
 role golang
-  #36 pkg[script] as shell:root reads [] writes [*] post [pkg:script:root:go=Installed, file:/usr/local/go/bin/go=Exists(true)]
+  #36 pkg[binary_release] as shell:root reads [] writes [*] post [pkg:binary_release:root:go=Installed, file:/usr/local/go/bin/go=Exists(true)]
       | rc=0; changed=0; installed=()
       | tp_name='go'
+      | tp_cd="${TP_FETCH_CACHE:-/var/cache/telepatch/sha256}"
+      | tp_sd="${TP_FETCH_STAGE:-/var/tmp/telepatch}"
+      | tp_run="$tp_sd"/'RUN_ID'
+      | tp_dec="$tp_run/br-$(printf %s "$tp_name" | sha256sum | cut -c1-32)"
       | tp_tok() { grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
-      | tp_probe() {
-      |   tp_have=0; tp_v=
-      |   if [ -x '/usr/local/go/bin/go' ]; then
-      |     tp_have=1
-      |     tp_v=$( (
-      | /usr/local/go/bin/go version
-      | ) 2>/dev/null | tp_tok)
-      |   fi
+      | if [ -f "$tp_dec" ]; then
+      | read -r tp_s tp_want tp_f < "$tp_dec"
+      | rm -f -- "$tp_dec"
+      | if [ ! -f "$tp_f" ]; then echo "telepatch: binary_release $tp_name: $tp_f is missing (prepare did not fetch it)" >&2; rc=1; fi
+      | tp_p='/usr/local/go'
+      | if [ "$rc" -eq 0 ]; then mkdir -p -- "$(dirname -- "$tp_p")" || rc=$?; fi
+      | tp_magic() {
+      |   local h
+      |   h=$(head -c 6 "$1" | od -An -tx1 | tr -d ' \n')
+      |   case "$h" in
+      |     1f8b*) echo gz;;
+      |     fd377a585a00) echo xz;;
+      |     28b52ffd*) echo zst;;
+      |     504b0304*|504b0506*) echo zip;;
+      |     *) if [ "$(dd if="$1" bs=1 skip=257 count=5 2>/dev/null)" = ustar ]; then echo tar; else echo unknown; fi;;
+      |   esac
       | }
-      | tp_latest=$( (
-      | curl -fsSL 'https://go.dev/VERSION?m=text' | head -n1
-      | ) 2>/dev/null | tp_tok)
-      | tp_want_v=$tp_latest
-      | if [ -z "$tp_want_v" ]; then echo "telepatch: script "'go'": could not resolve the latest version" >&2; rc=1; fi
-      | tp_probe
-      | tp_had=$tp_have; tp_before=$tp_v; tp_act=
+      | tp_n=
       | if [ "$rc" -eq 0 ]; then
-      |   if [ "$tp_have" -eq 0 ]; then tp_act=install
-      |   elif [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; then tp_act=update
-      |   fi
-      | fi
-      | if [ "$tp_act" = install ]; then
-      |   ( export TP_WANT="$tp_want_v"
-      | (
-      | set -eu
-      | case "$(uname -m)" in
-      |   x86_64) a=amd64 ;;
-      |   aarch64) a=arm64 ;;
-      |   *) echo "golang: unsupported architecture $(uname -m)" >&2; exit 1 ;;
-      | esac
-      | f="go$TP_WANT.linux-$a.tar.gz"
-      | d=$(mktemp -d)
-      | trap 'rm -rf "$d"' EXIT
-      | curl -fsSL -o "$d/$f" "https://go.dev/dl/$f"
-      | curl -fsSL -o "$d/dl.json" 'https://go.dev/dl/?mode=json'
-      | sum=$(awk -v f="$f" '
-      |   /"filename"/ { hit = (index($0, "\"" f "\"") > 0) }
-      |   hit && /"sha256"/ { gsub(/.*"sha256"[ \t]*:[ \t]*"/, ""); gsub(/".*/, ""); print; exit }
-      | ' "$d/dl.json")
-      | case "$sum" in
-      |   *[!0-9a-f]*|"") echo "golang: no sha256 for $f in go.dev/dl/?mode=json" >&2; exit 1 ;;
-      | esac
-      | [ "${#sum}" -eq 64 ] || { echo "golang: bad sha256 for $f" >&2; exit 1; }
-      | printf '%s  %s\n' "$sum" "$f" > "$d/sum"
-      | (cd "$d" && sha256sum -c sum >/dev/null) || { echo "golang: sha256 mismatch for $f" >&2; exit 1; }
-      | rm -rf /usr/local/go
-      | tar -C /usr/local -xzf "$d/$f"
-      | )
-      |   )
-      |   rc=$?
-      | elif [ "$tp_act" = update ]; then
-      |   ( export TP_WANT="$tp_want_v"
-      | (
-      | set -eu
-      | case "$(uname -m)" in
-      |   x86_64) a=amd64 ;;
-      |   aarch64) a=arm64 ;;
-      |   *) echo "golang: unsupported architecture $(uname -m)" >&2; exit 1 ;;
-      | esac
-      | f="go$TP_WANT.linux-$a.tar.gz"
-      | d=$(mktemp -d)
-      | trap 'rm -rf "$d"' EXIT
-      | curl -fsSL -o "$d/$f" "https://go.dev/dl/$f"
-      | curl -fsSL -o "$d/dl.json" 'https://go.dev/dl/?mode=json'
-      | sum=$(awk -v f="$f" '
-      |   /"filename"/ { hit = (index($0, "\"" f "\"") > 0) }
-      |   hit && /"sha256"/ { gsub(/.*"sha256"[ \t]*:[ \t]*"/, ""); gsub(/".*/, ""); print; exit }
-      | ' "$d/dl.json")
-      | case "$sum" in
-      |   *[!0-9a-f]*|"") echo "golang: no sha256 for $f in go.dev/dl/?mode=json" >&2; exit 1 ;;
-      | esac
-      | [ "${#sum}" -eq 64 ] || { echo "golang: bad sha256 for $f" >&2; exit 1; }
-      | printf '%s  %s\n' "$sum" "$f" > "$d/sum"
-      | (cd "$d" && sha256sum -c sum >/dev/null) || { echo "golang: sha256 mismatch for $f" >&2; exit 1; }
-      | rm -rf /usr/local/go
-      | tar -C /usr/local -xzf "$d/$f"
-      | )
-      |   )
-      |   rc=$?
-      | fi
-      | if [ -n "$tp_act" ]; then
-      |   tp_probe
-      |   if [ "$tp_have" -ne "$tp_had" ] || [ "$tp_v" != "$tp_before" ]; then changed=1; installed=("$tp_name"); fi
-      |   if [ "$rc" -eq 0 ]; then
-      |     if [ "$tp_have" -eq 0 ]; then tp_got=absent; else tp_got=${tp_v:-unknown}; fi
-      |     if [ "$tp_have" -eq 0 ] || { [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; }; then
-      |       echo "telepatch: script $tp_name: installed $tp_got, wanted ${tp_want_v:-present}" >&2; rc=1
+      |   tp_k=$(tp_magic "$tp_f")
+      |   tp_mk="$tp_s strip=1"
+      |   if [ -e "$tp_p" ] && [ ! -d "$tp_p" ]; then
+      |     echo "telepatch: $tp_p exists and is not a directory" >&2; rc=1
+      |   elif [ -d "$tp_p" ] && [ "$(cat "$tp_p/.telepatch-fetch" 2>/dev/null)" = "$tp_mk" ]; then
+      |     :
+      |   else
+      |     tp_n=$(mktemp -d "$tp_p.tpXXXXXX") || rc=$?
+      |     if [ "$rc" -eq 0 ]; then
+      |       case "$tp_k" in
+      |         zip)
+      |           tp_z="$tp_n.raw"
+      |           mkdir "$tp_z" || rc=$?
+      |           if [ "$rc" -eq 0 ]; then
+      |             if command -v unzip >/dev/null 2>&1; then unzip -q -o "$tp_f" -d "$tp_z" || rc=$?; else bsdtar -xf "$tp_f" -C "$tp_z" || rc=$?; fi
+      |           fi
+      |           if [ "$rc" -eq 0 ]; then
+      |             find "$tp_z" -mindepth 1 -maxdepth 1 -type d -print0 | while IFS= read -r -d '' tp_d; do cp -a "$tp_d"/. "$tp_n"/ || exit 1; done
+      |             rc=${PIPESTATUS[1]}
+      |           fi
+      |           rm -rf "$tp_z";;
+      |         gz|xz|zst|tar) tar -xf "$tp_f" -C "$tp_n" --strip-components=1 --no-same-owner || rc=$?;;
+      |         *) echo "telepatch: $tp_f is not a tar or zip archive" >&2; rc=1;;
+      |       esac
       |     fi
+      |     if [ "$rc" -eq 0 ]; then printf '%s\n' "$tp_mk" > "$tp_n/.telepatch-fetch" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       if [ -d "$tp_p" ]; then chmod --reference="$tp_p" "$tp_n" || rc=$?; else chmod 755 "$tp_n" || rc=$?; fi
+      |     fi
+      |     if [ "$rc" -eq 0 ] && [ -d "$tp_p" ]; then chown --reference="$tp_p" "$tp_n" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       if [ -d "$tp_p" ]; then
+      |         tp_o="$tp_n.old"
+      |         if mv -- "$tp_p" "$tp_o" && mv -- "$tp_n" "$tp_p"; then
+      |           rm -rf -- "$tp_o"; changed=1
+      |         else
+      |           rc=$?
+      |           if [ ! -e "$tp_p" ]; then mv -- "$tp_o" "$tp_p"; fi
+      |         fi
+      |       elif mv -- "$tp_n" "$tp_p"; then
+      |         changed=1
+      |       else
+      |         rc=$?
+      |       fi
+      |     fi
+      |     if [ -n "$tp_n" ]; then rm -rf -- "$tp_n" "$tp_n.raw"; fi
       |   fi
+      | fi
+      | case "$tp_f" in "$tp_run"/*) rm -f -- "$tp_f";; esac
+      | rmdir -- "$tp_run" 2>/dev/null
+      | if [ "$rc" -eq 0 ] && [ ! -x '/usr/local/go/bin/go' ]; then echo "telepatch: binary_release $tp_name: "'/usr/local/go/bin/go'" is not an executable after the install" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ] && [ "$tp_want" != - ]; then
+      |   tp_bd=$(dirname -- '/usr/local/go/bin/go')
+      |   tp_v=$( ( PATH="$tp_bd:$PATH"
+      | go version
+      | ) 2>/dev/null </dev/null | tp_tok)
+      |   if [ "$tp_v" != "$tp_want" ]; then echo "telepatch: binary_release $tp_name: installed ${tp_v:-unknown}, wanted $tp_want" >&2; rc=1; fi
+      | fi
+      | if [ "$changed" = 1 ]; then installed=("$tp_name"); fi
       | fi
   #37 file as shell:root reads [] writes [file:/etc/profile.d/go.sh] post [file:/etc/profile.d/go.sh=Exists(true)]
       | rc=0; changed=0

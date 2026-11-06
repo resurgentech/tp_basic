@@ -93,7 +93,10 @@ fn desktop_plan_of(name: &str, distro: &str) -> String {
         .iter()
         .find(|p| p.name == name)
         .unwrap_or_else(|| panic!("no playbook {name}"));
+    // A `binary_release` op names its staging directory after the process
+    // (`<unix nanos>-<pid>`); pin it so the snapshots are stable.
     telepatch::testing::plan_for(distro, pb, desktop_vars())
+        .replace(telepatch::ops::fetch::run_id(), "RUN_ID")
 }
 
 fn desktop_plan(distro: &str) -> String {
@@ -316,20 +319,16 @@ fn docker_unknown_distro_is_a_trace_error() {
 }
 
 /// `golang` sits after `node` and before `rust_build`; its plan has the Go
-/// `Script` pkg wanting latest, the go.dev URLs, the checksum check, and
-/// the login-shell PATH file.
+/// `binary_release` pkg (no inline script; the urls are fetched in prepare,
+/// so the plan shows the label, the `bin` fact and the `strip` target) and the login-shell PATH file.
 #[test]
 fn dev_desktop_golang_focus() {
     let text = desktop_plan("ubuntu2404");
     let go = role_section(&text, "golang");
-    assert!(go.contains("pkg[script]"), "{go}");
+    assert!(go.contains("pkg[binary_release]"), "{go}");
+    assert!(!go.contains("pkg[script]"), "{go}");
+    assert!(!go.contains("sha256sum -c"), "{go}");
     assert!(go.contains("/usr/local/go/bin/go"), "{go}");
-    assert!(go.contains("https://go.dev/VERSION?m=text"), "{go}");
-    assert!(go.contains("f=\"go$TP_WANT.linux-$a.tar.gz\""), "{go}");
-    assert!(go.contains("\"https://go.dev/dl/$f\""), "{go}");
-    assert!(go.contains("https://go.dev/dl/?mode=json"), "{go}");
-    assert!(go.contains("sha256sum -c"), "{go}");
-    assert!(go.contains("tp_want_v=$tp_latest"), "{go}");
     assert!(go.contains("/etc/profile.d/go.sh"), "{go}");
     // The file op carries its content base64-encoded:
     // `export PATH="$PATH:/usr/local/go/bin"` plus a newline.
