@@ -1,3 +1,6 @@
-# services_vm (test-only): the one var scripts/test-vm.sh changes between runs 2 and 3.
+# services_vm (test-only). scripts/test-vm.sh changes probe_description
+# between runs 2 and 3, and probe_conf on run 4. probe_conf's value is the
+# literal the conf op used before the var existed.
 [services_vm]
 probe_description = "telepatch services_vm probe"
+probe_conf = "probe=1\n"

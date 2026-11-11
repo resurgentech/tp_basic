@@ -108,8 +108,9 @@ impl Default for RustBuildVars {
     }
 }
 
-/// `playbooks/desktop.rs` `services_vm` (test-only, not a role): the one
-/// var `scripts/test-vm.sh` changes between runs 2 and 3.
+/// `playbooks/desktop.rs` `services_vm` (test-only, not a role): the vars
+/// `scripts/test-vm.sh` changes. `probe_description` between runs 2 and 3
+/// (the unit file); `probe_conf` on run 4 (the conf file, not the unit).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ServicesVmVars {
@@ -117,12 +118,17 @@ pub struct ServicesVmVars {
     /// only part of the unit file a var sets, so changing it changes the
     /// unit's content and nothing else.
     pub probe_description: String,
+    /// The body of `/etc/tp-probe.conf`. The default is the literal the
+    /// file op used before this var existed, so a plan that does not set
+    /// it does not move.
+    pub probe_conf: String,
 }
 
 impl Default for ServicesVmVars {
     fn default() -> Self {
         ServicesVmVars {
             probe_description: "telepatch probe (role default)".to_string(),
+            probe_conf: "probe=1\n".to_string(),
         }
     }
 }

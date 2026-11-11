@@ -497,6 +497,7 @@ role docker
       |     if [ -d "$tp_run" ]; then
       |       if ! systemctl is-active --quiet -- "$tp_u"; then
       |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           __tp_drn="${__tp_drn:+$__tp_drn,}need"
       |           systemctl daemon-reload
       |           rc=$?
       |         fi
@@ -600,6 +601,7 @@ role vm_server
       |     if [ -d "$tp_run" ]; then
       |       if ! systemctl is-active --quiet -- "$tp_u"; then
       |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           __tp_drn="${__tp_drn:+$__tp_drn,}need"
       |           systemctl daemon-reload
       |           rc=$?
       |         fi

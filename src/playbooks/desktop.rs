@@ -84,6 +84,7 @@ fn services_vm_defaults() -> Vars {
     Vars {
         services_vm: ServicesVmVars {
             probe_description: "telepatch services_vm probe".to_string(),
+            probe_conf: "probe=1\n".to_string(),
         },
         ..Vars::default()
     }
@@ -101,9 +102,10 @@ fn services_vm_entry(h: Host<Vars>) -> PlaybookFuture {
 /// * `tp-probe.service` runs `sleep infinity`, with a drop-in; it is
 ///   enabled and started, and restarts when its unit file changes. It has
 ///   `ExecReload=/bin/true` so the guarded reload (when `/etc/tp-probe.conf`
-///   changes) has something to run. The `Description=` comes from the var
-///   `services_vm.probe_description`: the VM script changes it between
-///   runs 2 and 3.
+///   changes) has something to run. The `Description=` comes from
+///   `services_vm.probe_description` (the VM script changes it between
+///   runs 2 and 3). The conf file's body comes from `services_vm.probe_conf`,
+///   whose default is the old literal `probe=1\n`; run 4 changes only that.
 /// * `tp-probe-off.service` exists (an `[Install]` section, so "disabled"
 ///   is a state of a real unit) and is disabled and stopped.
 /// * `tp-probe-masked.service` has no file: `systemctl mask` links it to
@@ -118,7 +120,9 @@ async fn services_vm(h: &Host<Vars>) -> Result<(), TraceError> {
         .mode(0o644);
     h.unit("tp-probe.service")
         .drop_in("override", "[Service]\nEnvironment=TP_PROBE=1\n");
-    let conf = h.file("/etc/tp-probe.conf").content("probe=1\n");
+    let conf = h
+        .file("/etc/tp-probe.conf")
+        .content(h.vars.services_vm.probe_conf.as_str());
     h.unit("tp-probe-off.service")
         .content("[Unit]\nDescription=telepatch services_vm probe, off\n\n[Service]\nExecStart=/bin/sleep infinity\n\n[Install]\nWantedBy=multi-user.target\n");
     h.svc("tp-probe.service")

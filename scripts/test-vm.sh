@@ -24,17 +24,22 @@
 # `is-active` active. dev_base stays two runs (run 2 CHANGED 0).
 # The daemon-reload of a changed unit is proved by services_vm (below).
 #
-# services_vm (test-only, vars/services_vm.toml, 1 GiB, the image's disk, three
+# services_vm (test-only, vars/services_vm.toml, 1 GiB, the image's disk, five
 # runs, every check prints ok or FAIL and all gate): run 1 exits 0 and
 # tp-probe.service is enabled and active with its drop-in, tp-probe-off.service
 # is disabled and inactive, tp-probe-masked.service is masked, and the guarded
-# reload ran; run 2 is CHANGED 0 and its guarded restart and reload end
-# `-> skipped (when ..)`; then run 3 is given a vars copy
-# (build/test-vm/<c>-<distro>/vars-run3.toml) that changes the one var,
+# restart and reload are suppressed by the start; run 2 is CHANGED 0 and its
+# guarded restart and reload end `-> skipped (when ..)`; then run 3 is given a
+# vars copy (build/test-vm/<c>-<distro>/vars-run3.toml) that changes
 # `services_vm.probe_description`, i.e. the unit file's Description= line:
 # the changed ops are exactly the unit's content and the probe's restart,
 # `systemctl show -p ExecMainStartTimestamp` moves, and the journal gains
-# exactly one `Reloading requested from client` line (one daemon-reload).
+# exactly one `Reloading requested from client` line, matching exactly one
+# `daemon_reload` event in run3.jsonl. Run 4 changes only `probe_conf`
+# (vars-run4.toml, keeping run 3's Description=): the changed ops are the conf
+# file and the guarded reload (`-> changed`), no restart, MainPID unchanged,
+# zero `daemon_reload` events and journal delta 0. Run 5, the same vars, is
+# CHANGED 0.
 #
 #   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop or services_vm)
 #   scripts/test-vm.sh --self-test
@@ -237,9 +242,22 @@ restarts_of() { changed_ops "$1" | grep -cxF 'svc tp-probe.service restart' || t
 # reload; `Reloading finished in <t>` follows it).
 reloads_in() { grep -c 'Reloading requested from client' "$1" || true; }
 
-# services_vm_vars3 <file> : run 3's vars file, the one var changed.
+# daemon_reload_events <jsonl> : how many `daemon_reload` events telepatch
+# wrote (one per daemon-reload it ran; a skipped one writes nothing).
+daemon_reload_events() { grep -c '"ev":"daemon_reload"' "$1" || true; }
+
+# services_vm_vars3 <file> : run 3's vars file, the description changed and
+# probe_conf left at its default (omitted, so the conf op does not move).
 services_vm_vars3() {
     printf '%s\n' '# services_vm run 3: the probe unit'"'"'s Description= changed' '[services_vm]' 'probe_description = "telepatch services_vm probe, changed"' >"$1"
+}
+
+# services_vm_vars4 <file> : run 4's vars file. Keeps run 3's Description=
+# (already on the host, so the unit does not change back) and changes only
+# probe_conf.
+services_vm_vars4() {
+    printf '%s\n' '# services_vm run 4: only /etc/tp-probe.conf changes' '[services_vm]' \
+        'probe_description = "telepatch services_vm probe, changed"' 'probe_conf = "probe=2\n"' >"$1"
 }
 
 # groups_have <id -nG output> <group>... : true when every group is listed.
@@ -331,9 +349,26 @@ services_vm_self_test() {
     # run 3's vars file: the one var, a value other than the default's
     services_vm_vars3 "$t/v3"
     if grep -q '^\[services_vm\]' "$t/v3" && grep -q '^probe_description = ' "$t/v3" \
+        && ! grep -q '^probe_conf = ' "$t/v3" \
         && ! cmp -s "$t/v3" "$ROOT/vars/services_vm.toml" \
         && grep -q '^probe_description = ' "$ROOT/vars/services_vm.toml"; then echo "ok   services_vm_vars3 sets probe_description, differs from vars/services_vm.toml"
     else echo "FAIL services_vm_vars3"; fails=1; fi
+    services_vm_vars4 "$t/v4"
+    if grep -Fq 'probe_conf = "probe=2\n"' "$t/v4" \
+        && grep -q 'probe, changed' "$t/v4" \
+        && ! cmp -s "$t/v4" "$t/v3" \
+        && ! cmp -s "$t/v4" "$ROOT/vars/services_vm.toml"; then echo "ok   services_vm_vars4 changes probe_conf and keeps run 3's Description="
+    else echo "FAIL services_vm_vars4"; fails=1; fi
+    printf '%s\n' '{"ev":"op_start","host":"h"}' \
+        '{"ev":"daemon_reload","host":"h","reason":"before #4 svc tp-probe.service (unit tp-probe.service changed)","op":4}' \
+        '{"ev":"op_result","host":"h"}' >"$t/r3.jsonl"
+    got=$(daemon_reload_events "$t/r3.jsonl")
+    if [[ $got -eq 1 ]]; then echo "ok   daemon_reload_events -> 1"
+    else echo "FAIL daemon_reload_events -> $got"; fails=1; fi
+    : >"$t/empty.jsonl"
+    got=$(daemon_reload_events "$t/empty.jsonl")
+    if [[ $got -eq 0 ]]; then echo "ok   daemon_reload_events of nothing -> 0"
+    else echo "FAIL daemon_reload_events of nothing -> $got"; fails=1; fi
     rm -f "$t"/*; rmdir "$t"
     return $fails
 }
@@ -590,13 +625,58 @@ if [[ $container == services_vm ]]; then
     if [[ $nr -eq 1 ]]; then ok "run 3: exactly one restart of tp-probe.service"; else bad "run 3: $nr restarts of tp-probe.service, wanted 1"; fi
     if [[ -n $ts0 && -n $ts1 && $ts0 != "$ts1" && $ts1 != '(failed'* && $ts0 != '(failed'* ]]; then ok "run 3: ExecMainStartTimestamp moved ($ts0 -> $ts1)"
     else bad "run 3: ExecMainStartTimestamp did not move ('$ts0' -> '$ts1')"; fi
-    if [[ $((n1 - n0)) -eq 1 ]]; then ok "run 3: exactly one daemon-reload (journal: $n0 -> $n1)"
-    else bad "run 3: $((n1 - n0)) daemon-reloads in the journal ($n0 -> $n1), wanted 1"; fi
+    ev3=$(daemon_reload_events "$out/run3.jsonl")
+    d3=$((n1 - n0))
+    if [[ $ev3 -eq 1 && $d3 -eq 1 ]]; then ok "run 3: exactly one daemon_reload event, journal delta 1 ($n0 -> $n1)"
+    else bad "run 3: $ev3 daemon_reload events, journal delta $d3 ($n0 -> $n1), wanted 1 and 1"; fi
     vexpect "after run 3 tp-probe.service is-active" active 'systemctl is-active tp-probe.service'
     vexpect "after run 3 the unit file carries the new Description" 'Description=telepatch services_vm probe, changed' 'systemctl show -p Description tp-probe.service'
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a services_vm check after run 3 failed"; exit 1; }
+
+    echo "=== services_vm run 4: only the probe conf changes ==="
+    pid_cmd='systemctl show -p MainPID --value tp-probe.service'
+    pid0=$(sshv "$pid_cmd" 2>&1) || pid0="(failed: $pid0)"
+    sshv "$rel_cmd" >"$out/journal-before4.txt" 2>&1 || true
+    n4a=$(reloads_in "$out/journal-before4.txt")
+    RUN_VARS=$out/vars-run4.toml
+    services_vm_vars4 "$RUN_VARS"
+    echo "run 4's vars: $RUN_VARS"; sed 's/^/     | /' "$RUN_VARS"
+    echo "before run 4: MainPID=$pid0; daemon-reloads logged: $n4a"
+    rc4=0; run 4 || rc4=$?
+    grep '^== .* \[prepare\]' "$out/run4.out" || true
+    pid1=$(sshv "$pid_cmd" 2>&1) || pid1="(failed: $pid1)"
+    sshv "$rel_cmd" >"$out/journal-after4.txt" 2>&1 || true
+    n4b=$(reloads_in "$out/journal-after4.txt")
+    ev4=$(daemon_reload_events "$out/run4.jsonl")
+    d4=$((n4b - n4a))
+    echo "after run 4: MainPID=$pid1; daemon-reloads logged: $n4b; events: $ev4"
+    if [[ $rc4 -eq 0 && $(status_of "$out/run4.out") == changed ]]; then ok "run 4: exit 0, STATUS changed"
+    else bad "run 4 exited $rc4, STATUS $(status_of "$out/run4.out") (log: $out/run4.out)"; fi
+    ch4=$(changed_ops "$out/run4.out" | sort | tr '\n' ';')
+    if [[ $ch4 == 'file /etc/tp-probe.conf content;svc tp-probe.service reload;' ]]; then ok "run 4: the changed ops are the conf file and the guarded reload"
+    else bad "run 4 changed '$ch4', wanted the conf file and the guarded reload only"; fi
+    r4=$(op_result "$out/run4.out" 'svc tp-probe.service reload')
+    if [[ $r4 == '-> changed' ]]; then ok "run 4: the guarded reload ended -> changed"
+    else bad "run 4: the guarded reload ended '$r4', wanted '-> changed'"; fi
+    nr4=$(restarts_of "$out/run4.out")
+    if [[ $nr4 -eq 0 ]]; then ok "run 4: no restart"; else bad "run 4: $nr4 restarts, wanted 0"; fi
+    if [[ -n $pid0 && $pid0 == "$pid1" && $pid0 != '(failed'* && $pid0 != 0 ]]; then ok "run 4: MainPID unchanged ($pid0)"
+    else bad "run 4: MainPID changed or empty ('$pid0' -> '$pid1')"; fi
+    if [[ $ev4 -eq 0 && $d4 -eq 0 ]]; then ok "run 4: zero daemon_reload events, journal delta 0"
+    else bad "run 4: $ev4 daemon_reload events, journal delta $d4 ($n4a -> $n4b), wanted 0 and 0"; fi
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a services_vm check after run 4 failed"; exit 1; }
+
+    echo "=== services_vm run 5: same vars, nothing changes ==="
+    rc5=0; run 5 || rc5=$?
+    grep '^== .* \[prepare\]' "$out/run5.out" || true
+    if [[ $rc5 -eq 0 && $(status_of "$out/run5.out") == ok && $(changed_of "$out/run5.out") == 0 ]]; then ok "run 5: STATUS ok, CHANGED 0"
+    else
+        bad "run 5 exited $rc5, STATUS $(status_of "$out/run5.out"), CHANGED $(changed_of "$out/run5.out") (log: $out/run5.out)"
+        changed_ops "$out/run5.out" | sed 's/^/     changed: /'
+    fi
     if [[ $wrc -ne 0 ]]; then echo "FAIL: a services_vm check failed"; exit 1; fi
     echo "services_vm checks: all passed"
-    echo "PASS: services_vm on a $distro VM over SSH (run 1 ok; run 2 CHANGED 0, restart skipped; run 3 one restart, one daemon-reload)"
+    echo "PASS: services_vm on a $distro VM over SSH (run 1 ok; run 2 CHANGED 0; run 3 one restart, one daemon-reload; run 4 guarded reload, no daemon-reload; run 5 CHANGED 0)"
     exit 0
 fi
 
