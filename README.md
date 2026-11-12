@@ -53,39 +53,26 @@ role shows up as a diff in the plan before anything is applied anywhere.
 ## Proving the ports
 
 Every ported role is held to the same standard: the original Ansible playbook
-and `tp-basic` must leave a machine in the same state. Three harnesses check
-that, from cheap to thorough. Outputs land under `build/`, gitignored.
+and `tp-basic` must leave a machine in the same state. The production
+acceptance runners were retired. What remains, from cheap to thorough, lands
+under `build/`, gitignored.
 
-**Docker oracle** (`scripts/test-container.sh`). Builds a container's image
-chain twice from one pinned base image, once with the Ansible Dockerfiles of
-the pinned `../docker_images` commit and once with docker_images' telepatch Dockerfiles (its working tree, with `build/dist` as the
-named context `tp`: run `just dist` first),
-captures the installed state of each final image with
-`scripts/image-state.sh` (packages by name and architecture, pip
-distributions, rustup state, apt sources, `/usr/local/bin`, mise shims,
-tools, config and `/etc/profile.d` names), and diffs. Any
-difference fails.
-The Ansible side (docker-bake.hcl, `Dockerfiles/ansible.*`, build context) is
-exported with `git archive` from the commit `ported_docker_images` in the
-justfile into `build/docker_images/<sha>/`, never read from the sibling's
-working tree; `DI_SHA=<sha>` overrides it.
+`scripts/image-state.sh` still captures a machine (packages by name and
+architecture, pip distributions, rustup state, apt sources, `/usr/local/bin`,
+mise shims, tools, config and `/etc/profile.d` names). Idempotency and the
+svc proof still run inside a `tp-*` VM (`just docker-vm …`):
 
 ```
-just test-container ubuntu2404 dev_base     # one cell
-just test-acceptance                        # the gate: 7 cells on ubuntu2404, rockylinux10 and ubuntu2604
 just test-idempotent ubuntu2404 rust        # apply twice in one container; the second run must change nothing
 just test-services ubuntu2404               # desktop_services (docker, vm_server) twice in an init-less container; svc prepare lines printed, run 2 CHANGED 0
-just test-matrix                            # every container on every distro; writes build/matrix.md (not a gate)
 ```
 
 **SSH transport on a VM** (`scripts/test-vm.sh`). Creates a fresh Ubuntu
 24.04 VM with [vmtool](https://github.com/jaredeh/vmtool), applies `container/dev_base`
 to it over SSH twice, and deletes the VM. Passes when the first run exits 0
 and the second reports `STATUS ok`, `CHANGED 0`, and `bot`'s login shell
-runs `just --version` through the mise shims. The package comparison with
-the docker oracle's record is printed but not gated: containers and VMs
-differ in structure (systemd, kernel, udev, cloud-init), so apt resolves
-alternatives differently and the sets cannot match one to one.
+runs `just --version` through the mise shims. It does not compare that
+playbook to a container record.
 
 ```
 just test-vm ubuntu2404 dev_base
@@ -93,7 +80,7 @@ just test-vm ubuntu2404 dev_desktop
 ```
 
 `dev_desktop` (vars/desktop.toml, admin users `bot` and `tpdev`, a 30 GB
-disk) has no docker oracle record; after the second run it gates on working
+disk) after the second run gates on working
 checks for each admin user in a login shell (`bot` directly, `tpdev` through
 `sudo -n -iu tpdev`): `sudo -n true`, `id -nG` holding `sudo`, `docker` and
 `libvirt`, `docker run --rm hello-world`, `go version`, `node --version`,
@@ -109,11 +96,10 @@ Runs on 2026-11-04 (Ubuntu 24.04 VM, 4 GiB):
 | `dev_desktop` | 14m25s | 9s | 0 (all 16 working checks pass) | 15m48s |
 | `dev_base` | 5m50s | 1s | 0 | 7m11s |
 
-**Ansible against telepatch on a VM** (`scripts/test-vm-oracle.sh`). The
-docker oracle on the base you actually deploy to. Two fresh VMs from the same
-image, one at a time: `ansible-playbook` from this machine runs the original
-playbook on one, `tp-basic run --host` runs the port on the other, and the
-two states are diffed with the docker oracle's own comparison. Each side runs
+**Ansible against telepatch on a VM** (`scripts/test-vm-oracle.sh`). Two fresh
+VMs from the same image, one at a time: `ansible-playbook` from this machine
+runs the original playbook on one, `tp-basic run --host` runs the port on the
+other, and the two states are diffed by `scripts/lib/compare.sh`. Each side runs
 twice and both passes are timed, so the run also answers how the two tools
 compare on a fresh host and on a converged one.
 

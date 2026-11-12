@@ -72,9 +72,9 @@ self_test() {
     t "zero --disk" 2 run --disk 0 -- true
     t "unknown flag" 2 run --memory 4 -- true
     t "plain" 0 run -- just test-live-os
-    t "--disk and --keep" 0 run --disk 80 --keep -- just test-container ubuntu2404 dev_base
-    parse_args run --disk 80 --keep -- just test-container ubuntu2404 dev_base
-    if [[ $DV_DISK == 80 && $DV_KEEP == 1 && ${DV_CMD[*]} == "just test-container ubuntu2404 dev_base" ]]; then
+    t "--disk and --keep" 0 run --disk 80 --keep -- just test-services ubuntu2404
+    parse_args run --disk 80 --keep -- just test-services ubuntu2404
+    if [[ $DV_DISK == 80 && $DV_KEEP == 1 && ${DV_CMD[*]} == "just test-services ubuntu2404" ]]; then
         echo "ok   parsed values"; else echo "FAIL parsed values: disk=$DV_DISK keep=$DV_KEEP cmd=${DV_CMD[*]}"; fails=1; fi
     parse_args run -- true
     [[ $DV_DISK == 60 && $DV_KEEP == 0 ]] && echo "ok   defaults (60 GB, delete)" || { echo "FAIL defaults: disk=$DV_DISK keep=$DV_KEEP"; fails=1; }

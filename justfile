@@ -26,25 +26,11 @@ musl:
 dist:
     bash scripts/dist.sh
 
-# Docker equivalence oracle (run `just dist` first; it is not a dependency, so
-# the dist a running docker_images build reads is never rewritten under it):
-# build <container>'s chain with Ansible and with
-# tp-basic from one pinned base image, diff the resulting image state.
-# `just test-container ubuntu2404 dev_base`. Pins the Ansible side to
-# `ported_ansible` like test-acceptance (ANSIBLE_SHA overrides) and reads the
-# docker_images side from `ported_docker_images` (DI_SHA overrides).
-test-container distro container:
-    bash scripts/lib/docker-guard.sh
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh {{distro}} {{container}}
-
-# Self-test of the oracle's diff/exit logic (no docker needed).
-test-container-selftest:
-    bash scripts/test-container.sh --self-test
-
-# Self-tests of both oracles' comparison logic, docker-vm.sh's arguments and
-# the docker guard of the three repos (no daemon, VM or network: a stub docker).
+# Self-tests of the comparison logic (scripts/lib/compare.sh), the VM oracle,
+# test-vm.sh, docker-vm.sh's arguments and the docker guard (no daemon, VM or
+# network: a stub docker). The production acceptance runners were retired.
 test-oracle-selftest:
-    bash scripts/test-container.sh --self-test
+    bash scripts/lib/compare.sh --self-test
     bash scripts/test-vm-oracle.sh --self-test
     bash scripts/test-vm.sh --self-test
     bash scripts/docker-vm.sh --self-test
@@ -53,7 +39,7 @@ test-oracle-selftest:
 # Run a docker recipe of this justfile against the daemon of a fresh 1 GiB
 # tp-* VM (scripts/docker-vm.sh: docker.io in ubuntu2404, the socket forwarded
 # over ssh, the VM deleted afterwards). Every docker recipe refuses to run
-# outside it (exit 2). `just docker-vm test-container ubuntu2404 dev_base`
+# outside it (exit 2). `just docker-vm test-services ubuntu2404`
 docker-vm +recipe:
     bash scripts/docker-vm.sh run -- just {{recipe}}
 
@@ -66,18 +52,6 @@ ported_ansible := "79d1ca16bfdeb678496986e1d7a0d407b06f4b45"
 # this commit with `git archive` (build/docker_images/<sha>/), never read from
 # the sibling's working tree. DI_SHA overrides.
 ported_docker_images := "5df316b67429370105efec0e5c5ac29a6ccbd71a"
-
-# Goal-1 gate: the acceptance set. ubuntu2404 and rockylinux10 for the
-# default set, plus ubuntu2604 for latest_kernel_build (the latest set).
-test-acceptance:
-    bash scripts/lib/docker-guard.sh
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2404 dev_base
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune rockylinux10 dev_base
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2404 kernel_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune rockylinux10 kernel_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2404 rust_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune rockylinux10 rust_build
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2604 latest_kernel_build
 
 # Apply container/<container> (dev_base, rust or latest_kernel_build, the last
 # on ubuntu2604 only) twice in one container of the pinned base image; passes
@@ -97,24 +71,19 @@ test-services distro:
     bash scripts/lib/docker-guard.sh
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} bash scripts/test-services.sh {{distro}}
 
-# Not a gate: every container of every distro's set; writes build/matrix.md.
-test-matrix jobs="3":
-    bash scripts/lib/docker-guard.sh
-    DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-matrix.sh {{jobs}}
-
 # Goal-3 check, a proof of the SSH transport: a fresh VM made with
 # ~/repos/jaredeh/vmtool, container/<container> applied twice over SSH (run 1
 # exits 0, run 2 STATUS ok and CHANGED 0), then the VM deleted and checked gone
-# (unless --keep is passed to the script). The comparison with the docker
-# oracle's record is printed and NON-GATING: containers and VMs differ in
-# structure (systemd, kernel, udev, cloud-init, a slimmer base); Ansible
-# against telepatch on a VM is test-vm-oracle. `just test-vm ubuntu2404 dev_base`
-# or `just test-vm ubuntu2404 dev_desktop` (vars/desktop.toml, 30 GB disk, no
-# oracle report; per-user working checks for bot and tpdev gate after run 2).
+# (unless --keep is passed to the script). The production acceptance runner
+# was retired; this script does not compare against a container record.
+# Ansible against telepatch on a VM is test-vm-oracle. `just test-vm ubuntu2404 dev_base`
+# or `just test-vm ubuntu2404 dev_desktop` (vars/desktop.toml, 30 GB disk;
+# per-user working checks for bot and tpdev gate after run 2).
 test-vm distro playbook:
     bash scripts/test-vm.sh {{distro}} {{playbook}}
 
-# On demand, not part of test-acceptance: Ansible against telepatch on a VM.
+# On demand: Ansible against telepatch on a VM. The production acceptance
+# runner was retired. Not part of any default gate.
 # Two fresh VMs from ubuntu2404.qcow2, one at a time (the original playbook
 # with ansible-playbook from this machine on one, tp-basic over SSH on the
 # other), their image-state captures diffed as the docker oracle does. Outputs

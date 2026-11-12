@@ -1,6 +1,6 @@
 #!/bin/sh
-# Prints the state of the image it runs in, for the docker equivalence oracle
-# (scripts/test-container.sh). POSIX sh, runs inside a container of the image.
+# Prints the state of the image or VM it runs in. POSIX sh, runs inside a
+# container or a VM. The production acceptance runner was retired.
 #   image-state.sh             gating sections: names (+arch), no versions
 #   image-state.sh --versions  the same facts with versions (informational)
 #   image-state.sh --users a,b also the account sections for those users

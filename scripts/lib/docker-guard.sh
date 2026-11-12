@@ -109,13 +109,11 @@ guard_self_test() {
     # ../docker_images is not guarded and not run here: its recipes are the
     # user's release tooling, not tests (T70a's guard there was reverted).
     local tpb=$root tel=$root/../telepatch r
-    for r in "test-container ubuntu2404 dev_base" test-acceptance "test-idempotent ubuntu2404 dev_base" \
-             "test-services ubuntu2404" test-matrix; do
+    for r in "test-idempotent ubuntu2404 dev_base" "test-services ubuntu2404"; do
         # shellcheck disable=SC2086
         gt "tp_basic: just $r" 2 0 -- just --justfile "$tpb/justfile" --working-directory "$tpb" $r
     done
-    for r in "test-container.sh ubuntu2404 dev_base" "test-idempotent.sh ubuntu2404 dev_base" \
-             "test-services.sh ubuntu2404" "test-matrix.sh"; do
+    for r in "test-idempotent.sh ubuntu2404 dev_base" "test-services.sh ubuntu2404"; do
         # shellcheck disable=SC2086
         gt "tp_basic: scripts/$r" 2 0 DI_SHA=HEAD -- bash $tpb/scripts/$r
     done

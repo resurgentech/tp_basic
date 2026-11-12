@@ -2,9 +2,10 @@
 # VM check over SSH, a proof of the SSH transport: create a fresh VM with
 # ~/repos/jaredeh/vmtool, apply a playbook to it twice with
 # `tp-basic run --host`, and delete the VM. The playbooks (playbook_config):
-# dev_base (container/dev_base, vars/container.toml, 1 GiB, the docker oracle
-# report) and dev_desktop (vars/desktop.toml, 1 GiB, 30 GB disk, no oracle
-# report; after run 2 the per-user working checks below gate). Usage errors and environment
+# dev_base (container/dev_base, vars/container.toml, 1 GiB; the production
+# acceptance runner was retired, so this script does not compare it to a
+# container record) and dev_desktop (vars/desktop.toml, 1 GiB, 30 GB disk;
+# after run 2 the per-user working checks below gate). Usage errors and environment
 # problems (no VM IP, no onboarding) exit 2; a failed first run, a second run
 # that is not STATUS ok / CHANGED 0, or a VM still listed after the delete
 # exits 1 (a Go release between the passes is the one accepted cause of a
@@ -44,9 +45,8 @@
 #   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop or services_vm)
 #   scripts/test-vm.sh --self-test
 #
-# Needs: build/tp-basic (`just musl`). Optional:
-# build/test-container/<container>-<distro>/{telepatch,base}.state
-# (`just test-container <distro> <container>`) for the comparison report.
+# Needs: build/tp-basic (`just musl`). This script does not read a container
+# record. dev_base is a different playbook from the edge cell.
 #
 # The VM is named tp-<container>-<UTC stamp>; a trap deletes that one VM on
 # every exit unless --keep, then checks `vmtool list` no longer shows it. The
@@ -160,7 +160,7 @@ compare_vm() {
 oracle_report() {
     local o=$1 v=$2
     if [[ ! -f $o/base.state || ! -f $o/telepatch.state ]]; then
-        echo "NON-GATING: no oracle record; run 'just test-container <distro> <c>' for the comparison"
+        echo "NON-GATING: no oracle record (the production acceptance runner was retired)"
         return 0
     fi
     compare_vm "$o" "$v"
@@ -169,13 +169,13 @@ oracle_report() {
 # ---- the playbooks this script runs, and the working checks ---------------------
 
 # playbook_config <playbook> : the allowlist. Sets PB_NAME (the registered
-# playbook), PB_VARS (relative to the repo), PB_ORACLE (1 when the docker
-# oracle's record of build/test-container/<playbook>-<distro> is compared),
-# PB_MEMORY (GiB) and PB_DISK (GB, empty for the image's size). Returns 1 for
-# any other name.
+# playbook), PB_VARS (relative to the repo), PB_ORACLE (0: the production
+# acceptance runner was retired, and this script does not compare against a
+# container record), PB_MEMORY (GiB) and PB_DISK (GB, empty for the image's
+# size). Returns 1 for any other name.
 playbook_config() {
     case $1 in
-        dev_base) PB_NAME=container/dev_base PB_VARS=vars/container.toml PB_ORACLE=1 PB_MEMORY=1 PB_DISK= ;;
+        dev_base) PB_NAME=container/dev_base PB_VARS=vars/container.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
         # docker, libvirt, Go, Node and two rustup trees do not fit the
         # image's own disk, and the libvirt and docker daemons want memory.
         dev_desktop) PB_NAME=dev_desktop PB_VARS=vars/desktop.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK=30 ;;
@@ -505,14 +505,14 @@ self_test() {
     expect "sources only" "$t/o" "apt sources differ"
     # no oracle record: the skip line is printed, still 0
     printf '%s' "$post" >"$t/v/vm-post.state"
-    expect "no oracle record" "$t/none" "NON-GATING: no oracle record; run 'just test-container <distro> <c>' for the comparison"
+    expect "no oracle record" "$t/none" "NON-GATING: no oracle record (the production acceptance runner was retired)"
     rm -f "$t"/o/* "$t"/v/* "$t/out"
     rmdir "$t/o" "$t/v" "$t/none" "$t"
 
     # the playbook allowlist: what each accepted playbook runs with
     local got
     got=$(playbook_config dev_base && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
-    if [[ $got == "container/dev_base|vars/container.toml|1|1|" ]]; then echo "ok   playbook dev_base -> $got"
+    if [[ $got == "container/dev_base|vars/container.toml|0|1|" ]]; then echo "ok   playbook dev_base -> $got"
     else echo "FAIL playbook dev_base -> '$got'"; fails=1; fi
     got=$(playbook_config dev_desktop && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
     if [[ $got == "dev_desktop|vars/desktop.toml|0|1|30" ]]; then echo "ok   playbook dev_desktop -> $got"
@@ -631,7 +631,6 @@ distro=${1:-}; container=${2:-}
 playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm"
 
 # ---- preflight --------------------------------------------------------------
-oracle=$ROOT/build/test-container/$container-$distro
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
 [[ -f $ROOT/$PB_VARS ]] || die "$PB_VARS not found"
 [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"
@@ -962,20 +961,18 @@ if [[ $container == dev_desktop ]]; then
     echo "working checks: all passed"
 fi
 
-# ---- state after and the non-gating comparison -----------------------------------
-# Neither the capture nor the report decides the exit code. Only dev_base has
-# a docker oracle record to compare with.
+# ---- state after -----------------------------------------------------------------
+# The capture does not decide the exit code. PB_ORACLE stays 0: the production
+# acceptance runner was retired, and this script does not read a container record.
 crc=0
 { vm_state "$ROOT/scripts/image-state.sh" >"$out/vm-post.state" \
     && vm_state "$ROOT/scripts/image-state.sh" --versions >"$out/vm-post.versions"; } || crc=$?
 if [[ $crc -ne 0 ]]; then
-    echo "test-vm: WARNING: the post capture exited $crc; no comparison report" >&2
+    echo "test-vm: WARNING: the post capture exited $crc" >&2
 else
     echo "captured $out/vm-post.state ($(wc -l <"$out/vm-post.state") lines)"
     if [[ $PB_ORACLE -eq 1 ]]; then
-        echo "=== comparison with the oracle ($oracle), non-gating ==="
-        rrc=0; oracle_report "$oracle" "$out" || rrc=$?
-        [[ $rrc -eq 0 ]] || echo "test-vm: WARNING: the comparison report returned $rrc" >&2
+        echo "test-vm: WARNING: PB_ORACLE is set, but this script does not read a container record" >&2
     fi
 fi
 if [[ $container == dev_desktop ]]; then

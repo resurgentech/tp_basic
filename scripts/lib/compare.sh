@@ -1,7 +1,9 @@
 # shellcheck shell=bash
-# The oracle's comparison, shared by scripts/test-container.sh and
-# scripts/test-vm-oracle.sh (source it; it runs nothing). It runs on this
-# machine only: just scripts/image-state.sh goes into a container or VM.
+# The oracle's comparison, shared by scripts/test-vm-oracle.sh (source it; it
+# runs nothing). The production acceptance runner was retired. Execute this
+# file only for `--self-test` (the three capture cases and selftest_intended).
+# It runs on this machine only: just scripts/image-state.sh goes into a
+# container or VM.
 
 # apply_intended <dir> <intended file> [<distro>] : writes <dir>/ansible.intended.state,
 # ansible.state with the intended differences applied, and prints one line per
@@ -187,6 +189,48 @@ selftest_no_local_copy() {
         if grep -q '^compare_captures()' "$s"; then echo "FAIL $(basename "$s") defines compare_captures"; fails=1; fi
         if ! grep -q '^source "\$ROOT/scripts/lib/compare.sh"' "$s"; then echo "FAIL $(basename "$s") does not source lib/compare.sh"; fails=1; fi
     done
-    [[ $fails -eq 1 ]] || echo "ok   compare_captures defined only in lib/compare.sh; both scripts source it"
+    [[ $fails -eq 1 ]] || echo "ok   compare_captures defined only in lib/compare.sh; the callers source it"
     return $fails
 }
+
+# selftest_captures : the three capture cases that lived in the retired
+# production acceptance runner (equal, package missing, version-only), plus
+# selftest_intended. No docker, no daemon.
+selftest_captures() {
+    local t fails=0
+    t=$(mktemp -d)
+    local state=$'== packages ==\nbash amd64\ncurl amd64\n== /usr/local/bin ==\nuv\n'
+    local vers=$'== packages ==\nbash amd64 5.2\ncurl amd64 8.5\n'
+    expect() { # name expected-rc
+        local name=$1 want=$2 rc=0
+        compare_captures "$t" >"$t/out" 2>&1 || rc=$?
+        if [[ $rc -eq $want ]]; then echo "ok   $name (exit $rc)"; else echo "FAIL $name: exit $rc, wanted $want"; fails=1; fi
+        sed 's/^/     | /' "$t/out"
+    }
+    # equal -> 0
+    printf '%s' "$state" >"$t/ansible.state"; cp "$t/ansible.state" "$t/telepatch.state"
+    printf '%s' "$vers" >"$t/ansible.versions"; cp "$t/ansible.versions" "$t/telepatch.versions"
+    expect "equal" 0
+    # a package missing on the telepatch side -> 1, diff printed
+    printf '%s' "$state" | grep -v '^curl' >"$t/telepatch.state"
+    expect "package missing" 1
+    grep -q '^-curl amd64' "$t/out" || { echo "FAIL package missing: diff not printed"; fails=1; }
+    # version-only change -> 0, side diff printed
+    cp "$t/ansible.state" "$t/telepatch.state"
+    printf '%s' "${vers/8.5/8.6}" >"$t/telepatch.versions"
+    expect "version only" 0
+    grep -q '^+curl amd64 8.6' "$t/out" || { echo "FAIL version only: side diff not printed"; fails=1; }
+    selftest_intended compare_captures "$t" || fails=1
+    rm -rf "$t"
+    return $fails
+}
+
+# Executing this file runs the self-test only. Sourcing it runs nothing.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    if [[ ${1:-} == --self-test ]]; then
+        selftest_captures
+        exit $?
+    fi
+    echo "usage: compare.sh --self-test" >&2
+    exit 2
+fi

@@ -8,7 +8,7 @@
 #
 #   scripts/test-idempotent.sh <distro> <dev_base|rust|latest_kernel_build>
 #
-# latest_kernel_build is built on ubuntu2604 only (justfile test-acceptance).
+# latest_kernel_build is built on ubuntu2604 only. The production acceptance runner was retired.
 #
 # Env: DI_SHA  docker_images commit the hcl is read from (required; just passes ported_docker_images)
 #

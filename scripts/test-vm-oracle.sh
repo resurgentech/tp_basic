@@ -4,8 +4,8 @@
 # with ~/repos/jaredeh/vmtool), one at a time: the first gets the original
 # Ansible playbook (ansible-playbook from this machine, as bot with become),
 # the second gets `tp-basic run --host`. Their scripts/image-state.sh captures
-# are diffed the way the docker oracle (scripts/test-container.sh) diffs its
-# two images. Not part of test-acceptance or any default gate.
+# are diffed by scripts/lib/compare.sh. The production acceptance runner was
+# retired. Not part of any default gate.
 #
 #   scripts/test-vm-oracle.sh [--keep] <distro> <container>   (ubuntu2404; dev_base or dev_desktop_kept)
 #   scripts/test-vm-oracle.sh --self-test
@@ -48,7 +48,7 @@ die() { echo "test-vm-oracle: $*" >&2; exit 2; }
 
 # shellcheck source=lib/vm.sh
 source "$ROOT/scripts/lib/vm.sh"
-# compare_captures and intended_for, shared with test-container.sh
+# compare_captures and intended_for (scripts/lib/compare.sh)
 # shellcheck source=lib/compare.sh
 source "$ROOT/scripts/lib/compare.sh"
 
@@ -197,7 +197,7 @@ self_test() {
 
     # the shared cases: intended differences, and no local compare_captures
     selftest_intended oracle_compare "$t" || fails=1
-    selftest_no_local_copy "$ROOT/scripts/test-container.sh" "${BASH_SOURCE[0]}" || fails=1
+    selftest_no_local_copy "${BASH_SOURCE[0]}" || fails=1
 
     # the inventory writer: host vars present, the key's path only
     local key=$t/machines/tp-x/id_ed25519
