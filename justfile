@@ -41,6 +41,7 @@ test-oracle-selftest:
     bash scripts/docker-vm.sh --self-test
     bash scripts/lib/docker-guard.sh --self-test
     bash scripts/test-edge.sh --self-test
+    bash scripts/test-edge-matrix.sh --self-test
 
 # The edge gate, the goal's live proof (scripts/test-edge.sh). The local half
 # on this machine: telepatch `cargo test --workspace`, tp_basic `cargo test
@@ -54,10 +55,18 @@ test-edge distro="ubuntu2404":
     just docker-vm test-edge-cell {{distro}}
 
 # One edge cell, inside `just docker-vm` only (the guard refuses anything
-# else). Budget 10 minutes, hard stop 30. `just docker-vm test-edge-cell ubuntu2404`
+# else). Any tests/plans.rs distro with a stock image (all but omarchy).
+# Budget 10 minutes, hard stop 30. `just docker-vm test-edge-cell ubuntu2404`
 test-edge-cell distro:
     bash scripts/lib/docker-guard.sh
     bash scripts/test-edge.sh cell {{distro}}
+
+# The manual edge matrix (scripts/test-edge-matrix.sh). Not a goal gate; Jared
+# starts it. The edge cell on every tests/plans.rs distro, one after another,
+# in ONE 1 GiB tp-* VM; omarchy has no stock image and prints `SKIP omarchy`.
+# Refuses when a tp-* VM is already listed on the VM host. `just test-edge-matrix`
+test-edge-matrix:
+    bash scripts/test-edge-matrix.sh run
 
 # Run a docker recipe of this justfile against the daemon of a fresh 1 GiB
 # tp-* VM (scripts/docker-vm.sh: docker.io in ubuntu2404, the socket forwarded

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The edge gate (T97e): playbooks/edge (Ansible) against playbook `edge`
-# (telepatch) in one cell, ubuntu2404 only. `just test-edge` is this goal's
-# live proof.
+# (telepatch) in one cell. `just test-edge` (ubuntu2404 only) is the goal's
+# live proof; the other distros' cells are the manual matrix (T97f,
+# scripts/test-edge-matrix.sh).
 #
 #   scripts/test-edge.sh local <distro>   the local half, on this machine:
 #       refuses any distro but ubuntu2404, then telepatch `cargo test
@@ -9,11 +10,14 @@
 #       --self-test and `just musl` (build/tp-basic). No docker, no VM.
 #   scripts/test-edge.sh cell <distro>    one cell, against the daemon of a
 #       tp-* VM only (`just docker-vm test-edge-cell ubuntu2404`; the guard
-#       runs before any docker command):
-#       1. `ubuntu:24.04` pulled inside the VM; two containers from that one
-#          image id, `sleep infinity` as PID 1 (no systemd, nothing privileged).
-#       2. The same bootstrap on both: python3, python3-apt and python3-venv,
-#          which Ansible needs on the target (python3-apt for its apt module).
+#       runs before any docker command). <distro> is any tests/plans.rs
+#       distro with a stock image (edge_image; omarchy has none):
+#       1. The distro's stock image (`ubuntu:24.04` for ubuntu2404) pulled
+#          inside the VM; two containers from that one image id, `sleep
+#          infinity` as PID 1 (no systemd, nothing privileged).
+#       2. The same bootstrap on both (edge_boot): python3 and the package
+#          manager's python bindings, which Ansible needs on the target
+#          (ubuntu: python3, python3-apt and python3-venv).
 #       3. Ansible side: a throwaway venv under /opt/edge-ansible (ansible-core
 #          2.22 needs python >= 3.13 and ubuntu 24.04 ships 3.12, so uv builds
 #          the venv on a uv-managed 3.13 kept inside that directory), the pin
@@ -31,6 +35,8 @@
 #       hard stop 30 minutes (the containers are killed, exit 1). The env
 #       overrides TP_EDGE_BUDGET_SECS / TP_EDGE_STOP_SECS may only lower them.
 #       On exit both containers are removed; docker-vm.sh deletes the VM.
+#   scripts/test-edge.sh image <distro>   prints the distro's stock image (exit 2
+#       for omarchy or an unknown name). No docker.
 #   scripts/test-edge.sh --self-test      stub docker, no daemon, no VM.
 #
 # Exit: 0 pass, 1 fail (a diff, a changed second run, the hard stop), 2 a
@@ -59,18 +65,46 @@ EDGE_PY=3.13
 # 2026-11-12 (requires_ansible >=2.19.0). Installed under /opt/edge-ansible,
 # removed with it.
 EDGE_CG=14.0.1
-EDGE_BOOT='apt-get -q update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3 python3-apt python3-venv'
-
 die() { echo "test-edge: $*" >&2; exit 2; }
 
-# edge_image <distro> : the stock image of a distro the gate accepts.
+# edge_image <distro> : the stock image of a tests/plans.rs DISTROS entry (T97f).
+# omarchy has no stock image (it is not baked here either): no line, status 1.
+# Rocky 10 is the Rocky project's own repository: Docker's library `rockylinux`
+# stops at 9 (no `rockylinux:10` tag), and its `rockylinux:9` is the 2024 build.
 edge_image() {
-    case $1 in
+    case ${1:-} in
+        debian12) echo debian:12 ;;
+        debian13) echo debian:13 ;;
         ubuntu2404) echo ubuntu:24.04 ;;
+        ubuntu2604) echo ubuntu:26.04 ;;
+        fedora43) echo fedora:43 ;;
+        fedora44) echo fedora:44 ;;
+        rockylinux9) echo rockylinux:9 ;;
+        rockylinux10) echo rockylinux/rockylinux:10 ;;
+        almalinux9) echo almalinux:9 ;;
+        almalinux10) echo almalinux:10 ;;
+        amazonlinux2023) echo amazonlinux:2023 ;;
+        arch) echo archlinux:latest ;;
         *) return 1 ;;
     esac
 }
-refuse_distro() { die "the edge gate is ubuntu2404 only, not '${1:-}'"; }
+
+# edge_boot <distro> : what both containers get before either tool runs: the
+# python3 Ansible needs on the target, its package manager's bindings (apt:
+# python3-apt; dnf 4: python3-dnf; dnf 5 on Fedora: python3-libdnf5; pacman
+# needs none) and venv support. The same command on both sides, so it is never
+# a difference. Status 1 for a distro with no stock image.
+edge_boot() {
+    case ${1:-} in
+        debian*|ubuntu*) echo 'apt-get -q update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3 python3-apt python3-venv' ;;
+        fedora*) echo 'dnf -y -q install python3 python3-libdnf5' ;;
+        rockylinux*|almalinux*|amazonlinux*) echo 'dnf -y -q install python3 python3-dnf' ;;
+        arch) echo 'pacman -Sy --noconfirm --needed python' ;;
+        *) return 1 ;;
+    esac
+}
+refuse_distro() { die "no stock image for '${1:-}' (the cell takes a tests/plans.rs distro but omarchy)"; }
+refuse_local() { die "the edge gate is ubuntu2404 only, not '${1:-}' (the other distros: just test-edge-matrix)"; }
 
 # edge_limits : sets budget and stop (seconds); the env may only lower them.
 edge_limits() {
@@ -125,7 +159,7 @@ changed_of() { awk '/^HOST  *STATUS/{getline; print $4; exit}' "$1"; }
 
 local_half() {
     local distro=${1:-}
-    edge_image "$distro" >/dev/null || refuse_distro "$distro"
+    [[ $distro == ubuntu2404 ]] || refuse_local "$distro"
     echo "=== local: telepatch cargo test --workspace ==="
     (cd "$ROOT/../telepatch" && cargo test --workspace)
     echo "=== local: tp_basic cargo test --test plans ==="
@@ -150,9 +184,10 @@ watchdog() {
 }
 
 cell() {
-    local distro=${1:-} image bin id rc fails=0 c side
+    local distro=${1:-} image boot bin id rc fails=0 c side
     docker_guard
     image=$(edge_image "$distro") || refuse_distro "$distro"
+    boot=$(edge_boot "$distro") || refuse_distro "$distro"
     edge_limits
     bin=${TP_EDGE_BIN:-$ROOT/build/tp-basic}
     [[ -x $bin ]] || die "no $bin: the local half builds it (just musl)"
@@ -198,10 +233,10 @@ cell() {
     done
     echo "containers: $CA, $CT (PID 1: sleep)"
 
-    echo "=== bootstrap, the same on both: python3 python3-apt python3-venv ==="
+    echo "=== bootstrap, the same on both: $boot ==="
     for side in ansible telepatch; do
         c=$CA; [[ $side == telepatch ]] && c=$CT
-        docker exec "$c" sh -c "$EDGE_BOOT" >"$out/bootstrap-$side.log" 2>&1 \
+        docker exec "$c" sh -c "$boot" >"$out/bootstrap-$side.log" 2>&1 \
             || { tail -20 "$out/bootstrap-$side.log"; echo "FAIL: bootstrap on the $side side"; exit 1; }
     done
 
@@ -332,11 +367,32 @@ edge_self_test() {
         [[ $n -eq 0 ]] && echo "ok   guard: no docker call before the refusal" || { echo "FAIL guard: $n docker calls"; fails=1; }
     fi
     run "guard: this machine's daemon (no label)" 2 'has no label' TP_DOCKER_VM=tp-docker-x DOCKER_STUB_LABELS='[]' -- cell ubuntu2404 || true
-    if run "distro: cell debian12 refused after the guard" 2 'ubuntu2404 only' "${vm[@]}" -- cell debian12; then
-        grep -qv '^docker info' "$DOCKER_STUB_LOG" && { echo "FAIL distro: docker beyond info:"; sed 's/^/     | /' "$DOCKER_STUB_LOG"; fails=1; }
-    fi
+    local d
+    for d in omarchy nosuch; do
+        if run "distro: cell $d refused after the guard" 2 "no stock image for '$d'" "${vm[@]}" -- cell "$d"; then
+            grep -qv '^docker info' "$DOCKER_STUB_LOG" && { echo "FAIL distro: docker beyond info:"; sed 's/^/     | /' "$DOCKER_STUB_LOG"; fails=1; }
+        fi
+    done
+    # every mapped distro is accepted by the cell: it gets as far as its own
+    # image's pull (the stub's PID 1 is not sleep, so it stops there, exit 1)
+    local img
+    for d in ubuntu2404 rockylinux10 archlinux; do
+        [[ $d == archlinux ]] && d=arch
+        img=$(bash "$self" image "$d" 2>/dev/null) || img=
+        if run "distro: cell $d accepted (pulls ${img:-?})" 1 'PID 1 of' "${vm[@]}" -- cell "$d"; then
+            grep -qx "docker pull -q $img" "$DOCKER_STUB_LOG" && [[ -n $img ]] \
+                || { echo "FAIL distro: $d did not pull '${img:-?}'"; sed 's/^/     | /' "$DOCKER_STUB_LOG"; fails=1; }
+        fi
+    done
     run "distro: local debian12 refused before cargo" 2 'ubuntu2404 only' -- local debian12 || true
     grep -q 'cargo test' "$t/run.out" && { echo "FAIL distro: local half ran"; fails=1; }
+    # the bootstrap is the family's package manager, the same on both sides
+    local b
+    b=$(edge_boot ubuntu2404); [[ $b == *'apt-get install'*python3-apt* ]] && echo "ok   boot: ubuntu2404 uses apt (python3-apt)" || { echo "FAIL boot ubuntu2404: '$b'"; fails=1; }
+    b=$(edge_boot rockylinux10); [[ $b == *'dnf -y'*install*python3-dnf* && $b != *apt-get* ]] && echo "ok   boot: rockylinux10 uses dnf (python3-dnf)" || { echo "FAIL boot rockylinux10: '$b'"; fails=1; }
+    b=$(edge_boot fedora43); [[ $b == *'dnf -y'*install*python3-libdnf5* ]] && echo "ok   boot: fedora43 uses dnf5 (python3-libdnf5)" || { echo "FAIL boot fedora43: '$b'"; fails=1; }
+    b=$(edge_boot arch); [[ $b == *pacman*python* ]] && echo "ok   boot: arch uses pacman" || { echo "FAIL boot arch: '$b'"; fails=1; }
+    edge_boot omarchy >/dev/null 2>&1 && { echo "FAIL boot: omarchy has a bootstrap"; fails=1; } || echo "ok   boot: omarchy has none (no stock image)"
     run "limits: a stop over 30 minutes is refused" 2 'at most 1800' "${vm[@]}" TP_EDGE_STOP_SECS=1801 -- cell ubuntu2404 || true
     run "limits: a budget over 10 minutes is refused" 2 'at most 600' "${vm[@]}" TP_EDGE_BUDGET_SECS=601 -- cell ubuntu2404 || true
     if grep -qx 'EDGE_BUDGET=600' "$self" && grep -qx 'EDGE_STOP=1800' "$self"; then echo "ok   limits: budget 600s, stop 1800s"
@@ -400,5 +456,6 @@ case ${1:-} in
     --self-test) edge_self_test; exit $? ;;
     local) shift; local_half "$@" ;;
     cell) shift; cell "$@" ;;
-    *) die "usage: test-edge.sh local <distro> | cell <distro> | --self-test" ;;
+    image) shift; edge_image "${1:-}" || refuse_distro "${1:-}" ;;
+    *) die "usage: test-edge.sh local <distro> | cell <distro> | image <distro> | --self-test" ;;
 esac
