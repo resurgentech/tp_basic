@@ -12,6 +12,17 @@
 # never copied or printed.
 
 VMTOOL_DIR=${VMTOOL_DIR:-$HOME/repos/jaredeh/vmtool}
+# Where the tp-* VMs are created (environment overrides; no .env file). The one
+# place the VM host is named. Until T97i every function below still runs vmtool
+# locally; scripts/vm-host.sh already reads these settings.
+#   TP_VM_HOST      ssh destination of the VM host; `local` is this workstation
+#                   (VMTOOL_DIR/vmtool, as before)
+#   TP_VM_HOST_DIR  vmtool's directory on the VM host, relative to its home
+#   TP_VM_POOL      libvirt pool for the clones and the image: `tp` on a remote
+#                   host, empty on `local` (vmtool's own `default`)
+TP_VM_HOST=${TP_VM_HOST:-veritech04.labtwo}
+TP_VM_HOST_DIR=${TP_VM_HOST_DIR:-tp-vmtool}
+if [[ $TP_VM_HOST == local ]]; then TP_VM_POOL=${TP_VM_POOL:-}; else TP_VM_POOL=${TP_VM_POOL:-tp}; fi
 VM_RECORDED=()
 # Every tp-* VM gets 1 GiB ("no reason to have them use more than 1GB of RAM
 # each"); vm_up refuses any other size. Swap is a file enabled with swapon only.
