@@ -79,8 +79,9 @@ test-acceptance:
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune rockylinux10 rust_build
     DI_SHA=${DI_SHA:-{{ported_docker_images}}} ANSIBLE_SHA=${ANSIBLE_SHA:-{{ported_ansible}}} bash scripts/test-container.sh --prune ubuntu2604 latest_kernel_build
 
-# Apply container/<container> (dev_base or rust) twice in one container of the
-# pinned base image; passes when the second run shows CHANGED 0.
+# Apply container/<container> (dev_base, rust or latest_kernel_build, the last
+# on ubuntu2604 only) twice in one container of the pinned base image; passes
+# when the second run shows CHANGED 0.
 # `just test-idempotent ubuntu2404 dev_base`
 test-idempotent distro container:
     bash scripts/lib/docker-guard.sh

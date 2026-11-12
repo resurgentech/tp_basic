@@ -45,9 +45,13 @@
 //! port requests the same names as the YAML: `java-devel` (to
 //! `java-25-openjdk-devel` on Fedora, `java-17-` on EL9, `java-21-` on
 //! EL10), `zlib-devel` (to `zlib-ng-compat-devel` on Fedora and EL10),
-//! `perl(ExtUtils::Embed)` (to `perl-ExtUtils-Embed`) and, on Ubuntu,
-//! `libbabeltrace-ctf-dev` (installed as `libbabeltrace-dev`, whose dpkg
-//! status carries `Provides: libbabeltrace-ctf-dev`).
+//! `perl(ExtUtils::Embed)` (to `perl-ExtUtils-Embed`). Ubuntu's YAML also
+//! names `libbabeltrace-ctf-dev`, a virtual package that `libbabeltrace-dev`
+//! provides. Apt's present check is `dpkg-query` on the requested name, which
+//! does not see Provides, so requesting the virtual name stays `changed`
+//! after `libbabeltrace-dev` is installed. The port requests
+//! `libbabeltrace-dev` only. The oracle compares installed names, and that
+//! package is the one apt installs.
 //!
 //! Open: the build-dep package set is archive-dependent (whatever the `linux`
 //! source package declares that day), so the oracle sees its names, not the
@@ -101,11 +105,13 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
     if ubuntu_based(&h.os) {
         // ubuntu.yml:1-24. build-dep first, then the extras: the YAML gives
         // no reason for Ubuntu's order or Debian's reverse, and order shows
-        // in which package satisfies a dependency (the extras include a
-        // provided name, libbabeltrace-ctf-dev), so each family keeps its
-        // own order rather than being normalised. The build-dep reads the
-        // source package's dependency list, not a list of names, so it is
-        // not mergeable with the plain installs around it. It must run after
+        // in which package satisfies a dependency, so each family keeps its
+        // own order rather than being normalised. The virtual name
+        // libbabeltrace-ctf-dev is not requested; libbabeltrace-dev provides
+        // it, and apt would report the virtual name changed on every run.
+        // The build-dep reads the source package's dependency list, not a
+        // list of names, so it is not mergeable with the plain installs
+        // around it. It must run after
         // src_repos' edit and the cache refresh that follows it; the apt
         // calls here never refresh the cache themselves, and the plan's apt
         // cache rule does it before the first apt op after the sources edit.
@@ -128,7 +134,6 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
             "dwarves",
             "systemtap-sdt-dev",
             "libbabeltrace-dev",
-            "libbabeltrace-ctf-dev",
             "python3-lxml",
         ]);
     } else if debian_based(&h.os) {

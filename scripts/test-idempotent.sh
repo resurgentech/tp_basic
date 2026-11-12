@@ -6,7 +6,9 @@
 # Passes when the second run exits 0 and its table shows CHANGED 0; otherwise
 # prints the second run's changed ops and exits 1. Usage errors exit 2.
 #
-#   scripts/test-idempotent.sh <distro> <dev_base|rust>
+#   scripts/test-idempotent.sh <distro> <dev_base|rust|latest_kernel_build>
+#
+# latest_kernel_build is built on ubuntu2604 only (justfile test-acceptance).
 #
 # Env: DI_SHA  docker_images commit the hcl is read from (required; just passes ported_docker_images)
 #
@@ -27,10 +29,10 @@ source "$ROOT/scripts/lib/docker-guard.sh"
 docker_guard
 
 distro=${1:-}; container=${2:-}
-[[ -n $distro && -n $container ]] || die "usage: test-idempotent.sh <distro> <dev_base|rust>"
+[[ -n $distro && -n $container ]] || die "usage: test-idempotent.sh <distro> <dev_base|rust|latest_kernel_build>"
 case $container in
-    dev_base|rust) ;;
-    *) die "container must be dev_base or rust, not '$container'" ;;
+    dev_base|rust|latest_kernel_build) ;;
+    *) die "container must be dev_base, rust or latest_kernel_build, not '$container'" ;;
 esac
 
 # the pinned docker_images commit, exported once (never the working tree)

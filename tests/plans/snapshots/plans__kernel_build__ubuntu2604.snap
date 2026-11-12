@@ -224,9 +224,9 @@ role kernel_build
       |   if [ "$rc" -eq 0 ] && grep -Eq '[1-9][0-9]* newly installed' "$tp_out"; then changed=1; fi
       |   rm -f "$tp_out"
       | fi
-  #14 pkg as shell:root reads [] writes [pkg:binutils-dev, pkg:dwarves, pkg:equivs, pkg:libbabeltrace-ctf-dev, pkg:libbabeltrace-dev, pkg:libperl-dev, pkg:libpython3-dev, pkg:libzstd-dev, pkg:python3-lxml, pkg:systemtap-sdt-dev] post [pkg:binutils-dev=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:libbabeltrace-ctf-dev=Installed, pkg:libbabeltrace-dev=Installed, pkg:libperl-dev=Installed, pkg:libpython3-dev=Installed, pkg:libzstd-dev=Installed, pkg:python3-lxml=Installed, pkg:systemtap-sdt-dev=Installed]
+  #14 pkg as shell:root reads [] writes [pkg:binutils-dev, pkg:dwarves, pkg:equivs, pkg:libbabeltrace-dev, pkg:libperl-dev, pkg:libpython3-dev, pkg:libzstd-dev, pkg:python3-lxml, pkg:systemtap-sdt-dev] post [pkg:binutils-dev=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:libbabeltrace-dev=Installed, pkg:libperl-dev=Installed, pkg:libpython3-dev=Installed, pkg:libzstd-dev=Installed, pkg:python3-lxml=Installed, pkg:systemtap-sdt-dev=Installed]
       | rc=0; changed=0; installed=()
-      | tp_want=('libperl-dev' 'libzstd-dev' 'libpython3-dev' 'binutils-dev' 'equivs' 'dwarves' 'systemtap-sdt-dev' 'libbabeltrace-dev' 'libbabeltrace-ctf-dev' 'python3-lxml')
+      | tp_want=('libperl-dev' 'libzstd-dev' 'libpython3-dev' 'binutils-dev' 'equivs' 'dwarves' 'systemtap-sdt-dev' 'libbabeltrace-dev' 'python3-lxml')
       | tp_missing=()
       | export DEBIAN_FRONTEND=noninteractive
       | for tp_n in "${tp_want[@]}"; do

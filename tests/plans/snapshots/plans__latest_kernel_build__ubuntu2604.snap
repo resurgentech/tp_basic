@@ -224,9 +224,9 @@ role kernel_build
       |   if [ "$rc" -eq 0 ] && grep -Eq '[1-9][0-9]* newly installed' "$tp_out"; then changed=1; fi
       |   rm -f "$tp_out"
       | fi
-  #14 pkg as shell:root reads [] writes [pkg:binutils-dev, pkg:clang, pkg:dwarves, pkg:equivs, pkg:g++, pkg:libbabeltrace-ctf-dev, pkg:libbabeltrace-dev, pkg:libperl-dev, pkg:libpython3-dev, pkg:libssl-dev, pkg:libzstd-dev, pkg:musl-tools, pkg:pkg-config, pkg:python3-lxml, pkg:systemtap-sdt-dev] post [pkg:binutils-dev=Installed, pkg:clang=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:g++=Installed, pkg:libbabeltrace-ctf-dev=Installed, pkg:libbabeltrace-dev=Installed, pkg:libperl-dev=Installed, pkg:libpython3-dev=Installed, pkg:libssl-dev=Installed, pkg:libzstd-dev=Installed, pkg:musl-tools=Installed, pkg:pkg-config=Installed, pkg:python3-lxml=Installed, pkg:systemtap-sdt-dev=Installed]
+  #14 pkg as shell:root reads [] writes [pkg:binutils-dev, pkg:clang, pkg:dwarves, pkg:equivs, pkg:g++, pkg:libbabeltrace-dev, pkg:libperl-dev, pkg:libpython3-dev, pkg:libssl-dev, pkg:libzstd-dev, pkg:musl-tools, pkg:pkg-config, pkg:python3-lxml, pkg:systemtap-sdt-dev] post [pkg:binutils-dev=Installed, pkg:clang=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:g++=Installed, pkg:libbabeltrace-dev=Installed, pkg:libperl-dev=Installed, pkg:libpython3-dev=Installed, pkg:libssl-dev=Installed, pkg:libzstd-dev=Installed, pkg:musl-tools=Installed, pkg:pkg-config=Installed, pkg:python3-lxml=Installed, pkg:systemtap-sdt-dev=Installed]
       | rc=0; changed=0; installed=()
-      | tp_want=('libperl-dev' 'libzstd-dev' 'libpython3-dev' 'binutils-dev' 'equivs' 'dwarves' 'systemtap-sdt-dev' 'libbabeltrace-dev' 'libbabeltrace-ctf-dev' 'python3-lxml' 'g++' 'libssl-dev' 'pkg-config' 'clang' 'musl-tools')
+      | tp_want=('libperl-dev' 'libzstd-dev' 'libpython3-dev' 'binutils-dev' 'equivs' 'dwarves' 'systemtap-sdt-dev' 'libbabeltrace-dev' 'python3-lxml' 'g++' 'libssl-dev' 'pkg-config' 'clang' 'musl-tools')
       | tp_missing=()
       | export DEBIAN_FRONTEND=noninteractive
       | for tp_n in "${tp_want[@]}"; do
