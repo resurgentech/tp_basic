@@ -4,23 +4,34 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use telepatch::vars::secret_literals;
+use telepatch::{inventory, vars};
 use tp_basic::vars::Vars;
 
-#[test]
-fn tracked_vars_and_inventory_have_no_secret_literals() {
+fn tracked(pathspecs: &[&str]) -> Vec<PathBuf> {
     let out = Command::new("git")
-        .args(["ls-files", "-z", "vars", "inventory*"])
+        .arg("ls-files")
+        .arg("-z")
+        .args(pathspecs)
         .output()
         .expect("git ls-files");
     assert!(out.status.success(), "git ls-files failed");
-    let paths: Vec<PathBuf> = out
-        .stdout
+    out.stdout
         .split(|b| *b == 0)
         .filter(|p| !p.is_empty())
         .map(|p| PathBuf::from(String::from_utf8_lossy(p).into_owned()))
-        .collect();
-    let hits = secret_literals::<Vars>(&paths).unwrap_or_else(|e| panic!("{e}"));
+        .collect()
+}
+
+#[test]
+fn tracked_vars_and_inventory_have_no_secret_literals() {
+    // A vars file and an inventory are different formats: each goes to its
+    // own loader.
+    let mut hits =
+        vars::secret_literals::<Vars>(&tracked(&["vars"])).unwrap_or_else(|e| panic!("{e}"));
+    hits.extend(
+        inventory::secret_literals::<Vars>(&tracked(&["inventory*"]))
+            .unwrap_or_else(|e| panic!("{e}")),
+    );
     assert!(
         hits.is_empty(),
         "secret literals in tracked files: {hits:?}"
