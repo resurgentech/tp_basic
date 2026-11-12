@@ -1,6 +1,8 @@
 # shellcheck shell=bash
-# The oracle's comparison, shared by scripts/test-vm-oracle.sh (source it; it
-# runs nothing). The production acceptance runner was retired. Execute this
+# The oracle's comparison, shared by scripts/test-vm-oracle.sh and
+# scripts/test-edge.sh (source it; it runs nothing; neither defines its own
+# compare_captures, which each one's --self-test checks). The edge gate calls
+# compare_captures with no intended-differences file. The production acceptance runner was retired. Execute this
 # file only for `--self-test` (the three capture cases and selftest_intended).
 # It runs on this machine only: just scripts/image-state.sh goes into a
 # container or VM.

@@ -54,8 +54,57 @@ role shows up as a diff in the plan before anything is applied anywhere.
 
 Every ported role is held to the same standard: the original Ansible playbook
 and `tp-basic` must leave a machine in the same state. The production
-acceptance runners were retired. What remains, from cheap to thorough, lands
+acceptance runners were retired (`test-acceptance`, `test-matrix` and
+`test-container` stay retired). What remains, from cheap to thorough, lands
 under `build/`, gitignored.
+
+**The gate is `just test-edge`.** The local half runs here: telepatch's
+`cargo test --workspace`, this repo's `cargo test --test plans` (the plan
+snapshots and `plans_are_byte_identical`), `scripts/test-edge.sh --self-test`
+and `just musl`. Then `just docker-vm test-edge-cell ubuntu2404` runs one
+cell in a fresh 1 GiB `tp-*` VM. Both sides start from stock `ubuntu:24.04`,
+pulled inside the VM, in containers with `sleep` as PID 1. Each side gets the
+same bootstrap (`python3`, `python3-apt`, `python3-venv`, which Ansible needs
+on the target). The Ansible side then runs `playbooks/edge` once from a
+throwaway venv under `/opt/edge-ansible`. uv builds that venv on Python 3.13,
+because ansible-core 2.22 needs it and the image ships 3.12. The venv also
+gets the `community.general` collection, because the Arch task's
+`ansible.builtin.pacman` redirects there and ansible-core resolves every
+task's module when the play loads. The venv is removed before the capture. The telepatch side runs `tp-basic run edge
+--local` twice. The cell passes when all of these hold:
+
+- the second telepatch run shows `CHANGED 0`;
+- `compare_captures` reports the two `image-state.sh` captures identical,
+  with no intended-differences file;
+- the marker `/usr/local/share/telepatch-edge.txt` has the sha256 of
+  `printf 'edge\n'` on both sides;
+- `/usr/local/bin/edge-jq` is the checksummed jq 1.7.1 on both sides.
+
+The cell has a 10 minute budget, and going over only prints `budget:
+exceeded`. At 30 minutes it removes its containers and fails, and so does an
+OOM. Neither limit is widened. Only ubuntu2404 is accepted.
+
+```
+just test-edge
+```
+
+**Where the VMs run.** `tp-*` VMs are created on the host named by
+`TP_VM_HOST` (default `veritech04.labtwo`, set once in `scripts/lib/vm.sh`;
+`TP_VM_HOST=local` uses this workstation's vmtool as before). vmtool runs
+there from `~/tp-vmtool`, clones into the libvirt pool `tp`, and the guest is
+reached from here through `ProxyJump` with a key made per run; the docker
+socket is still forwarded to a unix socket here. Prepare or verify the host
+with:
+
+```
+bash scripts/vm-host.sh setup    # idempotent; its one sudo installs golang-1.24-go and libvirt-dev
+bash scripts/vm-host.sh check    # read-only; docker-vm.sh runs it before every VM
+```
+
+The `vt-*` VMs on veritech04 (vt-r1..vt-r6, vt-a1) are not ours: nothing here
+names, stops or deletes a VM whose name does not start with `tp-`.
+`scripts/test-vm.sh` and `scripts/test-vm-oracle.sh` still need
+`TP_VM_HOST=local` until they move to the VM host.
 
 `scripts/image-state.sh` still captures a machine (packages by name and
 architecture, pip distributions, rustup state, apt sources, `/usr/local/bin`,

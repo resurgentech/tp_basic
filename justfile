@@ -40,6 +40,24 @@ test-oracle-selftest:
     bash scripts/test-vm.sh --self-test
     bash scripts/docker-vm.sh --self-test
     bash scripts/lib/docker-guard.sh --self-test
+    bash scripts/test-edge.sh --self-test
+
+# The edge gate, the goal's live proof (scripts/test-edge.sh). The local half
+# on this machine: telepatch `cargo test --workspace`, tp_basic `cargo test
+# --test plans`, the script's --self-test and `just musl`. Then one cell in a
+# fresh 1 GiB tp-* VM: playbooks/edge (Ansible, once) against playbook `edge`
+# (telepatch, twice) from stock ubuntu:24.04, run 2 CHANGED 0, captures
+# identical with no intended differences. ubuntu2404 only; any other distro is
+# refused. `just test-edge`
+test-edge distro="ubuntu2404":
+    bash scripts/test-edge.sh local {{distro}}
+    just docker-vm test-edge-cell {{distro}}
+
+# One edge cell, inside `just docker-vm` only (the guard refuses anything
+# else). Budget 10 minutes, hard stop 30. `just docker-vm test-edge-cell ubuntu2404`
+test-edge-cell distro:
+    bash scripts/lib/docker-guard.sh
+    bash scripts/test-edge.sh cell {{distro}}
 
 # Run a docker recipe of this justfile against the daemon of a fresh 1 GiB
 # tp-* VM (scripts/docker-vm.sh: docker.io in ubuntu2404, the socket forwarded

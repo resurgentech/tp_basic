@@ -109,14 +109,28 @@ guard_self_test() {
     # ../docker_images is not guarded and not run here: its recipes are the
     # user's release tooling, not tests (T70a's guard there was reverted).
     local tpb=$root tel=$root/../telepatch r
-    for r in "test-idempotent ubuntu2404 dev_base" "test-services ubuntu2404"; do
+    for r in "test-idempotent ubuntu2404 dev_base" "test-services ubuntu2404" "test-edge-cell ubuntu2404"; do
         # shellcheck disable=SC2086
         gt "tp_basic: just $r" 2 0 -- just --justfile "$tpb/justfile" --working-directory "$tpb" $r
     done
-    for r in "test-idempotent.sh ubuntu2404 dev_base" "test-services.sh ubuntu2404"; do
+    for r in "test-idempotent.sh ubuntu2404 dev_base" "test-services.sh ubuntu2404" "test-edge.sh cell ubuntu2404"; do
         # shellcheck disable=SC2086
         gt "tp_basic: scripts/$r" 2 0 DI_SHA=HEAD -- bash $tpb/scripts/$r
     done
+    # `just test-edge` is the local half and then `just docker-vm`, so it is
+    # not run here with ubuntu2404; any other distro is refused (exit 2)
+    # before the local half, with no docker call and no VM.
+    local erc=0 en
+    : >"$DOCKER_STUB_LOG"
+    env -u TP_DOCKER_VM -u DOCKER_HOST PATH="$t/bin:$PATH" \
+        just --justfile "$tpb/justfile" --working-directory "$tpb" test-edge debian12 >"$t/out" 2>&1 || erc=$?
+    en=$(wc -l <"$DOCKER_STUB_LOG")
+    if [[ $erc -eq 2 && $en -eq 0 ]] && grep -q 'ubuntu2404 only' "$t/out" && ! grep -q 'Compiling\|docker-vm' "$t/out"; then
+        echo "ok   tp_basic: just test-edge debian12 refused before the local half (exit $erc, docker calls: $en)"
+    else
+        echo "FAIL tp_basic: just test-edge debian12: exit $erc, docker calls $en; wanted exit 2, no call, 'ubuntu2404 only'"
+        sed 's/^/     | /' "$t/out" | tail -5; fails=1
+    fi
     for r in os-fixtures test-live-os test-live-pkg test-live-mise test-live-ssh test-live-user test-live-repo test-live-svc test-live-unit test-live-fetch; do
         gt "telepatch: just $r" 2 0 -- just --justfile "$tel/justfile" --working-directory "$tel" "$r"
     done
