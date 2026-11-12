@@ -686,7 +686,8 @@ fn edge_ubuntu2404_is_one_rustup_after_curl_and_the_repo() {
         text.contains("https://download.docker.com/linux/ubuntu"),
         "{text}"
     );
-    assert!(text.contains("www-browser"), "{text}");
+    assert!(text.contains("libz-dev"), "{text}");
+    assert!(text.contains("zlib1g-dev"), "{text}");
     assert!(
         text.contains("5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5"),
         "{text}"
@@ -704,7 +705,8 @@ fn edge_ubuntu2404_is_one_rustup_after_curl_and_the_repo() {
 fn edge_family_branches_match_the_table() {
     let deb = plan("edge", "debian12");
     assert!(deb.contains("https://download.docker.com/linux/debian"));
-    assert!(deb.contains("www-browser"));
+    assert!(deb.contains("libz-dev"));
+    assert!(deb.contains("zlib1g-dev"));
     assert!(!deb.contains("mailx"));
     let fed = plan("edge", "fedora44");
     assert!(fed.contains("https://download.docker.com/linux/fedora/docker-ce.repo"));

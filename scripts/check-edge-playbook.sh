@@ -53,8 +53,8 @@ need() {
     local label=$1 needle=$2
     if grep -qF -- "$needle" $tasks; then say "$label"; else bad "missing $label ($needle)"; fi
 }
-need "virtual name www-browser" "www-browser"
-need "provider w3m" "w3m"
+need "virtual name libz-dev" "libz-dev"
+need "provider zlib1g-dev" "zlib1g-dev"
 need "virtual name mailx" "mailx"
 need "provider s-nail" "s-nail"
 need "arch provider bash" "- bash"
@@ -117,7 +117,7 @@ else
 fi
 
 # ---- packages: only curl, ca-certificates and the table ----------------------
-allowed=" curl ca-certificates w3m www-browser docker-ce-cli s-nail mailx bash sh "
+allowed=" curl ca-certificates zlib1g-dev libz-dev docker-ce-cli s-nail mailx bash sh "
 seen=" "
 shopt -s nullglob
 for f in "$EDGE"/roles/*/tasks/*.yml; do
@@ -151,7 +151,7 @@ for p in $seen; do
         *) bad "package not in the edge list or the support set: $p" ;;
     esac
 done
-for p in curl ca-certificates w3m www-browser docker-ce-cli s-nail mailx bash sh; do
+for p in curl ca-certificates zlib1g-dev libz-dev docker-ce-cli s-nail mailx bash sh; do
     case $seen in
         *" $p "*) ;;
         *) bad "package list never names $p" ;;

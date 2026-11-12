@@ -10,8 +10,8 @@
     name:
       - curl
       - ca-certificates
-      - w3m
-      - www-browser
+      - zlib1g-dev
+      - libz-dev
     state: present
     update_cache: true
 

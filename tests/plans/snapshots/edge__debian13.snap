@@ -7,9 +7,9 @@ blocking reads: 0
 
 window 1 (final)
 role edge
-  #1 pkg as shell:root reads [] writes [pkg:ca-certificates, pkg:curl, pkg:w3m, pkg:www-browser] post [pkg:ca-certificates=Installed, pkg:curl=Installed, pkg:w3m=Installed, pkg:www-browser=Installed]
+  #1 pkg as shell:root reads [] writes [pkg:ca-certificates, pkg:curl, pkg:libz-dev, pkg:zlib1g-dev] post [pkg:ca-certificates=Installed, pkg:curl=Installed, pkg:libz-dev=Installed, pkg:zlib1g-dev=Installed]
       | rc=0; changed=0; installed=()
-      | tp_want=('curl' 'ca-certificates' 'w3m' 'www-browser')
+      | tp_want=('curl' 'ca-certificates' 'zlib1g-dev' 'libz-dev')
       | tp_missing=()
       | export DEBIAN_FRONTEND=noninteractive
       | tp_apt_present() {

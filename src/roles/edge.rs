@@ -4,7 +4,7 @@
 //!
 //! Order is the list's order. Support packages (`curl`, `ca-certificates`)
 //! and the family's virtual name go in one `pkg` before the repo and
-//! before rustup. Debian asks for `www-browser` (provided by `w3m`).
+//! before rustup. Debian asks for `libz-dev` (provided by `zlib1g-dev`).
 //! Red Hat, Amazon included, asks for `mailx` (provided by `s-nail`).
 //! Arch, omarchy included, asks for `sh` (provided by `bash`). Docker's
 //! repo is the one `docker` spells: apt `linux/{debian,ubuntu}` or a dnf
@@ -72,7 +72,7 @@ fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
 #[role]
 pub async fn edge(h: &Host<Vars>) -> Result<(), TraceError> {
     match h.os.family {
-        Family::Debian => h.pkg(["curl", "ca-certificates", "w3m", "www-browser"]),
+        Family::Debian => h.pkg(["curl", "ca-certificates", "zlib1g-dev", "libz-dev"]),
         Family::RedHat => h.pkg(["curl", "ca-certificates", "s-nail", "mailx"]),
         Family::Arch => h.pkg(["curl", "ca-certificates", "bash", "sh"]),
         Family::Other(ref name) => {
