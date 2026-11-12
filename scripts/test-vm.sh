@@ -50,8 +50,10 @@
 #
 # The VM is named tp-<container>-<UTC stamp>; a trap deletes that one VM on
 # every exit unless --keep, then checks `vmtool list` no longer shows it. The
-# SSH key is used in place from vmtool's .machines/<vm>/ directory and never
-# copied.
+# SSH key is vmtool's, used in place from .machines/<vm>/ and never copied,
+# when the VM host is local; when TP_VM_HOST names a remote host it is a
+# per-run key made here (scripts/lib/vm.sh), and tp-basic and every guest
+# command reach the guest through ProxyJump=$TP_VM_HOST.
 #
 # The comparison with the docker oracle's record is NON-GATING, a report only:
 # containers and VMs differ in structure (systemd, kernel, udev, cloud-init, a
@@ -191,6 +193,16 @@ playbook_config() {
 desktop_secret_vars() {
     grep -v '^default_password[[:space:]]*=' "$ROOT/vars/desktop.toml" >"$1"
     printf '\ndefault_password = { env = "TP_TEST_PW_HASH" }\n' >>"$1"
+}
+
+# tpb_ssh_args <key> <known_hosts> : fills TPB_SSH_ARGS, the ssh arguments of
+# `tp-basic run --host`. A remote VM host adds the jump (the telepatch ssh
+# master takes it as an ordinary option; only mux channels override
+# ProxyCommand).
+tpb_ssh_args() {
+    TPB_SSH_ARGS=(--ssh-key "$1" --ssh-option StrictHostKeyChecking=accept-new
+        --ssh-option UserKnownHostsFile="$2")
+    vm_is_local || TPB_SSH_ARGS+=(--ssh-option "ProxyJump=$TP_VM_HOST")
 }
 
 # su_tpdev : ssh as bot and `su` to tpdev. The password is stdin of the
@@ -546,24 +558,29 @@ EOF
     rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list TP_VM_HOST=veritech04.labtwo; vm_up tp-x "$d/out" "" 4) >"$d/o" 2>&1 || rc=$?
     [[ $rc -eq 2 && ! -s $d/log ]] && grep -q 'every tp-\* VM gets 1 GiB' "$d/o"; chk "remote vm_up 4 GiB refused before any ssh" $? "rc=$rc"
 
-    # ---- test-vm.sh and test-vm-oracle.sh refuse a remote host, after --self-test, before any vmtool call ----
+    # ---- test-vm.sh and test-vm-oracle.sh accept a remote host: bad args reach their own check ----
     local s h
     for s in test-vm test-vm-oracle; do
-        for h in veritech04.labtwo unset; do
+        for h in veritech04.labtwo unset local; do
             reset
             rc=0
             if [[ $h == unset ]]; then
-                env -u TP_VM_HOST PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" ubuntu2404 dev_base >"$d/o" 2>&1 || rc=$?
+                env -u TP_VM_HOST PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" nosuchdistro x >"$d/o" 2>&1 || rc=$?
             else
-                TP_VM_HOST=$h PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" --keep ubuntu2404 dev_base >"$d/o" 2>&1 || rc=$?
+                TP_VM_HOST=$h PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" nosuchdistro x >"$d/o" 2>&1 || rc=$?
             fi
-            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]] && grep -qF 'set TP_VM_HOST=local; T97j moves this script' "$d/o"
-            chk "$s.sh refuses TP_VM_HOST=$h: exit 2, no vmtool or ssh call" $? "rc=$rc $(cat "$d/o")"
+            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]] && ! grep -qF 'T97j' "$d/o" && grep -q 'only the ubuntu2404 image' "$d/o"
+            chk "$s.sh with TP_VM_HOST=$h is not refused (reaches its own argument check, no ssh or vmtool call)" $? "rc=$rc $(cat "$d/o")"
         done
-        reset
-        rc=0; TP_VM_HOST=local PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" nosuchdistro x >"$d/o" 2>&1 || rc=$?
-        [[ $rc -eq 2 && ! -s $d/log ]] && ! grep -qF 'T97j' "$d/o" && grep -q 'only the ubuntu2404 image' "$d/o"; chk "$s.sh with TP_VM_HOST=local is not refused (reaches its own argument check)" $? "rc=$rc $(cat "$d/o")"
     done
+
+    # ---- the tp-basic ssh argv: local unchanged, remote adds the jump ----
+    local -a loc=(--ssh-key /k/id --ssh-option StrictHostKeyChecking=accept-new --ssh-option UserKnownHostsFile=/o/known_hosts)
+    local -a rem=("${loc[@]}" --ssh-option ProxyJump=veritech04.labtwo)
+    (export TP_VM_HOST=local; tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${loc[@]}")" ]])
+    chk "local tp-basic ssh argv unchanged" $?
+    (export TP_VM_HOST=veritech04.labtwo; tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${rem[@]}")" ]])
+    chk "remote tp-basic ssh argv adds --ssh-option ProxyJump=<host>" $?
     rm -rf "$d"
     return $fails
 }
@@ -792,10 +809,6 @@ EOF
 
 if [[ ${1:-} == --self-test ]]; then self_test; exit $?; fi
 
-# T97j moves this script to the VM host; until then only a local vmtool works.
-# Before any vmtool or ssh call (the self-test above runs with any host).
-[[ $TP_VM_HOST == local ]] || die "set TP_VM_HOST=local; T97j moves this script"
-
 # ---- arguments --------------------------------------------------------------
 keep=0
 if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
@@ -807,7 +820,9 @@ playbook_config "$container" || die "playbook '$container' is not one of: dev_ba
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
 [[ -f $ROOT/$PB_VARS ]] || die "$PB_VARS not found"
-[[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"
+# vmtool lives on the VM host when it is remote; there the first vmtool call
+# (vm_listed, below) is the check
+if vm_is_local; then [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"; fi
 
 name=tp-$container-$(date -u +%Y%m%dt%H%M%Sz)
 vm_listed "$name" && die "a VM named $name already exists; not touching it"
@@ -854,9 +869,8 @@ run() { # n
     echo "=== run $1: tp-basic run $PB_NAME --host $dest --vars ${RUN_VARS:+(changed copy) }$PB_VARS ==="
     VM_STEP="run $1: tp-basic run $PB_NAME --host $dest"
     local rc=0 t0=$SECONDS
-    "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" --ssh-key "$key" \
-        --ssh-option StrictHostKeyChecking=accept-new \
-        --ssh-option UserKnownHostsFile="$out/known_hosts" \
+    tpb_ssh_args "$key" "$out/known_hosts"
+    "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" "${TPB_SSH_ARGS[@]}" \
         --vars "${RUN_VARS:-$ROOT/$PB_VARS}" --log "$out/run$1.jsonl" \
         >"$out/run$1.out" 2>&1 || rc=$?
     sed -n '/^HOST  *STATUS/,$p' "$out/run$1.out"
