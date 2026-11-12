@@ -76,7 +76,7 @@ guard_self_test() {
         while [[ $1 != -- ]]; do e+=("$1"); shift; done
         shift
         : >"$DOCKER_STUB_LOG"
-        env -u TP_DOCKER_VM -u TP_DOCKER_VM_IP -u DOCKER_HOST -u DOCKER_CONTEXT -u BUILDX_BUILDER \
+        env -u TP_DOCKER_VM -u TP_DOCKER_VM_IP -u TP_DOCKER_VM_PUBLISH -u TP_DOCKER_VM_ADDR -u TP_DOCKER_VM_PORTS -u DOCKER_HOST -u DOCKER_CONTEXT -u BUILDX_BUILDER \
             PATH="$t/bin:$PATH" "${e[@]}" "$@" >"$t/out" 2>&1 || rc=$?
         local n
         n=$(wc -l <"$DOCKER_STUB_LOG")

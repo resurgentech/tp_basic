@@ -17,13 +17,21 @@
 #      tp-docker-vm=<name>, restart docker.
 #   3. Forward the VM's /var/run/docker.sock to <scratch>/docker.sock with
 #      vm.sh's VM_SSH_OPTS (the key; on a remote host the per-run key and
-#      ProxyJump through the VM host) and `-N -L`.
+#      ProxyJump through the VM host) and `-N -L` (plus the port forwards below).
 #   4. Run the command with DOCKER_HOST=unix://<scratch>/docker.sock,
-#      TP_DOCKER_VM=<name>, TP_DOCKER_VM_IP=<ip> (only for a local VM host: a
-#      remote guest's address is not routable from here, so it is not set) and
-#      BUILDX_BUILDER=default
-#      (DOCKER_CONTEXT unset), which every docker recipe's guard
-#      (scripts/lib/docker-guard.sh) checks against the daemon's label.
+#      TP_DOCKER_VM=<name>, BUILDX_BUILDER=default (DOCKER_CONTEXT unset), which
+#      every docker recipe's guard (scripts/lib/docker-guard.sh) checks against
+#      the daemon's label, and the endpoint for a container's published port:
+#        TP_DOCKER_VM_PUBLISH  the address in the VM a container publishes on
+#        TP_DOCKER_VM_ADDR     the address this machine connects to
+#        TP_DOCKER_VM_PORTS    first-last, default 42201-42208 (override: the
+#                              same variable, 1024-65535); a port has the same
+#                              number at both ends
+#      On a remote VM host both addresses are 127.0.0.1 (the guest's 192.168.122.x
+#      is not routable from here) and the tunnel of step 3 also carries
+#      `-L 127.0.0.1:P:127.0.0.1:P` for each port; nothing listens on the VM host.
+#      On TP_VM_HOST=local both are the VM's address, no forwards, and
+#      TP_DOCKER_VM_IP is that address too (unset on a remote host).
 #   5. Whatever the command's status (and on INT/TERM): kill the tunnel,
 #      delete the VM and check `vmtool list` (on the VM host) no longer shows
 #      it, unless --keep. The per-run key and its scratch dir are removed.
@@ -69,11 +77,41 @@ no_tp_line() {
     if [[ $TP_VM_HOST == local ]]; then echo "docker-vm: vmtool list shows no tp-* VM"
     else echo "docker-vm: vmtool list on $TP_VM_HOST shows no tp-* VM"; fi
 }
-# export_vm_ip : TP_DOCKER_VM_IP is the VM's address for a local VM host. A remote
-# guest's 192.168.122.x is not routable from here (this machine's own virbr0 is the
-# same network), so it is unset rather than exported as an address that is wrong.
-export_vm_ip() {
-    if [[ $TP_VM_HOST == local ]]; then export TP_DOCKER_VM_IP=$VM_IP; else unset TP_DOCKER_VM_IP; fi
+# parse_ports <first-last> : sets DV_PORT_FIRST and DV_PORT_LAST; returns 2 with a
+# message unless it is two decimal ports in 1024-65535 with first <= last.
+parse_ports() {
+    local r=${1:-}
+    if ! [[ $r =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]]; then
+        echo "TP_DOCKER_VM_PORTS='$r' is not first-last (for example 42201-42208)" >&2; return 2
+    fi
+    DV_PORT_FIRST=$((10#${BASH_REMATCH[1]})) DV_PORT_LAST=$((10#${BASH_REMATCH[2]}))
+    if (( DV_PORT_FIRST < 1024 || DV_PORT_LAST > 65535 || DV_PORT_FIRST > DV_PORT_LAST )); then
+        echo "TP_DOCKER_VM_PORTS=$r: ports must be in 1024-65535 and first <= last" >&2; return 2
+    fi
+    DV_PORT_RANGE=$DV_PORT_FIRST-$DV_PORT_LAST
+}
+
+# export_endpoint : the contract the tests that reach a container's published port
+# read. Needs parse_ports, TP_VM_HOST and (local) VM_IP. Sets DV_FWD_PORTS, the ports
+# the tunnel forwards.
+#   TP_DOCKER_VM_PUBLISH  the address in the VM a container publishes on
+#   TP_DOCKER_VM_ADDR     the address this machine connects to
+#   TP_DOCKER_VM_PORTS    first-last; every port has the same number at both ends
+# A remote guest's 192.168.122.x is not routable from here (this machine's own
+# virbr0 is the same network), so there both are 127.0.0.1 and the tunnel forwards
+# each port. Local: both are the VM's address, no forwards, and TP_DOCKER_VM_IP
+# is still exported.
+export_endpoint() {
+    DV_FWD_PORTS=()
+    export TP_DOCKER_VM_PORTS=$DV_PORT_RANGE
+    if [[ $TP_VM_HOST == local ]]; then
+        export TP_DOCKER_VM_PUBLISH=$VM_IP TP_DOCKER_VM_ADDR=$VM_IP TP_DOCKER_VM_IP=$VM_IP
+    else
+        unset TP_DOCKER_VM_IP
+        export TP_DOCKER_VM_PUBLISH=127.0.0.1 TP_DOCKER_VM_ADDR=127.0.0.1
+        local p
+        for ((p = DV_PORT_FIRST; p <= DV_PORT_LAST; p++)); do DV_FWD_PORTS+=("$p"); done
+    fi
 }
 
 self_test() {
@@ -108,14 +146,48 @@ self_test() {
     [[ $got == "docker-vm: vmtool list on veritech04.labtwo shows no tp-* VM" ]] && echo "ok   end line names the host" || { echo "FAIL end line: '$got'"; fails=1; }
     got=$(TP_VM_HOST=local no_tp_line)
     [[ $got == "docker-vm: vmtool list shows no tp-* VM" ]] && echo "ok   end line, local, unchanged" || { echo "FAIL local end line: '$got'"; fails=1; }
-    # TP_DOCKER_VM_IP: the guest's address is routable from here only for a local VM host
-    got=$(export TP_DOCKER_VM_IP=9.9.9.9; TP_VM_HOST=veritech04.labtwo VM_IP=192.168.122.50; export_vm_ip; echo "${TP_DOCKER_VM_IP-unset}")
-    [[ $got == unset ]] && echo "ok   remote host: TP_DOCKER_VM_IP is not exported" || { echo "FAIL remote TP_DOCKER_VM_IP: '$got'"; fails=1; }
-    got=$(TP_VM_HOST=local VM_IP=192.168.122.50; export_vm_ip; echo "${TP_DOCKER_VM_IP-unset}")
-    [[ $got == 192.168.122.50 ]] && echo "ok   local: TP_DOCKER_VM_IP is the VM's address" || { echo "FAIL local TP_DOCKER_VM_IP: '$got'"; fails=1; }
+    # the endpoint contract: PUBLISH (in the VM), ADDR (here), PORTS, and the forwards
+    ep() { # host range : prints "PUBLISH ADDR PORTS IP", then the tunnel argv
+        ( export TP_DOCKER_VM_IP=9.9.9.9
+          TP_VM_HOST=$1 VM_IP=192.168.122.50 VM_DEST=bot@192.168.122.50 VM_SSH_OPTS=(-i /k -o "ProxyJump=$1")
+          parse_ports "$2" || exit 2
+          export_endpoint
+          vm_tunnel_argv /s.sock "${DV_FWD_PORTS[@]}"
+          echo "$TP_DOCKER_VM_PUBLISH $TP_DOCKER_VM_ADDR $TP_DOCKER_VM_PORTS ${TP_DOCKER_VM_IP-unset}"
+          echo "${VM_TUNNEL_ARGV[*]}" )
+    }
+    local today='ssh -i /k -o ProxyJump=H -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o StreamLocalBindUnlink=yes -N -L /s.sock:/var/run/docker.sock bot@192.168.122.50'
+    local fw='' p
+    for p in 42201 42202 42203 42204 42205 42206 42207 42208; do fw+=" -L 127.0.0.1:$p:127.0.0.1:$p"; done
+    got=$(ep veritech04.labtwo 42201-42208)
+    [[ $(sed -n 1p <<<"$got") == "127.0.0.1 127.0.0.1 42201-42208 unset" ]] \
+        && echo "ok   remote host: PUBLISH=ADDR=127.0.0.1, PORTS=42201-42208, TP_DOCKER_VM_IP unset" || { echo "FAIL remote endpoint: '$got'"; fails=1; }
+    want=${today/H/veritech04.labtwo}
+    want=${want/ bot@/$fw bot@}
+    [[ $(sed -n 2p <<<"$got") == "$want" ]] && echo "ok   remote host: one -L 127.0.0.1:P:127.0.0.1:P per port after the socket forward, ProxyJump kept" || { echo "FAIL remote tunnel argv: '$(sed -n 2p <<<"$got")'"; fails=1; }
+    got=$(ep local 42201-42208)
+    [[ $(sed -n 1p <<<"$got") == "192.168.122.50 192.168.122.50 42201-42208 192.168.122.50" ]] \
+        && echo "ok   local: PUBLISH=ADDR=TP_DOCKER_VM_IP=the VM's address" || { echo "FAIL local endpoint: '$got'"; fails=1; }
+    [[ $(sed -n 2p <<<"$got") == "${today/H/local}" ]] && echo "ok   local: the tunnel argv is today's, no forwards" || { echo "FAIL local tunnel argv: '$(sed -n 2p <<<"$got")'"; fails=1; }
+    got=$(ep veritech04.labtwo 42210-42210 | sed -n 1p)
+    [[ $got == "127.0.0.1 127.0.0.1 42210-42210 unset" ]] && echo "ok   an override range is exported as given" || { echo "FAIL override: '$got'"; fails=1; }
+    local r
+    for r in 1023-1030 42201-65536 42208-42201 42201 a-b 42201-42208-1 ""; do
+        rc=0; (parse_ports "$r") >/dev/null 2>&1 || rc=$?
+        [[ $rc -eq 2 ]] && echo "ok   range '$r' is a usage error (exit 2)" || { echo "FAIL range '$r': exit $rc"; fails=1; }
+    done
+    rc=0; (parse_ports 1024-65535) >/dev/null 2>&1 || rc=$?
+    [[ $rc -eq 0 ]] && echo "ok   range 1024-65535 is accepted" || { echo "FAIL range 1024-65535: exit $rc"; fails=1; }
     # the socket forward is built by vm.sh on VM_SSH_OPTS; no ssh of its own here
     if grep -q 'vm_tunnel_argv "\$sock"' "${BASH_SOURCE[0]}" && ! grep -qE '^ssh -i|VM_KNOWN_'"HOSTS" "${BASH_SOURCE[0]}"; then echo "ok   the tunnel uses vm_tunnel_argv (VM_SSH_OPTS)"
     else echo "FAIL the tunnel does not use vm_tunnel_argv"; fails=1; fi
+    # the port forwards exist only once export_endpoint has set DV_FWD_PORTS, so the
+    # run calls it before it builds the tunnel argv (T97l's first live run had no -L)
+    local ln_ep ln_tun
+    ln_ep=$(grep -n '^export_endpoint$' "${BASH_SOURCE[0]}" | head -1 | cut -d: -f1)
+    ln_tun=$(grep -n '^vm_tunnel_argv "\$sock" "\${DV_FWD_PORTS\[@\]}"$' "${BASH_SOURCE[0]}" | head -1 | cut -d: -f1)
+    if [[ -n $ln_ep && -n $ln_tun && $ln_ep -lt $ln_tun ]]; then echo "ok   export_endpoint runs before the tunnel argv is built (the -L list is in it)"
+    else echo "FAIL export_endpoint (line ${ln_ep:-none}) must run before vm_tunnel_argv (line ${ln_tun:-none})"; fails=1; fi
     # vm-host.sh check runs before any VM is named, created or recorded; when it fails the exit is 2
     local d before after
     d=$(mktemp -d); mkdir -p "$d/bin"
@@ -128,12 +200,19 @@ self_test() {
     if [[ $rc -eq 2 && $before -eq $after ]] && ! tr '\036\037' '\n ' <"$d/log" | grep -qE 'vmtool (create|delete|playbook)' && grep -q 'vm-host.sh check failed' "$d/o"; then
         echo "ok   a failing vm-host.sh check: exit 2, no VM created, no output dir"
     else echo "FAIL failing vm-host check: exit $rc, dirs $before -> $after"; sed 's/^/     | /' "$d/o" | tail -8; fails=1; fi
+    # a bad port range is refused (exit 2) before the VM host is even asked
+    : >"$d/log"
+    rc=0; STUB_LOG=$d/log PATH="$d/bin:$PATH" TP_VM_HOST=h.test TP_DOCKER_VM_PORTS=900-950 bash "${BASH_SOURCE[0]}" run -- true >"$d/o" 2>&1 || rc=$?
+    if [[ $rc -eq 2 && ! -s $d/log ]] && grep -q 'TP_DOCKER_VM_PORTS' "$d/o"; then echo "ok   a bad TP_DOCKER_VM_PORTS: exit 2 before any ssh"
+    else echo "FAIL bad TP_DOCKER_VM_PORTS: exit $rc"; sed 's/^/     | /' "$d/o" | tail -5; fails=1; fi
     rm -rf "$d"
     return $fails
 }
 
 if [[ ${1:-} == --self-test ]]; then self_test; exit $?; fi
 parse_args "$@" || exit 2
+# the forwarded port range: checked before the VM host is asked, a VM is named or made
+parse_ports "${TP_DOCKER_VM_PORTS:-42201-42208}" || exit 2
 
 command -v docker >/dev/null || die "no docker client on this machine"
 command -v ssh >/dev/null || die "no ssh client on this machine"
@@ -194,12 +273,13 @@ sshv "sudo -n usermod -aG docker bot && printf '{\"labels\": [\"tp-docker-vm=%s\
 echo "VM daemon: $(tail -1 "$out/docker-config.log")"
 
 echo "=== forwarding $name:/var/run/docker.sock to $sock ==="
-vm_tunnel_argv "$sock"
+# the endpoint first: it sets DV_FWD_PORTS, the ports the tunnel forwards
+export_endpoint
+vm_tunnel_argv "$sock" "${DV_FWD_PORTS[@]}"
 "${VM_TUNNEL_ARGV[@]}" >"$out/tunnel.log" 2>&1 &
 tunnel_pid=$!
 
 export DOCKER_HOST=unix://$sock TP_DOCKER_VM=$name BUILDX_BUILDER=default
-export_vm_ip
 unset DOCKER_CONTEXT
 deadline=$((SECONDS + 60))
 until [[ -S $sock ]] && docker info --format '{{json .Labels}}' 2>/dev/null | grep -qF "\"tp-docker-vm=$name\""; do
@@ -208,6 +288,8 @@ until [[ -S $sock ]] && docker info --format '{{json .Labels}}' 2>/dev/null | gr
     sleep 1
 done
 echo "DOCKER_HOST=$DOCKER_HOST TP_DOCKER_VM=$TP_DOCKER_VM TP_DOCKER_VM_IP=${TP_DOCKER_VM_IP:-(not set: VM host is $TP_VM_HOST)}"
+echo "TP_DOCKER_VM_PUBLISH=$TP_DOCKER_VM_PUBLISH TP_DOCKER_VM_ADDR=$TP_DOCKER_VM_ADDR TP_DOCKER_VM_PORTS=$TP_DOCKER_VM_PORTS"
+echo "tunnel: ${VM_TUNNEL_ARGV[*]}"
 # where builds go: the default builder must be the VM's daemon behind the socket
 docker buildx inspect default 2>&1 | grep -E '^(Name|Driver|Endpoint|Status|BuildKit version):|^ *(Endpoint|Status|BuildKit version):' | sed 's/^/buildx: /' || true
 bash "$ROOT/scripts/lib/docker-guard.sh" || die "the guard refused the VM's own daemon"

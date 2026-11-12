@@ -301,12 +301,18 @@ vm_end() {
 # accept-new into the run's known_hosts, and on a remote host ProxyJump).
 sshv() { ssh -T "${VM_SSH_OPTS[@]}" "$VM_DEST" "$@"; }
 
-# vm_tunnel_argv <sock> : sets VM_TUNNEL_ARGV, the ssh that forwards the current
-# VM's docker socket to <sock>. Built on VM_SSH_OPTS, so its key and ProxyJump
-# are sshv's.
+# vm_tunnel_argv <sock> [port...] : sets VM_TUNNEL_ARGV, the ssh that forwards the
+# current VM's docker socket to <sock>. Built on VM_SSH_OPTS, so its key and
+# ProxyJump are sshv's. Each <port> adds `-L 127.0.0.1:P:127.0.0.1:P` (after the
+# socket forward): a TCP port a container publishes on the guest's loopback is
+# reachable here on 127.0.0.1 with the same number. With only <sock> the argv is
+# the socket forward alone.
 vm_tunnel_argv() {
+    local sock=$1 p fwd=()
+    shift
+    for p in "$@"; do fwd+=(-L "127.0.0.1:$p:127.0.0.1:$p"); done
     VM_TUNNEL_ARGV=(ssh "${VM_SSH_OPTS[@]}" -o ExitOnForwardFailure=yes -o ServerAliveInterval=30
-        -o StreamLocalBindUnlink=yes -N -L "$1:/var/run/docker.sock" "$VM_DEST")
+        -o StreamLocalBindUnlink=yes -N -L "$sock:/var/run/docker.sock" "${fwd[@]}" "$VM_DEST")
 }
 
 # vm_state <image-state.sh> [--versions] : scripts/image-state.sh on the current
