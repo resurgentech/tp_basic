@@ -8,13 +8,18 @@
 # create.log, "ansible-" for ansible-create.log) as arguments; nothing is
 # matched by pattern, and only names passed to vm_record are ever deleted.
 #
-# The SSH key is used in place from vmtool's .machines/<name>/ directory and
-# never copied or printed.
+# Local (TP_VM_HOST=local): the SSH key is used in place from vmtool's
+# .machines/<name>/ directory and never copied or printed.
+# Remote: vmtool runs on TP_VM_HOST, its key never leaves that host, and the
+# guest is reached from here with `-o ProxyJump=$TP_VM_HOST` and a per-run key
+# (see vm_up). Every remote command is ONE ssh argument, `bash -c <script>` with
+# the script quoted by printf %q: the host's login shell may be zsh, which
+# splits and expands the string before bash sees it (the scheme of
+# scripts/vm-host.sh).
 
 VMTOOL_DIR=${VMTOOL_DIR:-$HOME/repos/jaredeh/vmtool}
 # Where the tp-* VMs are created (environment overrides; no .env file). The one
-# place the VM host is named. Until T97i every function below still runs vmtool
-# locally; scripts/vm-host.sh already reads these settings.
+# place the VM host is named. scripts/vm-host.sh reads the same settings.
 #   TP_VM_HOST      ssh destination of the VM host; `local` is this workstation
 #                   (VMTOOL_DIR/vmtool, as before)
 #   TP_VM_HOST_DIR  vmtool's directory on the VM host, relative to its home
@@ -24,6 +29,12 @@ TP_VM_HOST=${TP_VM_HOST:-veritech04.labtwo}
 TP_VM_HOST_DIR=${TP_VM_HOST_DIR:-tp-vmtool}
 if [[ $TP_VM_HOST == local ]]; then TP_VM_POOL=${TP_VM_POOL:-}; else TP_VM_POOL=${TP_VM_POOL:-tp}; fi
 VM_RECORDED=()
+# The run's scratch dir (the per-run key lives there): made by vm_up on a remote
+# host, removed by vm_cleanup, which every caller's exit trap runs.
+VM_SCRATCH=
+# The ssh options for the guest: the ONE definition, used by sshv and by the
+# docker socket forward (vm_tunnel_argv). Set by vm_set_ssh_opts.
+VM_SSH_OPTS=()
 # Every tp-* VM gets 1 GiB ("no reason to have them use more than 1GB of RAM
 # each"); vm_up refuses any other size. Swap is a file enabled with swapon only.
 VM_MEMORY_GIB=1
@@ -36,17 +47,82 @@ VM_STEP=
 
 vm_warn() { echo "${VM_TAG:-vm}: $*" >&2; }
 
-# vmtool <args>... : vmtool's CLI, run from its own directory.
-vmtool() { (cd "$VMTOOL_DIR" && ./vmtool "$@"); }
+# vm_is_local : true when the VM host is this workstation.
+vm_is_local() { [[ $TP_VM_HOST == local ]]; }
+# vm_rcmd_string <script> : the one string ssh sends: `bash -c <script>`, the
+# script quoted by printf %q (means the same to zsh and bash).
+vm_rcmd_string() { printf 'bash -c %q' "$1"; }
+# vm_rs <script> : run the script on the VM host; stdin is the caller's.
+vm_rs() { ssh -o BatchMode=yes "$TP_VM_HOST" "$(vm_rcmd_string "$1")"; }
+# vmtool <args>... : vmtool's CLI. Local: from VMTOOL_DIR. Remote: ./vmtool in
+# ~/$TP_VM_HOST_DIR on the VM host, every argument quoted, stdin /dev/null.
+vmtool() {
+    if vm_is_local; then (cd "$VMTOOL_DIR" && ./vmtool "$@"); return; fi
+    local s='cd "$HOME/'$TP_VM_HOST_DIR'" && ./vmtool' a
+    for a in "$@"; do s+=$(printf ' %q' "$a"); done
+    vm_rs "$s" </dev/null
+}
 # vm_ip <name> : the IP column of the list row whose NAME is exactly <name>.
 vm_ip() { vmtool list | awk -v n="$1" 'NR > 1 && $1 == n { print $NF }'; }
 # vm_listed <name> : true when `vmtool list` has a row whose NAME is exactly <name>.
 vm_listed() { vmtool list | awk -v n="$1" 'NR > 1 && $1 == n { f = 1 } END { exit !f }'; }
-# vm_key <name> : the path of the key vmtool's setup_bot.yml wrote for bot.
+# vm_key <name> : (local) the path of the key vmtool's setup_bot.yml wrote for bot.
 vm_key() { echo "$VMTOOL_DIR/.machines/$1/id_ed25519"; }
+# vm_name_ok <name> : true for tp- followed by lowercase letters, digits and -.
+vm_name_ok() { [[ $1 =~ ^tp-[a-z0-9-]+$ ]]; }
+# vm_require_name <name> : any other name dies (the caller's die(): message,
+# exit 2) before any vmtool call. No vt-* or default VM is ever named.
+vm_require_name() { vm_name_ok "$1" || die "refusing VM name '$1': only tp-[a-z0-9-]+ names are used (vt-* and every other VM are not ours)"; }
+# vm_where : " on <host>" for a remote host, nothing for local.
+vm_where() { vm_is_local || printf ' on %s' "$TP_VM_HOST"; }
+# vm_delete_cmd <name> : the command that deletes <name> by hand.
+vm_delete_cmd() {
+    if vm_is_local; then echo "cd $VMTOOL_DIR && ./vmtool delete $1"
+    else echo "ssh $TP_VM_HOST 'cd ~/$TP_VM_HOST_DIR && ./vmtool delete $1'"; fi
+}
+# vm_set_ssh_opts : (re)build VM_SSH_OPTS from VM_KEY and VM_KNOWN_HOSTS. A remote
+# host adds ProxyJump: the guest's 192.168.122.x is reached only through it.
+vm_set_ssh_opts() {
+    VM_SSH_OPTS=(-i "$VM_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10
+        -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$VM_KNOWN_HOSTS")
+    vm_is_local || VM_SSH_OPTS+=(-o "ProxyJump=$TP_VM_HOST")
+}
+# vm_scratch_rm : remove the run's scratch dir, and the run key in it.
+vm_scratch_rm() {
+    if [[ -n $VM_SCRATCH && -d $VM_SCRATCH ]]; then rm -rf -- "$VM_SCRATCH"; fi
+    VM_SCRATCH=
+}
 
 # vm_record <name> : remember <name> as created by this run, before creating it.
-vm_record() { VM_RECORDED+=("$1"); }
+# A name that is not tp-[a-z0-9-]+ dies (exit 2), so nothing else is ever deleted.
+vm_record() { vm_require_name "$1"; VM_RECORDED+=("$1"); }
+
+# vm_probe_ssh <ip> : true when tcp/22 of <ip> answers within 5 s. Remote: probed
+# from the VM host, the guest's address is not routable from here.
+vm_probe_ssh() {
+    if vm_is_local; then timeout 5 bash -c "exec 3<>/dev/tcp/$1/22" 2>/dev/null
+    else vm_rs "timeout 5 bash -c 'exec 3<>/dev/tcp/$1/22'" </dev/null >/dev/null 2>&1; fi
+}
+
+# vm_run_key <name> <ip> : (remote) make the per-run key and install its public
+# half for bot. This lib owns the scratch dir (VM_SCRATCH: mktemp -d under
+# XDG_RUNTIME_DIR, mode 0700; the key 0600) and vm_cleanup removes it. The install
+# is an ssh ON the VM host: bot@<ip> with vmtool's key in place, the .pub on
+# stdin, appended to bot's authorized_keys. No known_hosts file is written
+# there (UserKnownHostsFile=/dev/null), so nothing lands in .machines or
+# anywhere else on the host. Sets VM_KEY.
+vm_run_key() {
+    local name=$1 ip=$2 s
+    [[ -n $VM_SCRATCH && -d $VM_SCRATCH ]] || VM_SCRATCH=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/tp-vm.XXXXXX") || die "mktemp -d failed"
+    VM_KEY=$VM_SCRATCH/id_$name
+    rm -f "$VM_KEY" "$VM_KEY.pub"
+    ssh-keygen -q -t ed25519 -N '' -C "tp-run-$name" -f "$VM_KEY" || die "ssh-keygen failed"
+    chmod 600 "$VM_KEY"
+    s='ssh -i "$HOME/'$TP_VM_HOST_DIR'/.machines/'$name'/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10'
+    s+=' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR bot@'$ip
+    s+=" 'umask 077; mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'"
+    vm_rs "$s" <"$VM_KEY.pub" || die "installing the run key for bot@$ip through $TP_VM_HOST failed"
+}
 
 # vm_up <name> <out dir> <log prefix> [<memory GiB>] [<disk GB>] : create the VM
 # (ubuntu2404.qcow2; memory 1 GiB, the only size allowed: any other value is a
@@ -56,20 +132,31 @@ vm_record() { VM_RECORDED+=("$1"); }
 # (/tp-swap, `swapon` only: no /etc/fstab line, so nothing a playbook or the
 # state capture sees changes, and a reboot drops it) and start a vmstat
 # sampler for vm_mem_report. Logs go to <out>/<prefix>{create,onboard,wait,
-# prep,swap}.log. Sets VM_IP, VM_KEY, VM_DEST and VM_KNOWN_HOSTS
-# (<out>/known_hosts) for sshv. The name must be recorded first.
+# prep,swap}.log. Sets VM_IP, VM_KEY, VM_DEST, VM_KNOWN_HOSTS (<out>/known_hosts)
+# and VM_SSH_OPTS for sshv. The name must be recorded first.
+#
+# On a remote host: create has `--pool $TP_VM_POOL` and create.log starts with a
+# line naming the host; the tcp/22 wait is probed from the VM host; vmtool
+# onboards bot there (its key stays in ~/$TP_VM_HOST_DIR/.machines/<name>/);
+# then vm_run_key makes the per-run key (VM_KEY) and installs its public half.
+# Nothing is read back from .machines.
 vm_up() {
     local name=$1 out=$2 p=$3 mem=${4:-$VM_MEMORY_GIB} disk=${5:-} crc=0 deadline ready grow_late=0
     [[ $mem == "$VM_MEMORY_GIB" ]] || die "vm_up: $mem GiB asked for $name; every tp-* VM gets $VM_MEMORY_GIB GiB (swap is allowed, more memory is not)"
     [[ -n $disk ]] || disk=$((VM_IMAGE_DISK_GB + VM_SWAP_GIB))
+    vm_require_name "$name"
     local size=(--memory "$mem" --disk-size "$disk")
+    [[ -z $TP_VM_POOL ]] || size+=(--pool "$TP_VM_POOL")
     VM_STEP="creating $name"
-    echo "=== creating VM $name (ubuntu2404.qcow2, $mem GiB${disk:+, $disk GB disk}) ==="
-    vmtool create "$name" ubuntu2404.qcow2 "${size[@]}" >"$out/${p}create.log" 2>&1 || crc=$?
+    echo "=== creating VM $name$(vm_where) (ubuntu2404.qcow2, $mem GiB${disk:+, $disk GB disk}) ==="
+    {
+        vm_is_local || echo "# vmtool create $name on $TP_VM_HOST (~/$TP_VM_HOST_DIR, pool ${TP_VM_POOL:-default})"
+        vmtool create "$name" ubuntu2404.qcow2 "${size[@]}"
+    } >"$out/${p}create.log" 2>&1 || crc=$?
     if grep -q 'timed out waiting for IP' "$out/${p}create.log"; then
         tail -5 "$out/${p}create.log"
         vm_warn "the VM got no IP. This is a host environment problem, not a telepatch failure:"
-        vm_warn "see $VMTOOL_DIR/README.md, \"Troubleshooting\" > \"A new VM never gets an IP\"."
+        vm_warn "see $VMTOOL_DIR/README.md$(vm_where), \"Troubleshooting\" > \"A new VM never gets an IP\"."
         exit 2
     fi
     # With --disk-size, vmtool resizes the image, boots, and then grows the root
@@ -93,16 +180,24 @@ vm_up() {
     # races sshd's start (observed: "Connection refused").
     echo "=== waiting for sshd on $VM_IP, then onboarding bot (setup_bot.yml) ==="
     deadline=$((SECONDS + 300))
-    until timeout 5 bash -c "exec 3<>/dev/tcp/$VM_IP/22" 2>/dev/null; do
+    until vm_probe_ssh "$VM_IP"; do
         [[ $SECONDS -lt $deadline ]] || die "sshd on $name ($VM_IP) did not answer within 5 min"
         sleep 3
     done
     vmtool playbook "$name" setup_bot.yml >"$out/${p}onboard.log" 2>&1 \
         || { grep -E 'fatal|ERROR|RECAP' "$out/${p}onboard.log" | tail -5; die "vmtool playbook $name setup_bot.yml failed (log: $out/${p}onboard.log)"; }
-    VM_KEY=$(vm_key "$name")
-    [[ -f $VM_KEY ]] || die "no key at $VM_KEY"
     VM_DEST=bot@$VM_IP
     VM_KNOWN_HOSTS=$out/known_hosts
+    if vm_is_local; then
+        VM_KEY=$(vm_key "$name")
+        [[ -f $VM_KEY ]] || die "no key at $VM_KEY"
+        vm_set_ssh_opts
+    else
+        vm_run_key "$name" "$VM_IP"
+        vm_set_ssh_opts
+        sshv true >>"$out/${p}onboard.log" 2>&1 \
+            || { tail -5 "$out/${p}onboard.log"; die "the run key was not accepted by $VM_DEST through $TP_VM_HOST (log: $out/${p}onboard.log)"; }
+    fi
     # A later VM of the same run may get an earlier one's IP from DHCP; forget
     # that host key so accept-new takes the new VM's.
     if [[ -f $VM_KNOWN_HOSTS ]]; then ssh-keygen -q -R "$VM_IP" -f "$VM_KNOWN_HOSTS" >/dev/null 2>&1 || true; fi
@@ -202,11 +297,16 @@ vm_end() {
     return "$rc"
 }
 
-# sshv <remote command> : ssh to the current VM as bot, key in place, accept-new
-# into the run's known_hosts.
-sshv() {
-    ssh -T -i "$VM_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
-        -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$VM_KNOWN_HOSTS" "$VM_DEST" "$@"
+# sshv <remote command> : ssh to the current VM as bot with VM_SSH_OPTS (the key,
+# accept-new into the run's known_hosts, and on a remote host ProxyJump).
+sshv() { ssh -T "${VM_SSH_OPTS[@]}" "$VM_DEST" "$@"; }
+
+# vm_tunnel_argv <sock> : sets VM_TUNNEL_ARGV, the ssh that forwards the current
+# VM's docker socket to <sock>. Built on VM_SSH_OPTS, so its key and ProxyJump
+# are sshv's.
+vm_tunnel_argv() {
+    VM_TUNNEL_ARGV=(ssh "${VM_SSH_OPTS[@]}" -o ExitOnForwardFailure=yes -o ServerAliveInterval=30
+        -o StreamLocalBindUnlink=yes -N -L "$1:/var/run/docker.sock" "$VM_DEST")
 }
 
 # vm_state <image-state.sh> [--versions] : scripts/image-state.sh on the current
@@ -216,32 +316,55 @@ vm_state() {
     sshv "sudo -n sh -s -- $*" <"$script"
 }
 
-# vm_delete <name> : delete <name> if listed, then check it is gone. Returns 1
-# (with a warning) when `vmtool list` still shows it.
+# vm_delete <name> : delete <name> if listed, then check it is gone: `vmtool list`
+# on the host no longer has it and, on a remote host, ~/$TP_VM_HOST_DIR/.machines/
+# <name> is gone (a `test -e`; nothing is read). Returns 1 (with a warning) when it
+# is not. When the VM host cannot be reached (ssh exit 255) it returns 1 and
+# prints the exact command to delete by hand. A name that is not tp-[a-z0-9-]+
+# dies (exit 2) before any vmtool call.
 vm_delete() {
-    local name=$1
-    if vm_listed "$name"; then
-        echo "=== deleting VM $name ==="
-        vmtool delete "$name" || vm_warn "WARNING: vmtool delete $name failed"
+    local name=$1 rows rc=0 n
+    vm_require_name "$name"
+    unreachable() { vm_warn "WARNING: $TP_VM_HOST cannot be reached; delete $name by hand: $(vm_delete_cmd "$name")"; }
+    rows=$(vmtool list) || rc=$?
+    if [[ $rc -eq 255 ]] && ! vm_is_local; then unreachable; return 1; fi
+    n=$(awk -v n="$name" 'NR > 1 && $1 == n { c++ } END { print c + 0 }' <<<"$rows")
+    if [[ $n -gt 0 ]]; then
+        echo "=== deleting VM $name$(vm_where) ==="
+        rc=0; vmtool delete "$name" || rc=$?
+        if [[ $rc -eq 255 ]] && ! vm_is_local; then unreachable; return 1; fi
+        [[ $rc -eq 0 ]] || vm_warn "WARNING: vmtool delete $name failed"
     fi
-    if vm_listed "$name"; then
-        vm_warn "WARNING: VM $name is still listed by 'vmtool list' after the delete"
+    rc=0; rows=$(vmtool list) || rc=$?
+    if [[ $rc -eq 255 ]] && ! vm_is_local; then unreachable; return 1; fi
+    n=$(awk -v n="$name" 'NR > 1 && $1 == n { c++ } END { print c + 0 }' <<<"$rows")
+    if [[ $n -gt 0 ]]; then
+        vm_warn "WARNING: VM $name is still listed by 'vmtool list'$(vm_where) after the delete"
         return 1
     fi
-    echo "VM $name deleted (not in 'vmtool list')"
+    if vm_is_local; then echo "VM $name deleted (not in 'vmtool list')"; return 0; fi
+    rc=0; vm_rs "test -e \"\$HOME/$TP_VM_HOST_DIR/.machines/$name\"" </dev/null || rc=$?
+    case $rc in
+        1) ;;
+        255) unreachable; return 1 ;;
+        *) vm_warn "WARNING: ~/$TP_VM_HOST_DIR/.machines/$name still exists on $TP_VM_HOST after the delete"; return 1 ;;
+    esac
+    echo "VM $name deleted (not in 'vmtool list' on $TP_VM_HOST, no .machines/$name)"
 }
 
 # vm_cleanup <keep> : for every recorded name, print the delete command when
-# <keep> is 1; else delete it (if still listed) and check it is gone. Returns 1
-# when one remains.
+# <keep> is 1; else delete it (if still listed) and check it is gone. Always
+# removes the run's scratch dir (the run key) last. Returns 1 when a VM remains.
 vm_cleanup() {
     local keep=$1 n rc=0
     for n in "${VM_RECORDED[@]}"; do
         if [[ $keep -eq 1 ]]; then
-            echo "--keep: VM $n left running (delete with: cd $VMTOOL_DIR && ./vmtool delete $n)"
+            if vm_is_local; then echo "--keep: VM $n left running (delete with: $(vm_delete_cmd "$n"))"
+            else echo "--keep: VM $n left running on $TP_VM_HOST (delete with: $(vm_delete_cmd "$n"))"; fi
         else
             vm_delete "$n" || rc=1
         fi
     done
+    vm_scratch_rm
     return $rc
 }

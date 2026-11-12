@@ -398,6 +398,175 @@ vm_lib_self_test() {
     rm -rf "$t"
     return $fails
 }
+# vm_host_self_test : scripts/lib/vm.sh on a remote VM host and on `local`, with
+# stub ssh, timeout and vmtool on PATH that record argv (no network, no VM). Each
+# call is written as its arguments joined by US (0x1f) and ended by RS (0x1e).
+vm_host_self_test() {
+    local d fails=0 rc n got want key mem1=1
+    d=$(mktemp -d)
+    mkdir -p "$d/bin" "$d/vt/.machines/tp-x" "$d/out" "$d/run"
+    : >"$d/vt/.machines/tp-x/id_ed25519"
+    cat >"$d/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+{ printf '%s\x1f' "$@"; printf '\x1e'; } >>"$STUB_LOG"
+last=${!#} script=$last
+if [[ $last == 'bash -c '* ]]; then eval "set -- $last"; script=$3; fi
+case $script in
+    *'./vmtool list'*) cat "$STUB_LIST"; exit "${STUB_LIST_RC:-0}" ;;
+    *'./vmtool delete'*) sed -i "/^${script##* } /d" "$STUB_LIST"; exit 0 ;;
+    'test -e'*) exit "${STUB_TEST_RC:-1}" ;;
+    *authorized_keys*) cat >"$STUB_LOG.stdin"; exit 0 ;;
+    *swapon*) echo '/tp-swap file 4G'; exit 0 ;;
+esac
+exit 0
+EOF
+    printf '#!/usr/bin/env bash\necho "timeout $*" >>"$STUB_LOG.local"\nexit 0\n' >"$d/bin/timeout"
+    cat >"$d/vt/vmtool" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$STUB_LOG.vmtool"
+case $1 in
+    list) cat "$STUB_LIST" ;;
+    delete) sed -i "/^$2 /d" "$STUB_LIST" ;;
+esac
+exit 0
+EOF
+    chmod +x "$d/bin/ssh" "$d/bin/timeout" "$d/vt/vmtool"
+    local list=$'NAME STATE IP\ntp-x running 192.168.122.50'
+    reset() { : >"$d/log"; rm -f "$d/log.stdin" "$d/log.local" "$d/log.vmtool"; printf '%s\n' "$list" >"$d/list"; rm -rf "$d/out"; mkdir -p "$d/out"; }
+    # decode <log> : one line per call. A remote call is `REMOTE <ssh options> | <script>`, the script as bash
+    # gets it after the login shell's word splitting (eval of the one argument); anything else is `RAW <args>`.
+    decode() {
+        local rec f last
+        while IFS= read -r -d $'\x1e' rec; do
+            mapfile -d $'\x1f' -t f < <(printf '%s' "$rec")
+            last=${f[-1]}
+            if [[ $last == 'bash -c '* ]]; then
+                (eval "set -- $last"; if [[ $# -eq 3 && $1 == bash && $2 == -c ]]; then printf 'REMOTE %s | %s\n' "${f[*]:0:${#f[@]}-1}" "$3"; else printf 'BADQUOTE %s\n' "$last"; fi)
+            else printf 'RAW %s\n' "${f[*]}"; fi
+        done <"$1"
+    }
+    chk() { # name rc detail...
+        local name=$1 ok=$2; shift 2
+        if [[ $ok -eq 0 ]]; then echo "ok   $name"; else echo "FAIL $name"; printf '     | %s\n' "$@"; fails=1; fi
+    }
+    # run <host> <pool> <keep> : record, vm_up, tunnel, cleanup, in a subshell; facts into $d/facts
+    run() {
+        reset
+        : >"$d/facts"
+        (
+            export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list XDG_RUNTIME_DIR=$d/run VMTOOL_DIR=$d/vt
+            TP_VM_HOST=$1 TP_VM_POOL=$2 TP_VM_HOST_DIR=tp-vmtool
+            vm_record tp-x
+            vm_up tp-x "$d/out" "" >"$d/up.out" 2>&1
+            { echo "key=$VM_KEY"; echo "mode=$(stat -c %a "$VM_KEY" 2>/dev/null)"; echo "scratch=$VM_SCRATCH"
+              if [[ -n $VM_SCRATCH ]]; then if cmp -s "$VM_KEY.pub" "$d/log.stdin"; then echo stdin=pub; else echo stdin=other; fi; fi
+              printf 'opts=%s\n' "${VM_SSH_OPTS[*]}"; } >>"$d/facts"
+            sshv 'echo hi' >/dev/null
+            vm_tunnel_argv "$d/s.sock"; echo "tunnel=${VM_TUNNEL_ARGV[*]}" >>"$d/facts"
+            vm_cleanup "$3" >"$d/cleanup.out" 2>&1 || echo "cleanup-rc=$?" >>"$d/facts"
+        ) 2>"$d/up.err" || echo "run-rc=$?" >>"$d/facts"
+        decode "$d/log" >"$d/dec"
+    }
+
+    # ---- remote ----
+    run veritech04.labtwo tp 0
+    key=$(sed -n 's/^key=//p' "$d/facts")
+    local O='-o BatchMode=yes veritech04.labtwo | '
+    local H='cd "$HOME/tp-vmtool" && ./vmtool'
+    want="REMOTE ${O}$H create tp-x ubuntu2404.qcow2 --memory $mem1 --disk-size 14 --pool tp"
+    grep -qxF "$want" "$d/dec"; chk "remote create: 1 GiB, --disk-size 14, --pool tp, one bash -c argument" $? "$(cat "$d/dec" "$d/up.err" "$d/up.out" 2>&1 | head -20)"
+    ! grep -q '^BADQUOTE' "$d/dec"; chk "remote: every command decodes (eval of the word list) to bash -c <script>" $?
+    grep -qxF "REMOTE ${O}timeout 5 bash -c 'exec 3<>/dev/tcp/192.168.122.50/22'" "$d/dec"; chk "remote: tcp/22 probed from the VM host" $? "$(cat "$d/dec")"
+    [[ ! -e $d/log.local ]]; chk "remote: no probe from this machine" $?
+    grep -qxF "REMOTE ${O}$H playbook tp-x setup_bot.yml" "$d/dec"; chk "remote: vmtool playbook tp-x setup_bot.yml on the host" $?
+    want="REMOTE ${O}ssh -i \"\$HOME/tp-vmtool/.machines/tp-x/id_ed25519\" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR bot@192.168.122.50 'umask 077; mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'"
+    grep -qxF "$want" "$d/dec"; chk "remote: key install runs on the host with vmtool's key in place" $? "$(cat "$d/dec")"
+    grep -q '^stdin=pub$' "$d/facts"; chk "remote: the install's stdin is the run key's .pub" $? "$(cat "$d/facts")"
+    grep -qxF "REMOTE ${O}$H list" "$d/dec"; chk "remote: vmtool list on the host" $?
+    grep -qxF "REMOTE ${O}$H delete tp-x" "$d/dec"; chk "remote: vmtool delete tp-x on the host" $?
+    grep -qxF "REMOTE ${O}test -e \"\$HOME/tp-vmtool/.machines/tp-x\"" "$d/dec"; chk "remote: .machines/tp-x checked gone with test -e" $?
+    ! grep -q '^cleanup-rc' "$d/facts"; chk "remote: cleanup ok after the delete is verified" $? "$(cat "$d/facts" "$d/cleanup.out")"
+    [[ $key == "$d"/run/tp-vm.*/id_tp-x ]]; chk "remote: run key under XDG_RUNTIME_DIR scratch ($key)" $?
+    grep -q '^mode=600$' "$d/facts"; chk "remote: run key mode 0600" $?
+    [[ -n $key && ! -e $key && ! -e $(sed -n 's/^scratch=//p' "$d/facts") ]]; chk "remote: scratch dir and run key removed by vm_cleanup" $?
+    local pre="RAW -T -i $key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ProxyJump=veritech04.labtwo bot@192.168.122.50 "
+    got=$(grep -c '^RAW ' "$d/dec")
+    [[ $got -ge 4 && $(grep '^RAW ' "$d/dec" | grep -cF "$pre") -eq $got ]]; chk "remote sshv: -T, the run key, ProxyJump=veritech04.labtwo, bot@IP ($got calls)" $? "$(grep '^RAW ' "$d/dec" | cut -c1-200)"
+    want="tunnel=ssh -i $key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ProxyJump=veritech04.labtwo -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o StreamLocalBindUnlink=yes -N -L $d/s.sock:/var/run/docker.sock bot@192.168.122.50"
+    grep -qxF "$want" "$d/facts"; chk "remote tunnel argv: same options as sshv plus the forward" $? "$(grep '^tunnel' "$d/facts")"
+    ! grep -F '.machines' "$d/facts" | grep -q .; chk "remote: no .machines path in VM_SSH_OPTS or the tunnel" $?
+    ! grep '^RAW ' "$d/dec" | grep -q '\.machines'; chk "remote: no .machines path in any sshv argv" $?
+    head -1 "$d/out/create.log" | grep -q 'veritech04.labtwo'; chk "remote: create.log's first line names the host" $? "$(head -2 "$d/out/create.log")"
+    ! grep -qE 'PRIVATE KEY|ssh-ed25519' "$d/log" "$d/dec" "$d/up.out" "$d/cleanup.out"; chk "remote: no key material in any argv or output" $?
+    run veritech04.labtwo tp 1
+    grep -qxF -- "--keep: VM tp-x left running on veritech04.labtwo (delete with: ssh veritech04.labtwo 'cd ~/tp-vmtool && ./vmtool delete tp-x')" "$d/cleanup.out"
+    chk "remote --keep hint names the host and the delete command" $? "$(cat "$d/cleanup.out")"
+    ! grep -q 'delete tp-x' "$d/dec"; chk "remote --keep: nothing deleted" $?
+
+    # ---- delete: unreachable host, leftover .machines ----
+    reset
+    rc=0; got=$( (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list STUB_LIST_RC=255 TP_VM_HOST=veritech04.labtwo TP_VM_HOST_DIR=tp-vmtool; vm_delete tp-x) 2>&1 ) || rc=$?
+    [[ $rc -eq 1 && $got == *"delete tp-x by hand: ssh veritech04.labtwo 'cd ~/tp-vmtool && ./vmtool delete tp-x'"* ]] && ! decode "$d/log" | grep -q 'vmtool delete'
+    chk "vm_delete: host unreachable (255) -> exit 1 and the exact command to run by hand" $? "rc=$rc $got"
+    reset
+    rc=0; got=$( (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list STUB_TEST_RC=0 TP_VM_HOST=veritech04.labtwo TP_VM_HOST_DIR=tp-vmtool; vm_delete tp-x) 2>&1 ) || rc=$?
+    [[ $rc -eq 1 && $got == *".machines/tp-x still exists on veritech04.labtwo"* ]]; chk "vm_delete: .machines/tp-x left behind -> exit 1" $? "rc=$rc $got"
+
+    # ---- names: vm_record and vm_delete refuse, both modes, before any vmtool call ----
+    for h in veritech04.labtwo local; do
+        for n in vt-r1 default 'tp-x;rm' tp- TP-x 'tp-x y' ''; do
+            reset
+            rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt TP_VM_HOST=$h; vm_record "$n") >/dev/null 2>&1 || rc=$?
+            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]]; chk "vm_record '$n' ($h): exit 2, no call" $? "rc=$rc"
+            rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt TP_VM_HOST=$h; vm_delete "$n") >/dev/null 2>&1 || rc=$?
+            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]]; chk "vm_delete '$n' ($h): exit 2, no call" $? "rc=$rc"
+        done
+    done
+    rc=0; (export TP_VM_HOST=local; VM_RECORDED=(); vm_record tp-ok-1; [[ ${VM_RECORDED[*]} == tp-ok-1 ]]) || rc=$?
+    chk "vm_record tp-ok-1 is recorded" $rc
+
+    # ---- local: argv identical to the code before T97i ----
+    run local "" 0
+    got=$(cat "$d/log.vmtool")
+    want="create tp-x ubuntu2404.qcow2 --memory $mem1 --disk-size 14"$'\nlist\nplaybook tp-x setup_bot.yml\nlist\ndelete tp-x\nlist'
+    [[ $got == "$want" ]]; chk "local vmtool argv (create without --pool, playbook, delete)" $? "$got"
+    [[ $(cat "$d/log.local") == "timeout 5 bash -c exec 3<>/dev/tcp/192.168.122.50/22" ]]; chk "local tcp/22 probe from this machine, as before" $? "$(cat "$d/log.local")"
+    pre="RAW -T -i $d/vt/.machines/tp-x/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts bot@192.168.122.50 "
+    got=$(grep -c '^RAW ' "$d/dec")
+    [[ $got -ge 4 && $(grep -cF "$pre" "$d/dec") -eq $got && $(grep -c '^REMOTE' "$d/dec") -eq 0 ]]; chk "local sshv argv: vmtool's key in place, no ProxyJump, no host ($got calls)" $? "$(cut -c1-200 "$d/dec")"
+    want="tunnel=ssh -i $d/vt/.machines/tp-x/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o StreamLocalBindUnlink=yes -N -L $d/s.sock:/var/run/docker.sock bot@192.168.122.50"
+    grep -qxF "$want" "$d/facts"; chk "local tunnel argv unchanged" $? "$(grep '^tunnel' "$d/facts")"
+    [[ -z $(sed -n 's/^scratch=//p' "$d/facts") ]]; chk "local: no run key, no scratch dir" $?
+    [[ $(head -c1 "$d/out/create.log") != '#' ]]; chk "local: create.log has no host header" $?
+    rc=0; (export TP_VM_HOST=local VMTOOL_DIR=/v; VM_RECORDED=(tp-x); vm_cleanup 1) >"$d/o" 2>&1 || rc=$?
+    [[ $(cat "$d/o") == "--keep: VM tp-x left running (delete with: cd /v && ./vmtool delete tp-x)" ]]; chk "local --keep hint unchanged" $? "$(cat "$d/o")"
+
+    # ---- the 1 GiB refusal stays: before any call, on the remote host too ----
+    reset
+    rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list TP_VM_HOST=veritech04.labtwo; vm_up tp-x "$d/out" "" 4) >"$d/o" 2>&1 || rc=$?
+    [[ $rc -eq 2 && ! -s $d/log ]] && grep -q 'every tp-\* VM gets 1 GiB' "$d/o"; chk "remote vm_up 4 GiB refused before any ssh" $? "rc=$rc"
+
+    # ---- test-vm.sh and test-vm-oracle.sh refuse a remote host, after --self-test, before any vmtool call ----
+    local s h
+    for s in test-vm test-vm-oracle; do
+        for h in veritech04.labtwo unset; do
+            reset
+            rc=0
+            if [[ $h == unset ]]; then
+                env -u TP_VM_HOST PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" ubuntu2404 dev_base >"$d/o" 2>&1 || rc=$?
+            else
+                TP_VM_HOST=$h PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" --keep ubuntu2404 dev_base >"$d/o" 2>&1 || rc=$?
+            fi
+            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]] && grep -qF 'set TP_VM_HOST=local; T97j moves this script' "$d/o"
+            chk "$s.sh refuses TP_VM_HOST=$h: exit 2, no vmtool or ssh call" $? "rc=$rc $(cat "$d/o")"
+        done
+        reset
+        rc=0; TP_VM_HOST=local PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" nosuchdistro x >"$d/o" 2>&1 || rc=$?
+        [[ $rc -eq 2 && ! -s $d/log ]] && ! grep -qF 'T97j' "$d/o" && grep -q 'only the ubuntu2404 image' "$d/o"; chk "$s.sh with TP_VM_HOST=local is not refused (reaches its own argument check)" $? "rc=$rc $(cat "$d/o")"
+    done
+    rm -rf "$d"
+    return $fails
+}
 # services_vm_self_test : the log readers of the services_vm checks, on
 # synthetic run output (the wording is telepatch's executor: a header
 # `== <host> [<roles>] #<id> <desc> ==`, then the op's result line).
@@ -524,6 +693,7 @@ self_test() {
     else echo "FAIL playbook services_vm -> '$got'"; fails=1; fi
     services_vm_self_test || fails=1
     vm_lib_self_test || fails=1
+    vm_host_self_test || fails=1
 
     # a working check as each user: bot directly, any other through sudo -iu
     got=$(as_user_cmd bot 'go version')
@@ -621,6 +791,10 @@ EOF
 }
 
 if [[ ${1:-} == --self-test ]]; then self_test; exit $?; fi
+
+# T97j moves this script to the VM host; until then only a local vmtool works.
+# Before any vmtool or ssh call (the self-test above runs with any host).
+[[ $TP_VM_HOST == local ]] || die "set TP_VM_HOST=local; T97j moves this script"
 
 # ---- arguments --------------------------------------------------------------
 keep=0

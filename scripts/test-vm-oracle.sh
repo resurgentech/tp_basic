@@ -253,6 +253,10 @@ self_test() {
 
 if [[ ${1:-} == --self-test ]]; then self_test; exit $?; fi
 
+# T97j moves this script to the VM host; until then only a local vmtool works.
+# Before any vmtool or ssh call (the self-test above runs with any host).
+[[ $TP_VM_HOST == local ]] || die "set TP_VM_HOST=local; T97j moves this script"
+
 # ---- arguments --------------------------------------------------------------
 keep=0
 if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
