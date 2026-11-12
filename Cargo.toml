@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 telepatch = { git = "https://github.com/resurgentech/telepatch.git", branch = "main" }
+telepatch-openbao = { git = "https://github.com/resurgentech/telepatch.git", branch = "main" }
 askama = "0.16.1"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
@@ -29,6 +30,7 @@ insta = "1"
 [patch."https://github.com/resurgentech/telepatch.git"]
 telepatch = { path = "../telepatch/crates/telepatch" }
 telepatch-macros = { path = "../telepatch/crates/telepatch-macros" }
+telepatch-openbao = { path = "../telepatch/crates/telepatch-openbao" }
 
 [profile.release]
 strip = true
