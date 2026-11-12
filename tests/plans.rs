@@ -636,3 +636,125 @@ fn services_vm_description_var_is_the_units_content() {
     let b = telepatch::testing::plan_for("ubuntu2404", pb, other);
     assert_ne!(a, b);
 }
+
+/// Every registered playbook, planned twice on every distro, is the same
+/// text. The plan has no per-process token (T86c).
+#[test]
+fn plans_are_byte_identical() {
+    let pbs = playbooks();
+    for pb in &pbs {
+        for d in DISTROS {
+            let a = telepatch::testing::plan_for_playbook(d, pb, None);
+            let b = telepatch::testing::plan_for_playbook(d, pb, None);
+            assert_eq!(a, b, "{} on {d}", pb.name);
+        }
+    }
+}
+
+fn op_lines(text: &str) -> Vec<&str> {
+    text.lines().filter(|l| l.starts_with("  #")).collect()
+}
+
+/// `edge` is `edge` then `edge_extra` and nothing else. On ubuntu2404 one
+/// `pkg[rustup]` names `rust-src`, `curl` is before that op and before the
+/// repo, and `docker-ce-cli` is after the repo.
+#[test]
+fn edge_ubuntu2404_is_one_rustup_after_curl_and_the_repo() {
+    let text = plan("edge", "ubuntu2404");
+    // `edge_extra`'s only op merges into `edge`'s rustup, so the window
+    // keeps the `role edge` heading and names the second role on the
+    // merged-from line.
+    let roles: Vec<&str> = text.lines().filter(|l| l.starts_with("role ")).collect();
+    assert!(roles.iter().all(|l| *l == "role edge"), "{roles:?}");
+    assert!(text.contains("merged from edge "), "{text}");
+    assert!(text.contains(", edge_extra "), "{text}");
+    let ops = op_lines(&text);
+    let rustup: Vec<_> = ops.iter().filter(|l| l.contains("pkg[rustup]")).collect();
+    assert_eq!(rustup.len(), 1, "{text}");
+    assert!(
+        rustup[0].contains("pkg:rustup:root:stable/component/rust-src"),
+        "{}",
+        rustup[0]
+    );
+    let at = |pred: &dyn Fn(&str) -> bool| ops.iter().position(|l| pred(l));
+    let curl = at(&|l| l.contains(" pkg ") && l.contains("pkg:curl")).expect("curl pkg");
+    let repo = at(&|l| l.contains(" repo ")).expect("repo");
+    let cli = at(&|l| l.contains("pkg:docker-ce-cli")).expect("docker-ce-cli");
+    let ru = at(&|l| l.contains("pkg[rustup]")).unwrap();
+    assert!(curl < repo && curl < ru && repo < cli, "{ops:?}");
+    assert!(
+        text.contains("https://download.docker.com/linux/ubuntu"),
+        "{text}"
+    );
+    assert!(text.contains("www-browser"), "{text}");
+    assert!(
+        text.contains("5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5"),
+        "{text}"
+    );
+    assert!(text.contains("/usr/local/bin/edge-jq"), "{text}");
+    assert!(
+        text.contains("/usr/local/share/telepatch-edge.txt"),
+        "{text}"
+    );
+}
+
+/// Family branches from the edge table: Debian apt, Fedora `fedora`, Rocky
+/// and Alma `rhel`, Amazon and Arch no Docker repo.
+#[test]
+fn edge_family_branches_match_the_table() {
+    let deb = plan("edge", "debian12");
+    assert!(deb.contains("https://download.docker.com/linux/debian"));
+    assert!(deb.contains("www-browser"));
+    assert!(!deb.contains("mailx"));
+    let fed = plan("edge", "fedora44");
+    assert!(fed.contains("https://download.docker.com/linux/fedora/docker-ce.repo"));
+    assert!(fed.contains("mailx"));
+    assert!(fed.contains("s-nail"));
+    let rocky = plan("edge", "rockylinux10");
+    assert!(rocky.contains("https://download.docker.com/linux/rhel/docker-ce.repo"));
+    assert!(rocky.contains("docker-ce-cli"));
+    let alma = plan("edge", "almalinux9");
+    assert!(alma.contains("https://download.docker.com/linux/rhel/docker-ce.repo"));
+    let amz = plan("edge", "amazonlinux2023");
+    assert!(amz.contains("mailx"));
+    assert!(amz.contains("s-nail"));
+    assert!(!amz.contains("download.docker.com"));
+    assert!(!amz.contains("docker-ce-cli"));
+    let arch = plan("edge", "arch");
+    assert!(arch.contains("pkg:sh"));
+    assert!(arch.contains("pkg:bash"));
+    assert!(!arch.contains("download.docker.com"));
+    assert!(!arch.contains("docker-ce-cli"));
+    let oma = plan("edge", "omarchy");
+    assert!(oma.contains("pkg:sh"));
+    assert!(!oma.contains("download.docker.com"));
+    for d in DISTROS {
+        let text = plan("edge", d);
+        assert!(
+            text.contains("5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5"),
+            "{d}"
+        );
+        assert!(text.contains("rust-src"), "{d}");
+        assert_eq!(
+            op_lines(&text)
+                .iter()
+                .filter(|l| l.contains("pkg[rustup]"))
+                .count(),
+            1,
+            "{d}:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn edge_plans() {
+    for d in DISTROS {
+        let text = plan("edge", d);
+        insta::with_settings!({
+            snapshot_path => "plans/snapshots",
+            prepend_module_to_snapshot => false,
+        }, {
+            insta::assert_snapshot!(format!("edge__{d}"), text);
+        });
+    }
+}

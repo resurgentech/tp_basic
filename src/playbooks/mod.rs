@@ -2,3 +2,4 @@
 
 pub mod container;
 pub mod desktop;
+pub mod edge;

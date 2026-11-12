@@ -3,6 +3,8 @@
 pub mod admin_users;
 pub mod dev_common;
 pub mod docker;
+pub mod edge;
+pub mod edge_extra;
 pub mod golang;
 pub mod kernel_build;
 pub mod node;
