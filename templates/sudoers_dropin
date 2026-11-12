@@ -1,0 +1,4 @@
+{{ u }} ALL=(ALL)       NOPASSWD: ALL
+Defaults:{{ u }} !requiretty
+Defaults:{{ u }} !env_reset
+

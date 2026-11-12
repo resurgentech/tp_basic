@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 telepatch = { git = "https://github.com/resurgentech/telepatch.git", branch = "main" }
+askama = "0.16.1"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 

@@ -73,12 +73,18 @@ const VISUDO: &str = "visudo -cf %s";
 /// including the seven spaces after `(ALL)` and the final newline. The
 /// password-free line, `requiretty` off, and `env_reset` off so the user's
 /// environment passes through `sudo` unchanged (`:3`).
-fn sudoers_dropin(u: &str) -> String {
-    format!(
-        "{u} ALL=(ALL)       NOPASSWD: ALL\n\
-         Defaults:{u} !requiretty\n\
-         Defaults:{u} !env_reset\n"
-    )
+///
+/// Askama drops one trailing newline when it reads a template file, so
+/// `templates/sudoers_dropin` ends with a blank line and the render keeps
+/// this final newline.
+#[derive(Clone, askama::Template)]
+#[template(path = "sudoers_dropin", escape = "none")]
+struct SudoersDropin {
+    u: String,
+}
+
+fn sudoers_dropin(u: &str) -> SudoersDropin {
+    SudoersDropin { u: u.to_string() }
 }
 
 /// Only the Debian family has a `sudo` group. Ansible chose `wheel` for
@@ -167,7 +173,10 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
     // matching line is replaced, so a second run added no third line.
     // Source: https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/lineinfile_module.html (accessed 2026-11-03)
     h.file("/etc/sudoers")
-        .line_re(r"^[#@]includedir\s+/etc/sudoers\.d", "@includedir /etc/sudoers.d")
+        .line_re(
+            r"^[#@]includedir\s+/etc/sudoers\.d",
+            "@includedir /etc/sudoers.d",
+        )
         .validate(VISUDO);
 
     // `main.yml:11-17`; see `secure_path_line` for bug 2 and for which
@@ -223,4 +232,19 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
             .validate(VISUDO);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use askama::Template;
+
+    #[test]
+    fn sudoers_dropin_matches_the_j2_bytes() {
+        let got = sudoers_dropin("alice").render().unwrap();
+        let want = "alice ALL=(ALL)       NOPASSWD: ALL\n\
+                    Defaults:alice !requiretty\n\
+                    Defaults:alice !env_reset\n";
+        assert_eq!(got, want);
+    }
 }
