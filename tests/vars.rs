@@ -15,7 +15,7 @@ fn users(xs: &[&str]) -> Vec<String> {
 fn container_vars_load_into_the_role_sections() {
     let v = shipped("container");
     assert_eq!(v.admin_users.admin_users, users(&["root"]));
-    assert_eq!(v.admin_users.default_password, "");
+    assert_eq!(v.admin_users.default_password, None);
     assert_eq!(v.docker.admin_users, users(&["root"]));
     assert_eq!(v.vm_server.admin_users, users(&["root"]));
     assert_eq!(v.rust_kernel.admin_users, users(&["root"]));
@@ -34,7 +34,7 @@ fn desktop_vars_reach_every_role_with_the_field() {
     assert_eq!(v.vm_server.admin_users, bot);
     assert_eq!(v.rust_kernel.admin_users, bot);
     assert_eq!(v.rust_build.admin_users, bot);
-    assert_eq!(v.admin_users.default_password, "");
+    assert_eq!(v.admin_users.default_password, None);
     assert_eq!(v.rust_build.rustc_version, "1.94.0");
 }
 

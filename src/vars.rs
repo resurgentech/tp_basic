@@ -13,6 +13,7 @@
 //! naming the file and line.
 
 use serde::{Deserialize, Serialize};
+use telepatch::Secret;
 
 /// The default `admin_users`: the container user. Ansible's default is
 /// `["{{ ansible_user }}"]`; container builds run as root.
@@ -27,16 +28,19 @@ pub struct AdminUsersVars {
     /// Users the role sets up. Container builds run as root.
     pub admin_users: Vec<String>,
     /// A crypt(3) hash for accounts a run creates (`group_vars/all:26`).
-    /// Empty leaves them locked. A real hash never goes in the repo: pass
-    /// it in a `--vars` file kept outside it.
-    pub default_password: String,
+    /// `None` leaves them locked. A literal never goes in a tracked file:
+    /// pass a reference (`{ env = "..." }`, `{ file = "..." }`,
+    /// `{ prompt = "..." }`, `{ bao = "...", field = "..." }`) from a
+    /// `--vars` file kept outside the repo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_password: Option<Secret>,
 }
 
 impl Default for AdminUsersVars {
     fn default() -> Self {
         AdminUsersVars {
             admin_users: root_only(),
-            default_password: String::new(),
+            default_password: None,
         }
     }
 }

@@ -17,7 +17,7 @@ src/roles/                   dev_common, kernel_build, rust_build, rust_kernel, 
                              admin_users, docker, vm_server, node, golang, tmux
 src/vars.rs                  the typed vars every playbook reads (loaded from TOML)
 vars/container.toml          vars for image builds: admin_users = ["root"], tool versions
-vars/desktop.toml            vars for dev_desktop: admin_users = ["bot", "tpdev"], default_password = ""
+vars/desktop.toml            vars for dev_desktop: admin_users = ["bot", "tpdev"]
 scripts/                     the equivalence oracles and the VM harness (below)
 conversion/SOURCE            the ansible repo and commit the ports were made from; a role being ported keeps its YAML and understanding doc in conversion/ until it lands
 tests/plans.rs               plan snapshots: every playbook on every supported distro

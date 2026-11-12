@@ -186,6 +186,101 @@ playbook_config() {
     esac
 }
 
+# desktop_secret_vars <dest> : a copy of vars/desktop.toml whose password is
+# an env reference. The hash stays in TP_TEST_PW_HASH and is not written.
+desktop_secret_vars() {
+    grep -v '^default_password[[:space:]]*=' "$ROOT/vars/desktop.toml" >"$1"
+    printf '\ndefault_password = { env = "TP_TEST_PW_HASH" }\n' >>"$1"
+}
+
+# su_tpdev : ssh as bot and `su` to tpdev. The password is stdin of the
+# remote python, never an argument and never printed. Returns 0 when su
+# prints tp-su-ok.
+su_tpdev() {
+    local py b64
+    py=$(cat <<'PY'
+import os, pty, select, sys, time
+pw = sys.stdin.buffer.readline()
+if pw.endswith(b"\n"):
+    pw = pw[:-1]
+if pw.endswith(b"\r"):
+    pw = pw[:-1]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("su", ["su", "-c", "printf tp-su-ok", "tpdev"])
+buf = b""
+sent = False
+deadline = time.time() + 10
+status = 1
+while time.time() < deadline:
+    r, _, _ = select.select([fd], [], [], 0.2)
+    if r:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            chunk = b""
+        if chunk:
+            buf += chunk
+            if (not sent) and (b"assword" in buf):
+                os.write(fd, pw + b"\n")
+                sent = True
+        else:
+            break
+    try:
+        wpid, st = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        break
+    if wpid == pid:
+        status = st
+        break
+else:
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        pass
+    try:
+        _, status = os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+# An empty read means the slave closed, which happens as su exits and
+# often before waitpid has run. Reap here, and keep any last bytes.
+while True:
+    r, _, _ = select.select([fd], [], [], 0)
+    if not r:
+        break
+    try:
+        chunk = os.read(fd, 4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    buf += chunk
+try:
+    _, status = os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+ok = sent and (b"tp-su-ok" in buf) and os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+sys.exit(0 if ok else 1)
+PY
+)
+    b64=$(printf '%s' "$py" | base64 -w0)
+    printf '%s\n' "$TP_TEST_PW" | sshv "python3 -c \"import base64; exec(base64.b64decode('$b64'))\""
+}
+
+# logs_have_secret <files...> : 0 when a file contains the throwaway
+# password or its hash. Does not print the match.
+logs_have_secret() {
+    local f
+    [[ -n ${TP_TEST_PW:-} && -n ${TP_TEST_PW_HASH:-} ]] || return 1
+    for f in "$@"; do
+        [[ -f $f ]] || continue
+        if grep -q -F -- "$TP_TEST_PW" "$f" || grep -q -F -- "$TP_TEST_PW_HASH" "$f"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # as_user_cmd <user> <command> : the remote command line that runs <command>
 # in <user>'s login shell. bot is the SSH user; anyone else is reached with
 # `sudo -n -iu`, so the check also proves bot's sudo needs no password.
@@ -478,6 +573,50 @@ self_test() {
     osc "another op" "$t/rsh" 1
     osc "changed 0" "$t/r0" 1
     rm -f "$t"/r*; rmdir "$t"
+
+    # the dev_desktop vars copy names an env var and does not contain the value
+    t=$(mktemp -d)
+    TP_TEST_PW=sentinel-pw TP_TEST_PW_HASH=sentinel-hash desktop_secret_vars "$t/desk.toml"
+    if grep -q '{ env = "TP_TEST_PW_HASH" }' "$t/desk.toml" \
+        && ! grep -q -F 'sentinel-hash' "$t/desk.toml" \
+        && ! grep -q -F 'sentinel-pw' "$t/desk.toml"; then
+        echo "ok   desktop_secret_vars writes an env reference and not the value"
+    else
+        echo "FAIL desktop_secret_vars"
+        fails=1
+    fi
+    unset TP_TEST_PW TP_TEST_PW_HASH
+    rm -rf "$t"
+
+    # su_tpdev: a fake su that accepts the password and exits 0. The pty
+    # closes as su exits, which used to be reported as failure before the
+    # child was reaped. The sentinel is not printed.
+    t=$(mktemp -d)
+    cat >"$t/su" << 'EOF'
+#!/usr/bin/env python3
+import os, sys
+os.write(1, b"Password: ")
+pw = b""
+while True:
+    c = os.read(0, 1)
+    if not c or c == b"\n":
+        break
+    pw += c
+if pw == os.environ["EXPECT_PW"].encode():
+    os.write(1, b"tp-su-ok")
+    sys.exit(0)
+sys.exit(1)
+EOF
+    chmod +x "$t/su"
+    local rc=0
+    (
+        sshv() { bash -c "$1"; }
+        export TP_TEST_PW=sentinel-pw EXPECT_PW=sentinel-pw PATH="$t:$PATH"
+        su_tpdev
+    ) >/dev/null || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "ok   su_tpdev accepts the password when su exits 0"
+    else echo "FAIL su_tpdev returned $rc"; fails=1; fi
+    rm -rf "$t"
     return $fails
 }
 
@@ -503,6 +642,17 @@ vm_listed "$name" && die "a VM named $name already exists; not touching it"
 out=$ROOT/build/test-vm/$container-$distro
 mkdir -p "$out"
 rm -f "$out"/*
+
+# dev_desktop: the throwaway hash is an env reference. It is never written
+# into the vars file and never printed.
+SU_FAIL=0
+if [[ $container == dev_desktop ]]; then
+    TP_TEST_PW=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    TP_TEST_PW_HASH=$(printf '%s' "$TP_TEST_PW" | openssl passwd -6 -stdin) || die "openssl passwd -6 failed"
+    export TP_TEST_PW TP_TEST_PW_HASH
+    RUN_VARS=$out/desktop-secret.toml
+    desktop_secret_vars "$RUN_VARS"
+fi
 
 # the memory report always; on a failure the OOM check (exit 3 when the
 # kernel killed for memory: the gate stops, the memory is not raised)
@@ -552,6 +702,14 @@ if [[ $rc1 -ne 0 ]]; then
 fi
 grep '^== .* \[prepare\]' "$out/run1.out" || true
 go1=$(go_now)
+
+# dev_desktop: an account this run created accepts the throwaway password.
+# A failure is remembered so the idempotent pass still runs.
+if [[ $container == dev_desktop ]]; then
+    echo "=== su as tpdev with the throwaway password ==="
+    if su_tpdev; then echo "ok   su tpdev"
+    else echo "FAIL: su as tpdev did not accept the throwaway password"; SU_FAIL=1; fi
+fi
 
 # ---- services_vm: states, units and guarded restarts on a booted VM (gating) -------
 # Run 1 is done (exit 0). Every check prints ok or FAIL; the verdict comes after
@@ -818,6 +976,16 @@ else
         echo "=== comparison with the oracle ($oracle), non-gating ==="
         rrc=0; oracle_report "$oracle" "$out" || rrc=$?
         [[ $rrc -eq 0 ]] || echo "test-vm: WARNING: the comparison report returned $rrc" >&2
+    fi
+fi
+if [[ $container == dev_desktop ]]; then
+    if logs_have_secret "$out"/run*.out "$out"/run*.jsonl "$out"/desktop-secret.toml; then
+        echo "FAIL: a run log contains the throwaway password or its hash"
+        exit 1
+    fi
+    if [[ $SU_FAIL -ne 0 ]]; then
+        echo "FAIL: su as tpdev failed"
+        exit 1
     fi
 fi
 echo "PASS: $PB_NAME on a $distro VM over SSH (run 1 ok; run $last $verdict)"

@@ -3,9 +3,8 @@
 admin_users = ["bot", "tpdev"]
 rustc_version = "1.94.0"
 
-# A crypt(3) hash for accounts the run creates; "" leaves them locked.
-# A real hash never goes in this repo (hard rule 5). To set one, copy this
-# file somewhere outside the repo, put the hash in the copy (make it with
-# `openssl passwd -6`) and pass the copy: `--vars /path/outside/repo.toml`
-# (one --vars file per run; it replaces this one whole).
-default_password = ""
+# A crypt(3) hash for accounts the run creates. This file is tracked, so it
+# holds no literal (an empty one still counts). To set one, copy this file
+# outside the repo and add a reference, then pass that copy with `--vars`
+# (one --vars file per run; it replaces this one whole):
+#   default_password = { env = "TP_PW_HASH" }

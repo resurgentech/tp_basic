@@ -195,10 +195,12 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
         // module. The YAML set shell and password only when the first task
         // created the account (`per_user.yml:12-18`). The group is added
         // with `append`, never replacing the user's others (`groups_add`).
-        h.user(u)
-            .shell("/bin/bash")
-            .groups_add([group])
-            .password_hash(&h.vars.admin_users.default_password);
+        let user = h.user(u).shell("/bin/bash").groups_add([group]);
+        // `None` (no value in the vars file) leaves a new account locked,
+        // which is what an empty `default_password` did.
+        if let Some(pw) = &h.vars.admin_users.default_password {
+            user.password_hash(pw);
+        }
 
         // `per_user.yml:27-33`. The YAML built `/home/<u>/.ssh` from the
         // name (`per_user.yml:31`) and a group named `<u>`, true only for
