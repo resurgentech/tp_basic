@@ -1,0 +1,10 @@
+---
+- name: add the rust-src component
+  ansible.builtin.command:
+    argv:
+      - /root/.cargo/bin/rustup
+      - component
+      - add
+      - rust-src
+      - --toolchain
+      - stable

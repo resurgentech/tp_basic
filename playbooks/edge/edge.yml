@@ -1,0 +1,6 @@
+---
+- name: edge
+  hosts: all
+  roles:
+    - edge
+    - edge_extra

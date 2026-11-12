@@ -2,6 +2,11 @@
 check-conversion:
     bash scripts/check-conversion.sh
 
+# Review playbooks/edge against the edge list, then syntax-check it. No VM.
+check-edge:
+    bash scripts/check-edge-playbook.sh
+    ansible-playbook --syntax-check playbooks/edge/edge.yml
+
 # Build the static x86_64 musl tp-basic into build/tp-basic and check it is static.
 musl:
     #!/usr/bin/env bash

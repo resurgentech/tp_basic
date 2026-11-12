@@ -1,0 +1,158 @@
+---
+# Support packages first, then the family edge, then the repo, then the
+# one package that needs that repo. curl is installed before the repo and
+# before rustup. No second cache refresh beyond the install that follows
+# the repo (the first transaction also refreshes).
+
+- name: install support packages and the Debian virtual name
+  when: ansible_os_family == "Debian"
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - w3m
+      - www-browser
+    state: present
+    update_cache: true
+
+- name: install support packages and the Red Hat virtual name
+  when: ansible_os_family == "RedHat"
+  ansible.builtin.dnf:
+    name:
+      - curl
+      - ca-certificates
+      - s-nail
+      - mailx
+    state: present
+    update_cache: true
+
+- name: install support packages and the Arch virtual name
+  when: ansible_os_family == "Archlinux" or (ansible_distribution | lower) == "omarchy"
+  ansible.builtin.pacman:
+    name:
+      - curl
+      - ca-certificates
+      - bash
+      - sh
+    state: present
+    update_cache: true
+
+- name: read the dpkg architecture
+  when: ansible_os_family == "Debian"
+  ansible.builtin.command: dpkg --print-architecture
+  register: edge_dpkg_arch
+  changed_when: false
+
+- name: create the apt keyring directory
+  when: ansible_os_family == "Debian"
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: fetch Docker's Debian signing key
+  when: ansible_distribution == "Debian"
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+
+- name: fetch Docker's Ubuntu signing key
+  when: ansible_os_family == "Debian" and ansible_distribution != "Debian"
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+
+- name: write Docker's Debian deb822 source
+  when: ansible_distribution == "Debian"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/debian
+      Suites: {{ ansible_distribution_release }}
+      Components: stable
+      Architectures: {{ edge_dpkg_arch.stdout }}
+      Signed-By: /etc/apt/keyrings/docker.asc
+
+- name: write Docker's Ubuntu deb822 source
+  when: ansible_os_family == "Debian" and ansible_distribution != "Debian"
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: {{ ansible_distribution_release }}
+      Components: stable
+      Architectures: {{ edge_dpkg_arch.stdout }}
+      Signed-By: /etc/apt/keyrings/docker.asc
+
+- name: ensure the dnf repo directory exists
+  when: ansible_os_family == "RedHat" and ansible_distribution != "Amazon"
+  ansible.builtin.file:
+    path: /etc/yum.repos.d
+    state: directory
+    mode: "0755"
+
+- name: fetch Docker's Fedora repo file
+  when: ansible_distribution == "Fedora"
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/fedora/docker-ce.repo
+    dest: /etc/yum.repos.d/docker.repo
+    mode: "0644"
+
+- name: fetch Docker's RHEL repo file
+  when: ansible_os_family == "RedHat" and ansible_distribution != "Amazon" and ansible_distribution != "Fedora"
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/rhel/docker-ce.repo
+    dest: /etc/yum.repos.d/docker.repo
+    mode: "0644"
+
+- name: install docker-ce-cli on Debian
+  when: ansible_os_family == "Debian"
+  ansible.builtin.apt:
+    name:
+      - docker-ce-cli
+    state: present
+    update_cache: true
+
+- name: install docker-ce-cli on Red Hat except Amazon
+  when: ansible_os_family == "RedHat" and ansible_distribution != "Amazon"
+  ansible.builtin.dnf:
+    name:
+      - docker-ce-cli
+    state: present
+    update_cache: true
+
+- name: ensure the marker directory exists
+  ansible.builtin.file:
+    path: /usr/local/share
+    state: directory
+    mode: "0755"
+
+- name: write the edge marker
+  ansible.builtin.copy:
+    dest: /usr/local/share/telepatch-edge.txt
+    content: "edge\n"
+    mode: "0644"
+
+- name: install rustup stable with the default profile
+  ansible.builtin.shell: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile default"
+  environment:
+    HOME: /root
+
+- name: ensure the fetch directory exists
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: "0755"
+
+- name: fetch edge-jq
+  ansible.builtin.get_url:
+    url: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+    dest: /usr/local/bin/edge-jq
+    mode: "0755"
+    checksum: "sha256:5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5"
