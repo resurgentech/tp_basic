@@ -42,9 +42,9 @@
 //!   prints `parsed OK` and accepts a file with `#includedir` appended
 //!   (rc 0), so the `validate` command works there too.
 //!
-//! Open: `docker run --rm amazonlinux:2 sh -c 'yum -y -q install sudo
-//! >/dev/null && grep -n -E "includedir|secure_path" /etc/sudoers'` for
-//! Amazon Linux 2, which the YAML's playbook mentions and no image here
+//! Open: `docker run --rm amazonlinux:2 sh -c 'yum -y -q install
+//! sudo >/dev/null && grep -n -E "includedir|secure_path" /etc/sudoers'`
+//! for Amazon Linux 2, which the YAML's playbook mentions and no image here
 //! builds.
 //!
 //! Reproduce a probe row: `docker run --rm ubuntu:24.04 sh -c 'apt-get
@@ -113,7 +113,7 @@ fn sudo_group(os: &Os) -> &'static str {
 /// which dropped `/snap/bin` on Ubuntu and `/var/lib/snapd/snap/bin` on
 /// Fedora and Amazon Linux, and put `/usr/local` behind the system
 /// directories (observed 2026-11-03 with ansible-core 2.21.6 in
-/// ubuntu:24.04: the stock `Defaults	secure_path="/usr/local/sbin:...:/snap/bin"`
+/// ubuntu:24.04: the stock `Defaults<TAB>secure_path="/usr/local/sbin:...:/snap/bin"`
 /// became Ansible's line). On the EL family (stock
 /// `/sbin:/bin:/usr/sbin:/usr/bin`) and Arch (`/usr/local/sbin:
 /// /usr/local/bin:/usr/bin`) the Ansible line only added directories.

@@ -89,7 +89,7 @@
 //!   No oracle change on ubuntu2604, where there is one toolchain.
 
 use telepatch::facts::os::{Distro, Family, Os};
-use telepatch::{Host, TraceError, role, sh};
+use telepatch::{Host, TraceError, role};
 
 use crate::vars::{RustKernelVars, Vars};
 

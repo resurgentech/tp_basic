@@ -90,7 +90,9 @@ fn latest_kernel_build_has_one_rustup_op_per_toolchain() {
         let text = plan("container/latest_kernel_build", d);
         let mut seen: Vec<(String, String)> = Vec::new();
         for line in text.lines().filter(|l| l.contains(" pkg[rustup] as ")) {
-            let post = &line[line.find(" post [").unwrap_or_else(|| panic!("{d}: {line}"))..];
+            let post = &line[line
+                .find(" post [")
+                .unwrap_or_else(|| panic!("{d}: {line}"))..];
             // The toolchain's own key: `pkg:rustup:<user>:<tc>=Installed`.
             let tc_key = post
                 .split(['[', ',', ']'])
@@ -200,13 +202,19 @@ fn dev_desktop_node_and_tmux_focus() {
     for d in DISTROS {
         let text = desktop_plan(d);
         let common = role_section(&text, "dev_common");
-        assert!(common.contains("pkg:mise:root:just=Installed"), "{d}: {common}");
+        assert!(
+            common.contains("pkg:mise:root:just=Installed"),
+            "{d}: {common}"
+        );
         assert!(!common.contains("pkg:mise:root:node"), "{d}: {common}");
         assert!(common.contains("tp_want=('just')"), "{d}: {common}");
         let node = role_section(&text, "node");
         assert!(node.contains("pkg:mise:root:node=Installed"), "{d}: {node}");
         assert!(node.contains("tp_want=('node')"), "{d}: {node}");
-        let at = |r: &str| text.find(&format!("role {r}")).unwrap_or_else(|| panic!("no role {r}"));
+        let at = |r: &str| {
+            text.find(&format!("role {r}"))
+                .unwrap_or_else(|| panic!("no role {r}"))
+        };
         assert!(
             at("dev_common") < at("docker")
                 && at("docker") < at("node")
@@ -242,7 +250,10 @@ fn dev_desktop_kept_is_admin_users_and_tmux() {
             .filter_map(|l| l.strip_prefix("role "))
             .collect();
         assert_eq!(roles.len(), 2, "{d}: {roles:?}");
-        assert!(roles[0].starts_with("admin_users") && roles[1].starts_with("tmux"), "{d}: {roles:?}");
+        assert!(
+            roles[0].starts_with("admin_users") && roles[1].starts_with("tmux"),
+            "{d}: {roles:?}"
+        );
     }
 }
 
@@ -264,7 +275,9 @@ fn dev_desktop_admin_users_focus() {
     let role = |d: &str| {
         let text = desktop_plan(d);
         let from = text.find("role admin_users").expect("role admin_users");
-        let to = text[from..].find("role dev_common").map_or(text.len(), |i| from + i);
+        let to = text[from..]
+            .find("role dev_common")
+            .map_or(text.len(), |i| from + i);
         text[from..to].to_string()
     };
     for d in DISTROS {
@@ -276,9 +289,19 @@ fn dev_desktop_admin_users_focus() {
     }
     for d in ["debian12", "debian13", "ubuntu2404", "ubuntu2604"] {
         let text = role(d);
-        assert!(text.contains("sudo") && !text.contains("wheel"), "{d}: {text}");
+        assert!(
+            text.contains("sudo") && !text.contains("wheel"),
+            "{d}: {text}"
+        );
     }
-    for d in ["fedora43", "rockylinux9", "almalinux10", "amazonlinux2023", "arch", "omarchy"] {
+    for d in [
+        "fedora43",
+        "rockylinux9",
+        "almalinux10",
+        "amazonlinux2023",
+        "arch",
+        "omarchy",
+    ] {
         let text = role(d);
         assert!(text.contains("wheel"), "{d}: {text}");
     }
@@ -303,16 +326,28 @@ fn docker_on_docker_repository() {
     ] {
         let text = desktop_plan(d);
         let sec = role_section(&text, "docker");
-        assert!(sec.contains(&format!("download.docker.com/linux/{path}")), "{d}: {sec}");
+        assert!(
+            sec.contains(&format!("download.docker.com/linux/{path}")),
+            "{d}: {sec}"
+        );
         if let Some(s) = suite {
             assert!(sec.contains(&format!("'{s}'")), "{d}: {sec}");
         }
-        for p in ["docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"] {
+        for p in [
+            "docker-ce",
+            "docker-ce-cli",
+            "containerd.io",
+            "docker-buildx-plugin",
+            "docker-compose-plugin",
+        ] {
             assert!(sec.contains(p), "{d} {p}: {sec}");
         }
         assert!(sec.contains("group"), "{d}: {sec}");
         for u in ["bot", "tpdev"] {
-            assert!(sec.contains(&format!("user {u}")) || sec.contains(&format!("'{u}'")), "{d} {u}: {sec}");
+            assert!(
+                sec.contains(&format!("user {u}")) || sec.contains(&format!("'{u}'")),
+                "{d} {u}: {sec}"
+            );
         }
         assert!(sec.contains("writes [svc:docker.service]"), "{d}: {sec}");
         assert!(!sec.contains("systemctl enable --now docker"), "{d}: {sec}");
@@ -327,7 +362,10 @@ fn docker_distro_package_on_arch_and_amazon() {
         let sec = role_section(&text, "docker");
         assert!(!sec.contains("download.docker.com"), "{d}: {sec}");
         assert!(!sec.contains("docker-ce"), "{d}: {sec}");
-        assert!(!sec.contains("\n  #1 repo") && !sec.contains(" repo as "), "{d}: {sec}");
+        assert!(
+            !sec.contains("\n  #1 repo") && !sec.contains(" repo as "),
+            "{d}: {sec}"
+        );
         assert!(sec.contains("docker"), "{d}: {sec}");
         assert!(sec.contains("writes [svc:docker.service]"), "{d}: {sec}");
         assert!(!sec.contains("systemctl enable --now docker"), "{d}: {sec}");
@@ -345,7 +383,9 @@ fn docker_never_uses_the_convenience_script() {
 #[test]
 fn docker_unknown_distro_is_a_trace_error() {
     let os = telepatch::facts::os::Os::parse("ID=gentoo\nNAME=Gentoo\nVERSION_ID=2.15\n").unwrap();
-    let err = tp_basic::roles::docker::check_distro(&os).unwrap_err().to_string();
+    let err = tp_basic::roles::docker::check_distro(&os)
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("gentoo"), "{err}");
 }
 
@@ -363,10 +403,19 @@ fn dev_desktop_golang_focus() {
     assert!(go.contains("/etc/profile.d/go.sh"), "{go}");
     // The file op carries its content base64-encoded:
     // `export PATH="$PATH:/usr/local/go/bin"` plus a newline.
-    assert!(go.contains("tp_b='ZXhwb3J0IFBBVEg9IiRQQVRIOi91c3IvbG9jYWwvZ28vYmluIgo='"), "{go}");
+    assert!(
+        go.contains("tp_b='ZXhwb3J0IFBBVEg9IiRQQVRIOi91c3IvbG9jYWwvZ28vYmluIgo='"),
+        "{go}"
+    );
     assert!(go.contains("chmod 644 \"$tp_t\""), "{go}");
-    let at = |r: &str| text.find(&format!("role {r}")).unwrap_or_else(|| panic!("no role {r}"));
-    assert!(at("node") < at("golang") && at("golang") < at("rust_build"), "{text}");
+    let at = |r: &str| {
+        text.find(&format!("role {r}"))
+            .unwrap_or_else(|| panic!("no role {r}"))
+    };
+    assert!(
+        at("node") < at("golang") && at("golang") < at("rust_build"),
+        "{text}"
+    );
     let kept = desktop_plan_of("dev_desktop_kept", "ubuntu2404");
     assert!(!kept.contains("golang"), "{kept}");
 }
@@ -517,7 +566,12 @@ fn dev_base_pip_asks_for_pyyaml_not_pyaml() {
         assert!(!text.contains("pyaml"), "{d}: pyaml in the plan");
         let pip = matches!(
             d,
-            "fedora43" | "fedora44" | "rockylinux9" | "rockylinux10" | "almalinux9" | "almalinux10"
+            "fedora43"
+                | "fedora44"
+                | "rockylinux9"
+                | "rockylinux10"
+                | "almalinux9"
+                | "almalinux10"
                 | "amazonlinux2023"
         );
         assert_eq!(text.contains("pkg:pip:PyYAML"), pip, "{d}");
@@ -571,16 +625,26 @@ fn services_vm_plan_has_every_state() {
         let ops: Vec<&str> = text.lines().filter(|l| l.starts_with("  #")).collect();
         let n = |pred: &dyn Fn(&str) -> bool| ops.iter().filter(|l| pred(l)).count();
         let has = |what: &str, c: usize| assert_eq!(c, 1, "{d}: {what}:\n{}", ops.join("\n"));
-        has("unit op for tp-probe.service", n(&|l| {
-            l.contains(" unit ") && l.contains("file:/etc/systemd/system/tp-probe.service,")
-        }));
-        has("drop-in on tp-probe.service", n(&|l| {
-            l.contains(" unit ") && l.contains("tp-probe.service.d/override.conf")
-        }));
-        has("unit op for tp-probe-off.service", n(&|l| {
-            l.contains(" unit ") && l.contains("file:/etc/systemd/system/tp-probe-off.service")
-        }));
-        has("file op", n(&|l| l.contains(" file ") && l.contains("file:/etc/tp-probe.conf")));
+        has(
+            "unit op for tp-probe.service",
+            n(&|l| {
+                l.contains(" unit ") && l.contains("file:/etc/systemd/system/tp-probe.service,")
+            }),
+        );
+        has(
+            "drop-in on tp-probe.service",
+            n(&|l| l.contains(" unit ") && l.contains("tp-probe.service.d/override.conf")),
+        );
+        has(
+            "unit op for tp-probe-off.service",
+            n(&|l| {
+                l.contains(" unit ") && l.contains("file:/etc/systemd/system/tp-probe-off.service")
+            }),
+        );
+        has(
+            "file op",
+            n(&|l| l.contains(" file ") && l.contains("file:/etc/tp-probe.conf")),
+        );
         // svc ops of tp-probe.service: the state op (no guard), the restart
         // guarded on the unit op (#0), the reload guarded on the file op
         let probe: Vec<&&str> = ops
@@ -588,11 +652,29 @@ fn services_vm_plan_has_every_state() {
             .filter(|l| l.contains(" svc ") && l.contains("svc:tp-probe.service]"))
             .collect();
         assert_eq!(probe.len(), 3, "{d}: {probe:?}");
-        assert!(!probe[0].contains(" when "), "{d}: state op is unguarded: {}", probe[0]);
-        assert!(probe[1].contains("when changed(#0)"), "{d}: restart: {}", probe[1]);
-        assert!(probe[2].contains("when changed(#2)"), "{d}: reload: {}", probe[2]);
-        has("svc tp-probe-off.service", n(&|l| l.contains(" svc ") && l.contains("svc:tp-probe-off.service]")));
-        has("svc tp-probe-masked.service", n(&|l| l.contains(" svc ") && l.contains("svc:tp-probe-masked.service]")));
+        assert!(
+            !probe[0].contains(" when "),
+            "{d}: state op is unguarded: {}",
+            probe[0]
+        );
+        assert!(
+            probe[1].contains("when changed(#0)"),
+            "{d}: restart: {}",
+            probe[1]
+        );
+        assert!(
+            probe[2].contains("when changed(#2)"),
+            "{d}: reload: {}",
+            probe[2]
+        );
+        has(
+            "svc tp-probe-off.service",
+            n(&|l| l.contains(" svc ") && l.contains("svc:tp-probe-off.service]")),
+        );
+        has(
+            "svc tp-probe-masked.service",
+            n(&|l| l.contains(" svc ") && l.contains("svc:tp-probe-masked.service]")),
+        );
         // what the scripts do: enable+start, restart, reload, disable+stop, mask
         assert!(text.contains("systemctl restart -- \"$tp_u\""), "{d}");
         assert!(text.contains("systemctl reload -- \"$tp_u\""), "{d}");
@@ -653,13 +735,21 @@ fn reboot_vm_plan_has_mark_barrier_and_after_op() {
             &|l| l.starts_with("  #") && l.contains("file:/etc/tp-reboot-marked"),
             "marked file op",
         );
-        assert!(lines[marked].contains("needs_reboot"), "{d}: {}", lines[marked]);
+        assert!(
+            lines[marked].contains("needs_reboot"),
+            "{d}: {}",
+            lines[marked]
+        );
         let barrier = at(&|l| l.contains("reboot if pending"), "barrier line");
         let after = at(
             &|l| l.starts_with("  #") && l.contains("file:/etc/tp-reboot-after"),
             "after op",
         );
-        assert!(!lines[after].contains("needs_reboot"), "{d}: {}", lines[after]);
+        assert!(
+            !lines[after].contains("needs_reboot"),
+            "{d}: {}",
+            lines[after]
+        );
         assert!(marked < barrier && barrier < after, "{d}: order\n{text}");
     }
 }
@@ -814,8 +904,15 @@ fn undo_fs_plan_has_three_file_ops_and_the_listing_last() {
         let b = find("file:/srv/tpfs/tp-undo-gone");
         let c = find("file:/var/tmp/tp-undo-fs/gone");
         let last = ops.len() - 1;
-        assert!(ops[last].contains("sh") && !ops[last].contains("file:"), "{d}: last op: {}", ops[last]);
-        assert!(a < last && b < last && c < last, "{d}: the listing is not last\n{text}");
+        assert!(
+            ops[last].contains("sh") && !ops[last].contains("file:"),
+            "{d}: last op: {}",
+            ops[last]
+        );
+        assert!(
+            a < last && b < last && c < last,
+            "{d}: the listing is not last\n{text}"
+        );
         assert!(text.contains("/root/tp-undo-fs-mid.txt"), "{d}: {text}");
     }
 }

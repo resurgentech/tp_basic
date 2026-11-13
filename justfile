@@ -1,3 +1,8 @@
+# Lint, as telepatch's `just lint`: rustfmt and clippy with warnings denied.
+lint:
+    cargo fmt --check
+    cargo clippy --all-targets -- -D warnings
+
 # Run all repo checks on the conversion material.
 check-conversion:
     bash scripts/check-conversion.sh

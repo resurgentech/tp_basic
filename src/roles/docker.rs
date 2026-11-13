@@ -182,7 +182,8 @@ pub async fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
             // Source: https://docs.docker.com/engine/install/rhel/ (accessed 2026-11-03)
             // Source: https://docs.docker.com/engine/install/centos/ (accessed 2026-11-03)
             // Source: https://docs.docker.com/engine/install/fedora/ (accessed 2026-11-03)
-            h.repo("docker").dnf_url(&format!("{BASE}/{path}/docker-ce.repo"));
+            h.repo("docker")
+                .dnf_url(&format!("{BASE}/{path}/docker-ce.repo"));
             h.pkg(PACKAGES);
         }
         Source::Distro => {

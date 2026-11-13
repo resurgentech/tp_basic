@@ -108,5 +108,8 @@ fn rust_kernel_has_no_sh() {
         .filter(|(_, l)| calls_sh(code(l)))
         .map(|(i, _)| i + 1)
         .collect();
-    assert!(hits.is_empty(), "rust_kernel.rs calls sh! at lines {hits:?}");
+    assert!(
+        hits.is_empty(),
+        "rust_kernel.rs calls sh! at lines {hits:?}"
+    );
 }

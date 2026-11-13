@@ -113,7 +113,11 @@ pub async fn golang(h: &Host<Vars>) -> Result<(), TraceError> {
         .binary_release(
             BinaryRelease::new()
                 .url("https://go.dev/dl/go{version}.linux-{arch}.tar.gz")
-                .sha256(Sum::json("https://go.dev/dl/?mode=json", "filename", "sha256"))
+                .sha256(Sum::json(
+                    "https://go.dev/dl/?mode=json",
+                    "filename",
+                    "sha256",
+                ))
                 .unpack_to("/usr/local/go")
                 .strip(1)
                 .bin("/usr/local/go/bin/go")
