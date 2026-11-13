@@ -69,8 +69,16 @@
 # listing shows two backups under /srv/tpfs/.telepatch/tmp/<run>/undo/root/<id>/,
 # a stage symlink to each, one plain stage directory for the /var/tmp target and
 # no /.telepatch on the root filesystem; after the run neither
-# /srv/tpfs/.telepatch nor /var/tmp/telepatch/<run> exists, the file holds the
+# /srv/tpfs/.telepatch/tmp nor /var/tmp/telepatch/<run> exists, the file holds the
 # new bytes, both directories are gone, and run 1 was STATUS changed.
+# T119's fetch case (written, run in T104): the setup serves /var/lib/tp-fetch/blob.txt
+# and pkg.tgz on the root filesystem; the playbook fetches them as file:// URLs
+# into /srv/tpfs/tp-fetch-blob.txt (.from) and /srv/tpfs/tp-fetch-tree (.unpack).
+# The mid-run listing shows the downloads on /srv/tpfs/.telepatch/ (the cache
+# entries there) and only links in the stage; after the run the cache entries
+# stay on /srv/tpfs/.telepatch/cache/sha256 (the main cache is unused), its tmp is
+# gone, and run 2 is STATUS ok, CHANGED 0, with both fetches `cached` (a hit on
+# /srv/tpfs, no download).
 #
 #   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm, reboot_vm or undo_fs)
 #   scripts/test-vm.sh --self-test
@@ -747,10 +755,66 @@ undo_fs_mid_problems() {
     return 0
 }
 
+# The fixed sums of the fetch case's two served files (src/playbooks/undo.rs).
+UNDO_FETCH_SUMS=(9c2355ab6d8d2a8020c65547e567e31f80eb41eede1ce611e591d82779be5cc0 2d44dca14b5af2c8e4f1c784d246deacf22fb8c613641a9422696514249c0789)
+
+# undo_fs_fetch_problems <listing> <download|hit> : one line per way the fetch
+# part of the mid-run listing is not what T119 promises, nothing when it is.
+# Each served file has a `fetchcache` entry under /srv/tpfs/.telepatch/cache/sha256/
+# and a `fetchlink` from /var/tmp/telepatch/<run>/f-<sum> to it; the stage holds no
+# regular file (`stagefile`, the `fsroots` index aside); no `.part` is left in
+# the run's fetch directory (`fetchtmp`); and that directory exists after a
+# download (`fetchdir present`) but not after a cache hit (nothing was made).
+undo_fs_fetch_problems() {
+    local f=$1 want=$2 run s n
+    run=$(undo_fs_mid_run "$f")
+    [[ -n $run ]] || { echo "no 'run <id>' line"; return 0; }
+    n=$(grep -c '^fetchlink ' "$f" || true)
+    [[ $n -eq 2 ]] || echo "$n fetchlink lines, wanted 2"
+    for s in "${UNDO_FETCH_SUMS[@]}"; do
+        grep -qxF "fetchcache /srv/tpfs/.telepatch/cache/sha256/$s" "$f" || echo "no cache entry $s on /srv/tpfs/.telepatch/cache/sha256"
+        grep -qxF "fetchlink /var/tmp/telepatch/$run/f-$s -> /srv/tpfs/.telepatch/cache/sha256/$s" "$f" || echo "no stage link f-$s to the cache entry on /srv/tpfs"
+    done
+    n=$(grep -c '^stagefile ' "$f" || true)
+    [[ $n -eq 0 ]] || echo "$n regular file(s) in the stage, wanted only links"
+    n=$(grep -c '^fetchtmp ' "$f" || true)
+    [[ $n -eq 0 ]] || echo "$n file(s) left in the run's fetch directory on /srv/tpfs"
+    if [[ $want == download ]]; then
+        grep -qx 'fetchdir present' "$f" || echo "no fetch directory under /srv/tpfs/.telepatch/tmp/$run (the download was not staged there)"
+    else
+        grep -qx 'fetchdir absent' "$f" || echo "a cache hit made /srv/tpfs/.telepatch/tmp/$run/fetch"
+    fi
+    return 0
+}
+
 # undo_fs_self_test : the listing readers of the undo_fs checks.
 undo_fs_self_test() {
     local fails=0 t got r=RUNX
     t=$(mktemp -d)
+    local c=/srv/tpfs/.telepatch/cache/sha256 s0=${UNDO_FETCH_SUMS[0]} s1=${UNDO_FETCH_SUMS[1]}
+    printf '%s\n' "fetchlink /var/tmp/telepatch/$r/f-$s0 -> $c/$s0" "fetchlink /var/tmp/telepatch/$r/f-$s1 -> $c/$s1" \
+        "fetchcache $c/$s0" "fetchcache $c/$s1" 'fetchdir present' "run $r" >"$t/fgood"
+    got=$(undo_fs_fetch_problems "$t/fgood" download)
+    if [[ -z $got ]]; then echo "ok   undo_fs_fetch_problems: a good download listing has none"; else echo "FAIL good fetch listing: $got"; fails=1; fi
+    got=$(undo_fs_fetch_problems "$t/fgood" hit)
+    if [[ $got == *'a cache hit made'* ]]; then echo "ok   undo_fs_fetch_problems: a fetch directory after a hit is named"; else echo "FAIL hit with a fetch dir: '$got'"; fails=1; fi
+    sed 's/^fetchdir present/fetchdir absent/' "$t/fgood" >"$t/fhit"
+    got=$(undo_fs_fetch_problems "$t/fhit" hit)
+    if [[ -z $got ]]; then echo "ok   undo_fs_fetch_problems: a good hit listing has none"; else echo "FAIL good hit listing: $got"; fails=1; fi
+    got=$(undo_fs_fetch_problems "$t/fhit" download)
+    if [[ $got == *'was not staged there'* ]]; then echo "ok   undo_fs_fetch_problems: a download with no fetch directory is named"; else echo "FAIL download with no fetch dir: '$got'"; fails=1; fi
+    { cat "$t/fgood"; echo "stagefile /var/tmp/telepatch/$r/0.part"; echo "fetchtmp $c/../tmp/$r/fetch/1.part"; } >"$t/fbad"
+    got=$(undo_fs_fetch_problems "$t/fbad" download)
+    if [[ $got == *'regular file(s) in the stage'* && $got == *"left in the run's fetch directory"* ]]; then echo "ok   undo_fs_fetch_problems: a file in the stage and a left .part are named"
+    else echo "FAIL stage file and left part: '$got'"; fails=1; fi
+    grep -v "^fetchlink .*f-$s1" "$t/fgood" >"$t/fnolink"
+    got=$(undo_fs_fetch_problems "$t/fnolink" download)
+    if [[ $got == *'1 fetchlink lines, wanted 2'* && $got == *"no stage link f-$s1"* ]]; then echo "ok   undo_fs_fetch_problems: a missing stage link is named"
+    else echo "FAIL missing fetch link: '$got'"; fails=1; fi
+    sed "s#-> $c/$s0#-> /var/cache/telepatch/sha256/$s0#" "$t/fgood" >"$t/fmain"
+    got=$(undo_fs_fetch_problems "$t/fmain" download)
+    if [[ $got == *"no stage link f-$s0 to the cache entry on /srv/tpfs"* ]]; then echo "ok   undo_fs_fetch_problems: a link into the main cache is named"
+    else echo "FAIL link into the main cache: '$got'"; fails=1; fi
     printf '%s\n' "backup /srv/tpfs/.telepatch/tmp/$r/undo/root/0/" "backup /srv/tpfs/.telepatch/tmp/$r/undo/root/1/" \
         "link /var/tmp/telepatch/$r/undo/root/0 -> /srv/tpfs/.telepatch/tmp/$r/undo/root/0" \
         "link /var/tmp/telepatch/$r/undo/root/1 -> /srv/tpfs/.telepatch/tmp/$r/undo/root/1" \
@@ -1094,6 +1158,11 @@ printf 'old bytes\n' > /srv/tpfs/tp-undo-file
 mkdir -p /srv/tpfs/tp-undo-gone/sub /var/tmp/tp-undo-fs/gone/sub
 printf 'x\n' > /srv/tpfs/tp-undo-gone/sub/f
 printf 'y\n' > /var/tmp/tp-undo-fs/gone/sub/f
+# T119: two files served from the root filesystem (file:// URLs, no network)
+mkdir -p /var/lib/tp-fetch
+printf 'tp fetch bytes\n' > /var/lib/tp-fetch/blob.txt
+printf '%s' 'H4sIAAAAAAAAA+3VSwrCMBSFYceuIhtQ00eSsWCHTtxB1frAR0uN+7cVC7Yo4iBR8f8myexeOOSk2K0HwVCOeg7JilHqela654O7NjrsCeVyqcb5ZNNSCB+jvlFxy3+WjCfTxM2MOlQdx8/zD7v5Gx1V+Us367T9ef62EKvMLjaizNLlIet/eh/41bz/+fbo7A94v/+Niuh/L+7zt3m+dzHjZf9L1c4/kHGo6H8f6swpfQAAAAAAAAAAAAD4fRfw7WVeACgAAA==' | base64 -d > /var/lib/tp-fetch/pkg.tgz
+echo "undo_fs fetch files: $(sha256sum /var/lib/tp-fetch/blob.txt /var/lib/tp-fetch/pkg.tgz | cut -c1-16 | tr '\n' ' ')"
 echo "undo_fs setup: device $(stat -c %d /srv/tpfs) on /srv/tpfs, $(stat -c %d /var/tmp) on /var/tmp"
 SETUP
 }
@@ -1377,7 +1446,18 @@ if [[ $container == undo_fs ]]; then
     else while IFS= read -r l; do bad "mid-run listing: $l"; done <<<"$probs"; fi
     run=$(undo_fs_mid_run "$mid")
     vexpect "the second filesystem has a device of its own" different '[ "$(stat -c %d /srv/tpfs)" != "$(stat -c %d /var/tmp)" ] && echo different || echo same'
-    vexpect "after the run /srv/tpfs/.telepatch" absent '[ -e /srv/tpfs/.telepatch ] && echo present || echo absent'
+    # T119: the fetch case. The downloads were on /srv/tpfs mid-run, with only links in the stage.
+    fprobs=$(undo_fs_fetch_problems "$mid" download)
+    if [[ -z $fprobs ]]; then ok "mid-run: both downloads are cache entries under /srv/tpfs/.telepatch/cache/sha256/, the stage holds only a link to each, no .part left"
+    else while IFS= read -r l; do bad "mid-run fetch listing: $l"; done <<<"$fprobs"; fi
+    # what is left: /srv/tpfs/.telepatch holds the cache only (its tmp went with the run); the main cache was not used
+    vexpect "after the run /srv/tpfs/.telepatch/tmp" absent '[ -e /srv/tpfs/.telepatch/tmp ] && echo present || echo absent'
+    vexpect "after the run /srv/tpfs/.telepatch holds" cache 'ls /srv/tpfs/.telepatch'
+    vexpect "after the run the cache on /srv/tpfs" "$(printf '%s\n' "${UNDO_FETCH_SUMS[@]}" | sort | tr '\n' ' ' | sed 's/ $//')" 'ls /srv/tpfs/.telepatch/cache/sha256 | sort | tr "\n" " " | sed "s/ $//"'
+    vexpect "the cache entries are root-owned 0644" '644 root' 'for f in /srv/tpfs/.telepatch/cache/sha256/*; do stat -c "%a %U" "$f"; done | sort -u'
+    vexpect "the main cache holds neither file" absent '[ -e /var/cache/telepatch/sha256/'"${UNDO_FETCH_SUMS[0]}"' ] || [ -e /var/cache/telepatch/sha256/'"${UNDO_FETCH_SUMS[1]}"' ] && echo present || echo absent'
+    vexpect "after the run /srv/tpfs/tp-fetch-blob.txt" 'tp fetch bytes' 'cat /srv/tpfs/tp-fetch-blob.txt'
+    vexpect "after the run /srv/tpfs/tp-fetch-tree/README" 'tp fetch readme' 'cat /srv/tpfs/tp-fetch-tree/README'
     if [[ -n $run ]]; then
         vexpect "after the run /var/tmp/telepatch/$run" absent "if [ -e /var/tmp/telepatch/$run ] || [ -L /var/tmp/telepatch/$run ]; then echo present; else echo absent; fi"
     else bad "after the run: no run id in the listing, /var/tmp/telepatch/<run> not checked"; fi
@@ -1385,9 +1465,27 @@ if [[ $container == undo_fs ]]; then
     vexpect "after the run /srv/tpfs/tp-undo-file" 'new bytes' 'cat /srv/tpfs/tp-undo-file'
     vexpect "after the run /srv/tpfs/tp-undo-gone" absent '[ -e /srv/tpfs/tp-undo-gone ] && echo present || echo absent'
     vexpect "after the run /var/tmp/tp-undo-fs/gone" absent '[ -e /var/tmp/tp-undo-fs/gone ] && echo present || echo absent'
+    # T119, run 2: nothing changes, and both fetches are a hit on /srv/tpfs (no download, no fetch directory)
+    echo "=== undo_fs run 2: the cache on /srv/tpfs answers ==="
+    rc2=0; run 2 || rc2=$?
+    mid2=$out/undo-fs-mid2.txt
+    sshv 'sudo -n cat /root/tp-undo-fs-mid.txt' >"$mid2" 2>&1 || true
+    echo "mid-run listing of run 2:"; sed 's/^/     | /' "$mid2"
+    if [[ $rc2 -eq 0 && $(status_of "$out/run2.out") == ok && $(changed_of "$out/run2.out") == 0 ]]; then ok "run 2: STATUS ok, CHANGED 0"
+    else
+        bad "run 2 exited $rc2, STATUS $(status_of "$out/run2.out"), CHANGED $(changed_of "$out/run2.out") (log: $out/run2.out)"
+        changed_ops "$out/run2.out" | sed 's/^/     changed: /'
+    fi
+    nhit=$(grep -c '\[prepare\] fetch file:///var/lib/tp-fetch/.*: cached' "$out/run2.out" || true)
+    if [[ $nhit -eq 2 ]]; then ok "run 2: both fetches say cached (the cache on /srv/tpfs, no download)"
+    else bad "run 2: $nhit fetch line(s) say cached, wanted 2 (log: $out/run2.out)"; fi
+    fprobs2=$(undo_fs_fetch_problems "$mid2" hit)
+    if [[ -z $fprobs2 ]]; then ok "run 2 mid-run: a stage link to each cache entry on /srv/tpfs, no fetch directory made"
+    else while IFS= read -r l; do bad "run 2 mid-run fetch listing: $l"; done <<<"$fprobs2"; fi
+    vexpect "after run 2 /srv/tpfs/.telepatch holds" cache 'ls /srv/tpfs/.telepatch'
     if [[ $wrc -ne 0 ]]; then echo "FAIL: an undo_fs check failed"; exit 1; fi
     echo "undo_fs checks: all passed"
-    echo "PASS: undo_fs on a $distro VM over SSH (backups on the target's own filesystem, a stage link each, no /.telepatch on the root filesystem, all gone after the run)"
+    echo "PASS: undo_fs on a $distro VM over SSH (backups on the target's own filesystem, a stage link each, no /.telepatch on the root filesystem, all gone after the run; fetches cached on the target's filesystem, run 2 CHANGED 0)"
     exit 0
 fi
 
