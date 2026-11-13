@@ -1,0 +1,2 @@
+# undo_fs (test-only) has no vars of its own: scripts/test-vm.sh passes this
+# file only because tp-basic run takes a vars file. Every value is the default.

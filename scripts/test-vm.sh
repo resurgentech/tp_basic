@@ -57,7 +57,22 @@
 # new boot id, the after file new and the marked op `-> ok`: the mark an earlier
 # run left drove the reboot. Run 5 is CHANGED 0 with no reboot.
 #
-#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm or reboot_vm)
+# undo_fs (test-only, vars/undo_fs.toml, 1 GiB, the image's disk, one run, every
+# check prints ok or FAIL and all gate): the proof, with no TP_FS_ROOTS seam, of
+# T106's backup on the target's own filesystem. Setup, as root INSIDE the VM over
+# the script's SSH path: a 64 MiB ext4 image (/var/lib/tp-undo.img) loop-mounted
+# at /srv/tpfs, with the file /srv/tpfs/tp-undo-file, the directory
+# /srv/tpfs/tp-undo-gone and /var/tmp/tp-undo-fs/gone made before the run. The
+# playbook writes new bytes over the file and runs `.absent()` on both
+# directories; its last op writes a listing of what exists mid-run to
+# /root/tp-undo-fs-mid.txt (the run log carries no sh output). Checks: the
+# listing shows two backups under /srv/tpfs/.telepatch/tmp/<run>/undo/root/<id>/,
+# a stage symlink to each, one plain stage directory for the /var/tmp target and
+# no /.telepatch on the root filesystem; after the run neither
+# /srv/tpfs/.telepatch nor /var/tmp/telepatch/<run> exists, the file holds the
+# new bytes, both directories are gone, and run 1 was STATUS changed.
+#
+#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm, reboot_vm or undo_fs)
 #   scripts/test-vm.sh --self-test
 #
 # Needs: build/tp-basic (`just musl`). This script does not read a container
@@ -202,6 +217,9 @@ playbook_config() {
         # test-only (src/playbooks/reboot.rs): two files and the reboot
         # barrier between them, nothing installed.
         reboot_vm) PB_NAME=reboot_vm PB_VARS=vars/reboot_vm.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
+        # test-only (src/playbooks/undo.rs): a file and two directories, one
+        # target on a 64 MiB loop-mounted image the setup makes in the VM.
+        undo_fs) PB_NAME=undo_fs PB_VARS=vars/undo_fs.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
         *) return 1 ;;
     esac
 }
@@ -696,6 +714,70 @@ table_row() {
     }' "$1"
 }
 
+# undo_fs_mid_run <listing> : the run id the playbook's last op printed
+# (`run <id>`), empty when there is none.
+undo_fs_mid_run() { sed -n 's/^run //p' "$1" | head -1; }
+
+# undo_fs_mid_problems <listing> : one line per way the mid-run listing
+# (src/playbooks/undo.rs) is not what T106 promises, nothing when it is. Two
+# `backup` lines under /srv/tpfs/.telepatch/tmp/<run>/undo/root/<id>/, each with
+# a `link` from /var/tmp/telepatch/<run>/undo/root/<id> to it, one `stagedir`
+# (the /var/tmp target: a plain directory in the stage, no link), and
+# `root-telepatch absent`.
+undo_fs_mid_problems() {
+    local f=$1 run nb nl ns b l t
+    run=$(undo_fs_mid_run "$f")
+    [[ -n $run ]] || { echo "no 'run <id>' line"; return 0; }
+    nb=$(grep -c '^backup ' "$f" || true)
+    nl=$(grep -c '^link ' "$f" || true)
+    ns=$(grep -c '^stagedir ' "$f" || true)
+    [[ $nb -eq 2 ]] || echo "$nb backup lines, wanted 2"
+    [[ $nl -eq 2 ]] || echo "$nl link lines, wanted 2"
+    [[ $ns -eq 1 ]] || echo "$ns stagedir lines, wanted 1"
+    while read -r _ b; do
+        [[ $b == "/srv/tpfs/.telepatch/tmp/$run/undo/root/"*/ ]] || echo "backup '$b' is not under /srv/tpfs/.telepatch/tmp/$run/undo/root/<id>/"
+        grep -qxF "link /var/tmp/telepatch/$run/undo/root/$(basename "$b") -> ${b%/}" "$f" || echo "backup $b has no stage link to it"
+    done < <(grep '^backup ' "$f")
+    while read -r _ l _ t; do
+        [[ $l == "/var/tmp/telepatch/$run/undo/root/"* ]] || echo "link '$l' is not under the stage's undo/root"
+        grep -qxF "backup $t/" "$f" || echo "link $l points at '$t', which is not a listed backup"
+    done < <(grep '^link ' "$f")
+    grep -q "^stagedir /var/tmp/telepatch/$run/undo/root/" "$f" || echo "no plain stage directory for the /var/tmp target"
+    grep -qx 'root-telepatch absent' "$f" || echo "the root filesystem has a /.telepatch (or the line is missing)"
+    return 0
+}
+
+# undo_fs_self_test : the listing readers of the undo_fs checks.
+undo_fs_self_test() {
+    local fails=0 t got r=RUNX
+    t=$(mktemp -d)
+    printf '%s\n' "backup /srv/tpfs/.telepatch/tmp/$r/undo/root/0/" "backup /srv/tpfs/.telepatch/tmp/$r/undo/root/1/" \
+        "link /var/tmp/telepatch/$r/undo/root/0 -> /srv/tpfs/.telepatch/tmp/$r/undo/root/0" \
+        "link /var/tmp/telepatch/$r/undo/root/1 -> /srv/tpfs/.telepatch/tmp/$r/undo/root/1" \
+        "stagedir /var/tmp/telepatch/$r/undo/root/2" 'root-telepatch absent' "run $r" >"$t/good"
+    got=$(undo_fs_mid_run "$t/good")
+    if [[ $got == "$r" ]]; then echo "ok   undo_fs_mid_run -> $got"; else echo "FAIL undo_fs_mid_run -> '$got'"; fails=1; fi
+    got=$(undo_fs_mid_problems "$t/good")
+    if [[ -z $got ]]; then echo "ok   undo_fs_mid_problems: a good listing has none"; else echo "FAIL good listing: $got"; fails=1; fi
+    grep -v '^link .*root/1 ' "$t/good" >"$t/nolink"
+    got=$(undo_fs_mid_problems "$t/nolink")
+    if [[ $got == *'1 link lines, wanted 2'* && $got == *'has no stage link'* ]]; then echo "ok   undo_fs_mid_problems: a missing link is named"
+    else echo "FAIL missing link: '$got'"; fails=1; fi
+    sed 's/^root-telepatch absent/root-telepatch PRESENT/' "$t/good" >"$t/rootfs"
+    got=$(undo_fs_mid_problems "$t/rootfs")
+    if [[ $got == *'/.telepatch'* ]]; then echo "ok   undo_fs_mid_problems: a /.telepatch on the root filesystem is named"
+    else echo "FAIL root .telepatch: '$got'"; fails=1; fi
+    sed "s#^stagedir .*#link /var/tmp/telepatch/$r/undo/root/2 -> /elsewhere#" "$t/good" >"$t/wrong"
+    got=$(undo_fs_mid_problems "$t/wrong")
+    if [[ $got == *'not a listed backup'* && $got == *'0 stagedir lines'* ]]; then echo "ok   undo_fs_mid_problems: a link to elsewhere is named"
+    else echo "FAIL link to elsewhere: '$got'"; fails=1; fi
+    : >"$t/empty"
+    got=$(undo_fs_mid_problems "$t/empty")
+    if [[ $got == "no 'run <id>' line" ]]; then echo "ok   undo_fs_mid_problems: an empty listing says so"; else echo "FAIL empty listing: '$got'"; fails=1; fi
+    rm -rf "$t"
+    return $fails
+}
+
 # reboot_vm_vars3 <file> : run 3's vars, a fresh mark (`marked` changed) and
 # a changed `after`, both different from vars/reboot_vm.toml's. Runs 4 and 5
 # use the same file.
@@ -802,9 +884,13 @@ self_test() {
     if [[ $got == "reboot_vm|vars/reboot_vm.toml|0|1|" ]]; then echo "ok   playbook reboot_vm -> $got"
     else echo "FAIL playbook reboot_vm -> '$got'"; fails=1; fi
     reboot_vm_self_test || fails=1
+    got=$(playbook_config undo_fs && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "undo_fs|vars/undo_fs.toml|0|1|" ]]; then echo "ok   playbook undo_fs -> $got"
+    else echo "FAIL playbook undo_fs -> '$got'"; fails=1; fi
+    undo_fs_self_test || fails=1
     # every accepted playbook gives a VM name vm.sh's guard accepts (`_` is not in tp-[a-z0-9-]+)
     local pbn
-    for pbn in dev_base dev_desktop services_vm reboot_vm; do
+    for pbn in dev_base dev_desktop services_vm reboot_vm undo_fs; do
         got=$(vm_name_for "$pbn" 20261112t000000z)
         if vm_name_ok "$got"; then echo "ok   vm name for $pbn -> $got"
         else echo "FAIL vm name for $pbn -> '$got' is refused by vm_name_ok"; fails=1; fi
@@ -915,7 +1001,7 @@ if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
 distro=${1:-}; container=${2:-}
 [[ -n $distro && -n $container ]] || die "usage: test-vm.sh [--keep] <distro> <playbook> | --self-test"
 [[ $distro == ubuntu2404 ]] || die "only the ubuntu2404 image is supported, not '$distro'"
-playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm, reboot_vm"
+playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm, reboot_vm, undo_fs"
 
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
@@ -991,6 +1077,29 @@ b0=
 if [[ $container == reboot_vm ]]; then
     b0=$(sshv "$boot_cmd" 2>&1) || b0="(failed: $b0)"
     echo "boot id before run 1: $b0"
+fi
+
+# undo_fs: the setup, as root INSIDE the VM over the script's SSH path (never on
+# the machine running this script). A 64 MiB ext4 image loop-mounted at
+# /srv/tpfs, and the three targets, all existing before the run: the file the
+# content op backs up, the directory on the image and the one under /var/tmp.
+undo_fs_setup() {
+    sshv 'sudo -n sh -s' <<'SETUP'
+set -e
+truncate -s 64M /var/lib/tp-undo.img
+mkfs.ext4 -q -F /var/lib/tp-undo.img
+mkdir -p /srv/tpfs
+mount -o loop /var/lib/tp-undo.img /srv/tpfs
+printf 'old bytes\n' > /srv/tpfs/tp-undo-file
+mkdir -p /srv/tpfs/tp-undo-gone/sub /var/tmp/tp-undo-fs/gone/sub
+printf 'x\n' > /srv/tpfs/tp-undo-gone/sub/f
+printf 'y\n' > /var/tmp/tp-undo-fs/gone/sub/f
+echo "undo_fs setup: device $(stat -c %d /srv/tpfs) on /srv/tpfs, $(stat -c %d /var/tmp) on /var/tmp"
+SETUP
+}
+if [[ $container == undo_fs ]]; then
+    echo "=== undo_fs setup in the VM: 64 MiB ext4 loop-mounted at /srv/tpfs ==="
+    if ! undo_fs_setup; then echo "FAIL: the undo_fs setup failed"; exit 1; fi
 fi
 
 rc1=0; run 1 || rc1=$?
@@ -1241,6 +1350,44 @@ if [[ $container == reboot_vm ]]; then
     if [[ $wrc -ne 0 ]]; then echo "FAIL: a reboot_vm check failed"; exit 1; fi
     echo "reboot_vm checks: all passed"
     echo "PASS: reboot_vm on a $distro VM over SSH (run 1 crossed the barrier; run 2 CHANGED 0, no reboot; run 3 --reboot never stopped at the barrier; run 4 rebooted from the mark; run 5 CHANGED 0)"
+    exit 0
+fi
+
+# ---- undo_fs: the real device walk on a second filesystem (gating) -----------------
+# Run 1 is done (exit 0; the setup above ran before it). Every check prints ok
+# or FAIL; the verdict comes after all of them.
+if [[ $container == undo_fs ]]; then
+    wrc=0
+    ok() { echo "ok   $1"; }
+    bad() { echo "FAIL $1"; wrc=1; }
+    # vexpect <label> <want> <command>: the command's stdout, run over SSH, is <want>
+    vexpect() {
+        local o r=0
+        o=$(sshv "$3" 2>&1) || r=$?
+        if [[ $o == "$2" ]]; then ok "$1: $o"; else bad "$1 printed '$o' (exit $r), wanted '$2'"; fi
+    }
+    echo "=== undo_fs after run 1: the mid-run listing and what is left ==="
+    mid=$out/undo-fs-mid.txt
+    sshv 'sudo -n cat /root/tp-undo-fs-mid.txt' >"$mid" 2>&1 || true
+    echo "mid-run listing (/root/tp-undo-fs-mid.txt):"; sed 's/^/     | /' "$mid"
+    if [[ $(status_of "$out/run1.out") == changed ]]; then ok "run 1: STATUS changed"
+    else bad "run 1: STATUS '$(status_of "$out/run1.out")', wanted changed (log: $out/run1.out)"; fi
+    probs=$(undo_fs_mid_problems "$mid")
+    if [[ -z $probs ]]; then ok "mid-run: two backups under /srv/tpfs/.telepatch/tmp/<run>/undo/root/<id>/, a stage link to each, one plain stage directory, no /.telepatch on the root filesystem"
+    else while IFS= read -r l; do bad "mid-run listing: $l"; done <<<"$probs"; fi
+    run=$(undo_fs_mid_run "$mid")
+    vexpect "the second filesystem has a device of its own" different '[ "$(stat -c %d /srv/tpfs)" != "$(stat -c %d /var/tmp)" ] && echo different || echo same'
+    vexpect "after the run /srv/tpfs/.telepatch" absent '[ -e /srv/tpfs/.telepatch ] && echo present || echo absent'
+    if [[ -n $run ]]; then
+        vexpect "after the run /var/tmp/telepatch/$run" absent "if [ -e /var/tmp/telepatch/$run ] || [ -L /var/tmp/telepatch/$run ]; then echo present; else echo absent; fi"
+    else bad "after the run: no run id in the listing, /var/tmp/telepatch/<run> not checked"; fi
+    vexpect "after the run /.telepatch" absent '[ -e /.telepatch ] && echo present || echo absent'
+    vexpect "after the run /srv/tpfs/tp-undo-file" 'new bytes' 'cat /srv/tpfs/tp-undo-file'
+    vexpect "after the run /srv/tpfs/tp-undo-gone" absent '[ -e /srv/tpfs/tp-undo-gone ] && echo present || echo absent'
+    vexpect "after the run /var/tmp/tp-undo-fs/gone" absent '[ -e /var/tmp/tp-undo-fs/gone ] && echo present || echo absent'
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: an undo_fs check failed"; exit 1; fi
+    echo "undo_fs checks: all passed"
+    echo "PASS: undo_fs on a $distro VM over SSH (backups on the target's own filesystem, a stage link each, no /.telepatch on the root filesystem, all gone after the run)"
     exit 0
 fi
 

@@ -797,3 +797,35 @@ fn edge_plans() {
         });
     }
 }
+
+/// `undo_fs` (test-only, see `playbooks/undo.rs`): a content op over an
+/// existing file and two `.absent()` ops, then the mid-run listing op last.
+#[test]
+fn undo_fs_plan_has_three_file_ops_and_the_listing_last() {
+    for d in DISTROS {
+        let text = plan("undo_fs", d);
+        let ops = op_lines(&text);
+        let find = |what: &str| {
+            let v: Vec<usize> = (0..ops.len()).filter(|&i| ops[i].contains(what)).collect();
+            assert_eq!(v.len(), 1, "{d}: {what}:\n{text}");
+            v[0]
+        };
+        let a = find("file:/srv/tpfs/tp-undo-file");
+        let b = find("file:/srv/tpfs/tp-undo-gone");
+        let c = find("file:/var/tmp/tp-undo-fs/gone");
+        let last = ops.len() - 1;
+        assert!(ops[last].contains("sh") && !ops[last].contains("file:"), "{d}: last op: {}", ops[last]);
+        assert!(a < last && b < last && c < last, "{d}: the listing is not last\n{text}");
+        assert!(text.contains("/root/tp-undo-fs-mid.txt"), "{d}: {text}");
+    }
+}
+
+#[test]
+fn undo_fs_plans() {
+    for d in DISTROS {
+        let text = plan("undo_fs", d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("undo_fs__{d}"), text);
+        });
+    }
+}
