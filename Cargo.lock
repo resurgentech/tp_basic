@@ -659,6 +659,7 @@ dependencies = [
  "sha2",
  "similar",
  "telepatch-macros",
+ "tempfile",
  "tokio",
  "toml",
  "zeroize",
