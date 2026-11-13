@@ -7,7 +7,7 @@
 //! source lines the plan snapshots record.) A vars file is layered per
 //! section by `telepatch::vars`: the role's `[section]`, then a top-level
 //! key of the same name (every role with a field of that name), then the
-//! playbook's defaults (`services_vm` alone supplies any), then the role's
+//! playbook's defaults (`services_vm` and `reboot_vm` alone supply any), then the role's
 //! own `Default`. A
 //! top-level key no role has, or an unknown key in a section, is an error
 //! naming the file and line.
@@ -137,6 +137,28 @@ impl Default for ServicesVmVars {
     }
 }
 
+/// `playbooks/reboot.rs` `reboot_vm` (test-only, not a role): the vars
+/// `scripts/test-vm.sh` changes on run 3, a fresh mark and a changed file
+/// after the barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RebootVmVars {
+    /// The body of `/etc/tp-reboot-marked`, the file op marked
+    /// `.needs_reboot()`.
+    pub marked: String,
+    /// The body of `/etc/tp-reboot-after`, the file op after the barrier.
+    pub after: String,
+}
+
+impl Default for RebootVmVars {
+    fn default() -> Self {
+        RebootVmVars {
+            marked: "marked=1\n".to_string(),
+            after: "after=1\n".to_string(),
+        }
+    }
+}
+
 /// Roles with vars of their own. A role not listed reads none.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -147,4 +169,5 @@ pub struct Vars {
     pub rust_kernel: RustKernelVars,
     pub rust_build: RustBuildVars,
     pub services_vm: ServicesVmVars,
+    pub reboot_vm: RebootVmVars,
 }

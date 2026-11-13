@@ -1,0 +1,7 @@
+# reboot_vm (test-only). scripts/test-vm.sh changes both vars on run 3: a
+# changed `marked` is a fresh mark (the marked file op changes again), a
+# changed `after` shows whether the op after the barrier ran. The values are
+# the playbook's own defaults.
+[reboot_vm]
+marked = "marked=1\n"
+after = "after=1\n"

@@ -1,0 +1,56 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host debian12 (os: Debian/Debian 12)
+blocking reads: 0
+
+window 1 (final)
+role (none)
+  #0 file as shell:root reads [] writes [file:/etc/tp-reboot-marked] needs_reboot post [file:/etc/tp-reboot-marked=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/tp-reboot-marked'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | tp_b='bWFya2VkPTEK'
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      |   if [ "$rc" -eq 0 ]; then
+      |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
+      |       if [ -e "$tp_p" ]; then
+      |         chmod --reference="$tp_p" "$tp_t"; chown --reference="$tp_p" "$tp_t" 2>/dev/null
+      |       else
+      |         chmod 644 "$tp_t"
+      |       fi
+      |       mv -f "$tp_t" "$tp_p"; rc=$?
+      |     else
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi
+
+-- reboot if pending --
+
+window 2 (final)
+role (none)
+  #2 file as shell:root reads [] writes [file:/etc/tp-reboot-after] post [file:/etc/tp-reboot-after=Exists(true)]
+      | rc=0; changed=0
+      | tp_p='/etc/tp-reboot-after'
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | tp_b='YWZ0ZXI9MQo='
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      |   if [ "$rc" -eq 0 ]; then
+      |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
+      |       if [ -e "$tp_p" ]; then
+      |         chmod --reference="$tp_p" "$tp_t"; chown --reference="$tp_p" "$tp_t" 2>/dev/null
+      |       else
+      |         chmod 644 "$tp_t"
+      |       fi
+      |       mv -f "$tp_t" "$tp_p"; rc=$?
+      |     else
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi

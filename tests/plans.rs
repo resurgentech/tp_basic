@@ -637,6 +637,43 @@ fn services_vm_description_var_is_the_units_content() {
     assert_ne!(a, b);
 }
 
+/// `reboot_vm` (test-only, see `playbooks/reboot.rs`): the marked file op,
+/// the reboot barrier, then the file op after it.
+#[test]
+fn reboot_vm_plan_has_mark_barrier_and_after_op() {
+    for d in DISTROS {
+        let text = plan("reboot_vm", d);
+        let lines: Vec<&str> = text.lines().collect();
+        let at = |pred: &dyn Fn(&str) -> bool, what: &str| {
+            let v: Vec<usize> = (0..lines.len()).filter(|&i| pred(lines[i])).collect();
+            assert_eq!(v.len(), 1, "{d}: {what}:\n{text}");
+            v[0]
+        };
+        let marked = at(
+            &|l| l.starts_with("  #") && l.contains("file:/etc/tp-reboot-marked"),
+            "marked file op",
+        );
+        assert!(lines[marked].contains("needs_reboot"), "{d}: {}", lines[marked]);
+        let barrier = at(&|l| l.contains("reboot if pending"), "barrier line");
+        let after = at(
+            &|l| l.starts_with("  #") && l.contains("file:/etc/tp-reboot-after"),
+            "after op",
+        );
+        assert!(!lines[after].contains("needs_reboot"), "{d}: {}", lines[after]);
+        assert!(marked < barrier && barrier < after, "{d}: order\n{text}");
+    }
+}
+
+#[test]
+fn reboot_vm_plans() {
+    for d in DISTROS {
+        let text = plan("reboot_vm", d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("reboot_vm__{d}"), text);
+        });
+    }
+}
+
 /// Every registered playbook, planned twice on every distro, is the same
 /// text. The plan has no per-process token (T86c).
 #[test]

@@ -110,7 +110,9 @@ test-services distro:
 # was retired; this script does not compare against a container record.
 # Ansible against telepatch on a VM is test-vm-oracle. `just test-vm ubuntu2404 dev_base`
 # or `just test-vm ubuntu2404 dev_desktop` (vars/desktop.toml, 30 GB disk;
-# per-user working checks for bot and tpdev gate after run 2).
+# per-user working checks for bot and tpdev gate after run 2), or the test-only
+# `services_vm` (units, five runs) and `reboot_vm` (reboot marks and the barrier,
+# five runs, `--reboot never` on run 3).
 test-vm distro playbook:
     bash scripts/test-vm.sh {{distro}} {{playbook}}
 

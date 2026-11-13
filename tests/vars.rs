@@ -118,9 +118,14 @@ fn a_vars_file_value_beats_the_playbook_default() {
 }
 
 #[test]
-fn only_services_vm_supplies_defaults() {
+fn only_the_test_playbooks_supply_defaults() {
     for p in tp_basic::playbooks() {
         let has = !p.defaults_toml().unwrap().is_empty();
-        assert_eq!(has, p.name == "services_vm", "{}", p.name);
+        assert_eq!(
+            has,
+            p.name == "services_vm" || p.name == "reboot_vm",
+            "{}",
+            p.name
+        );
     }
 }

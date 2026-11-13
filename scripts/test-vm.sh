@@ -42,7 +42,22 @@
 # zero `daemon_reload` events and journal delta 0. Run 5, the same vars, is
 # CHANGED 0.
 #
-#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop or services_vm)
+# reboot_vm (test-only, vars/reboot_vm.toml, 1 GiB, the image's disk, five runs,
+# every check prints ok or FAIL and all gate): a file op marked
+# `.needs_reboot()`, the barrier `h.reboot().if_pending()`, a file op after it.
+# The boot id is read before run 1. Run 1 exits 0, STATUS changed, the boot id
+# differs, run1.out says `boot id changed, shells reopened`, run1.jsonl has one
+# `reboot` event, /etc/tp-reboot-after holds its default and
+# /run/telepatch/reboot-pending is gone. Run 2 (same vars) is CHANGED 0 with no
+# reboot and the same boot id. Run 3 gets a vars copy (vars-run3.toml) that
+# changes `marked` (a fresh mark) and `after`, with `--reboot never`: exit 1,
+# STATUS `reboot pending`, `reboot pending at barrier`, the marked file new, the
+# after file old, the mark file present and naming the marked file, no reboot,
+# same boot id. Run 4 (run 3's vars, default policy) exits 0 with one reboot, a
+# new boot id, the after file new and the marked op `-> ok`: the mark an earlier
+# run left drove the reboot. Run 5 is CHANGED 0 with no reboot.
+#
+#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm or reboot_vm)
 #   scripts/test-vm.sh --self-test
 #
 # Needs: build/tp-basic (`just musl`). This script does not read a container
@@ -184,9 +199,16 @@ playbook_config() {
         # test-only (src/playbooks/desktop.rs): a few units, nothing is
         # installed, so the image's own disk is plenty.
         services_vm) PB_NAME=services_vm PB_VARS=vars/services_vm.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
+        # test-only (src/playbooks/reboot.rs): two files and the reboot
+        # barrier between them, nothing installed.
+        reboot_vm) PB_NAME=reboot_vm PB_VARS=vars/reboot_vm.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
         *) return 1 ;;
     esac
 }
+
+# vm_name_for <playbook> <stamp> : the VM's name, tp-<playbook>-<stamp>, with
+# every `_` of the playbook as `-` (vm.sh accepts only tp-[a-z0-9-]+).
+vm_name_for() { echo "tp-${1//_/-}-$2"; }
 
 # desktop_secret_vars <dest> : a copy of vars/desktop.toml whose password is
 # an env reference. The hash stays in TP_TEST_PW_HASH and is not written.
@@ -654,6 +676,73 @@ services_vm_self_test() {
     return $fails
 }
 
+# reboot_events <run.jsonl> : how many `reboot` events the run streamed
+# (one per reboot the executor did, telepatch's reboot.rs).
+reboot_events() { grep -c '"ev":"reboot"' "$1" || true; }
+
+# table_row <run.out> <status|changed> : the STATUS or CHANGED cell of the
+# host row under the `HOST STATUS OK CHANGED ..` header. STATUS can be two
+# words (`reboot pending`), so the row is read from the right of the status:
+# the first field from the third on that starts four numbers (OK CHANGED
+# FAILED NOT RUN) ends it.
+table_row() {
+    awk -v want="$2" '/^HOST  *STATUS/ {
+        getline
+        for (i = 3; i + 3 <= NF; i++)
+            if ($i ~ /^[0-9]+$/ && $(i+1) ~ /^[0-9]+$/ && $(i+2) ~ /^[0-9]+$/ && $(i+3) ~ /^[0-9]+$/) break
+        if (want == "changed") { print $(i+1); exit }
+        s = $2; for (k = 3; k < i; k++) s = s " " $k
+        print s; exit
+    }' "$1"
+}
+
+# reboot_vm_vars3 <file> : run 3's vars, a fresh mark (`marked` changed) and
+# a changed `after`, both different from vars/reboot_vm.toml's. Runs 4 and 5
+# use the same file.
+reboot_vm_vars3() {
+    printf '%s\n' '# reboot_vm run 3: a fresh mark, and a changed file after the barrier' '[reboot_vm]' \
+        'marked = "marked=2\n"' 'after = "after=2\n"' >"$1"
+}
+
+# reboot_vm_self_test : the log readers of the reboot_vm checks, on
+# synthetic output (the table is telepatch's report.rs, the event is
+# reboot.rs's `{"ev":"reboot",..}`).
+reboot_vm_self_test() {
+    local t fails=0 got hdr='HOST                 STATUS            OK CHANGED FAILED NOT RUN  DETAIL'
+    t=$(mktemp -d)
+    printf '%s\n' "$hdr" 'bot@h                changed            1       2      0       0' >"$t/changed"
+    printf '%s\n' "$hdr" 'bot@h                ok                 3       0      0       0' >"$t/ok"
+    printf '%s\n' "$hdr" 'bot@h                reboot pending     1       1      0       1  reboot pending at barrier' >"$t/pend"
+    printf '%s\n' "$hdr" 'bot@h                failed             1       0      1       2  role (none): file /etc/x (rc 1)' >"$t/failed"
+    got="$(table_row "$t/changed" status)|$(table_row "$t/changed" changed)"
+    if [[ $got == 'changed|2' ]]; then echo "ok   table_row changed -> $got"; else echo "FAIL table_row changed -> '$got'"; fails=1; fi
+    got="$(table_row "$t/ok" status)|$(table_row "$t/ok" changed)"
+    if [[ $got == 'ok|0' ]]; then echo "ok   table_row ok -> $got"; else echo "FAIL table_row ok -> '$got'"; fails=1; fi
+    got="$(table_row "$t/pend" status)|$(table_row "$t/pend" changed)"
+    if [[ $got == 'reboot pending|1' ]]; then echo "ok   table_row reboot pending (two words) -> $got"; else echo "FAIL table_row reboot pending -> '$got'"; fails=1; fi
+    got="$(table_row "$t/failed" status)|$(table_row "$t/failed" changed)"
+    if [[ $got == 'failed|0' ]]; then echo "ok   table_row failed with a detail -> $got"; else echo "FAIL table_row failed -> '$got'"; fails=1; fi
+    printf '%s\n' '{"ev":"op_start","host":"h"}' \
+        '{"ev":"reboot","host":"h","down_s":31,"old_boot_id":"a","new_boot_id":"b","items":["file /etc/tp-reboot-marked"]}' \
+        '{"ev":"op_result","host":"h"}' >"$t/r.jsonl"
+    got=$(reboot_events "$t/r.jsonl")
+    if [[ $got -eq 1 ]]; then echo "ok   reboot_events -> 1"; else echo "FAIL reboot_events -> $got"; fails=1; fi
+    : >"$t/empty.jsonl"
+    got=$(reboot_events "$t/empty.jsonl")
+    if [[ $got -eq 0 ]]; then echo "ok   reboot_events of nothing -> 0"; else echo "FAIL reboot_events of nothing -> $got"; fails=1; fi
+    printf '%s\n' '== h [reboot] down 31s, boot id changed, shells reopened ==' >"$t/r.out"
+    if grep -qF 'boot id changed, shells reopened' "$t/r.out"; then echo "ok   the reboot stream line is the one the checks grep for"
+    else echo "FAIL reboot stream line"; fails=1; fi
+    reboot_vm_vars3 "$t/v3"
+    if grep -q '^\[reboot_vm\]' "$t/v3" && grep -Fq 'marked = "marked=2\n"' "$t/v3" && grep -Fq 'after = "after=2\n"' "$t/v3" \
+        && ! cmp -s "$t/v3" "$ROOT/vars/reboot_vm.toml" \
+        && grep -Fq 'marked = "marked=1\n"' "$ROOT/vars/reboot_vm.toml" \
+        && grep -Fq 'after = "after=1\n"' "$ROOT/vars/reboot_vm.toml"; then echo "ok   reboot_vm_vars3 changes marked and after, differs from vars/reboot_vm.toml"
+    else echo "FAIL reboot_vm_vars3"; fails=1; fi
+    rm -f "$t"/*; rmdir "$t"
+    return $fails
+}
+
 self_test() {
     local t fails=0
     t=$(mktemp -d)
@@ -709,6 +798,17 @@ self_test() {
     if [[ $got == "services_vm|vars/services_vm.toml|0|1|" ]]; then echo "ok   playbook services_vm -> $got"
     else echo "FAIL playbook services_vm -> '$got'"; fails=1; fi
     services_vm_self_test || fails=1
+    got=$(playbook_config reboot_vm && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "reboot_vm|vars/reboot_vm.toml|0|1|" ]]; then echo "ok   playbook reboot_vm -> $got"
+    else echo "FAIL playbook reboot_vm -> '$got'"; fails=1; fi
+    reboot_vm_self_test || fails=1
+    # every accepted playbook gives a VM name vm.sh's guard accepts (`_` is not in tp-[a-z0-9-]+)
+    local pbn
+    for pbn in dev_base dev_desktop services_vm reboot_vm; do
+        got=$(vm_name_for "$pbn" 20261112t000000z)
+        if vm_name_ok "$got"; then echo "ok   vm name for $pbn -> $got"
+        else echo "FAIL vm name for $pbn -> '$got' is refused by vm_name_ok"; fails=1; fi
+    done
     vm_lib_self_test || fails=1
     vm_host_self_test || fails=1
 
@@ -815,7 +915,7 @@ if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
 distro=${1:-}; container=${2:-}
 [[ -n $distro && -n $container ]] || die "usage: test-vm.sh [--keep] <distro> <playbook> | --self-test"
 [[ $distro == ubuntu2404 ]] || die "only the ubuntu2404 image is supported, not '$distro'"
-playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm"
+playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm, reboot_vm"
 
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
@@ -824,7 +924,7 @@ playbook_config "$container" || die "playbook '$container' is not one of: dev_ba
 # (vm_listed, below) is the check
 if vm_is_local; then [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"; fi
 
-name=tp-$container-$(date -u +%Y%m%dt%H%M%Sz)
+name=$(vm_name_for "$container" "$(date -u +%Y%m%dt%H%M%Sz)")
 vm_listed "$name" && die "a VM named $name already exists; not touching it"
 
 out=$ROOT/build/test-vm/$container-$distro
@@ -862,8 +962,12 @@ vm_state "$ROOT/scripts/image-state.sh" >"$out/vm-pre.state"
 echo "captured $out/vm-pre.state ($(wc -l <"$out/vm-pre.state") lines)"
 
 # ---- the two runs -------------------------------------------------------------
-changed_of() { awk '/^HOST  *STATUS/{getline; print $4; exit}' "$1"; }
-status_of() { awk '/^HOST  *STATUS/{getline; print $2; exit}' "$1"; }
+changed_of() { table_row "$1" changed; }
+status_of() { table_row "$1" status; }
+
+# extra tp-basic arguments for run(), empty unless a playbook's checks set
+# them (reboot_vm's run 3: --reboot never)
+RUN_EXTRA=()
 
 run() { # n
     echo "=== run $1: tp-basic run $PB_NAME --host $dest --vars ${RUN_VARS:+(changed copy) }$PB_VARS ==="
@@ -871,7 +975,7 @@ run() { # n
     local rc=0 t0=$SECONDS
     tpb_ssh_args "$key" "$out/known_hosts"
     "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" "${TPB_SSH_ARGS[@]}" \
-        --vars "${RUN_VARS:-$ROOT/$PB_VARS}" --log "$out/run$1.jsonl" \
+        --vars "${RUN_VARS:-$ROOT/$PB_VARS}" --log "$out/run$1.jsonl" "${RUN_EXTRA[@]}" \
         >"$out/run$1.out" 2>&1 || rc=$?
     sed -n '/^HOST  *STATUS/,$p' "$out/run$1.out"
     echo "run $1 took $((SECONDS - t0))s"
@@ -880,6 +984,14 @@ run() { # n
 
 # the installed Go, for second_pass (empty when the playbook has no golang)
 go_now() { sshv '[ -x /usr/local/go/bin/go ] && /usr/local/go/bin/go version || true' 2>/dev/null | awk '{print $3}'; }
+
+# reboot_vm: the boot id before anything runs, to tell a reboot from none
+boot_cmd='cat /proc/sys/kernel/random/boot_id'
+b0=
+if [[ $container == reboot_vm ]]; then
+    b0=$(sshv "$boot_cmd" 2>&1) || b0="(failed: $b0)"
+    echo "boot id before run 1: $b0"
+fi
 
 rc1=0; run 1 || rc1=$?
 if [[ $rc1 -ne 0 ]]; then
@@ -1022,6 +1134,113 @@ if [[ $container == services_vm ]]; then
     if [[ $wrc -ne 0 ]]; then echo "FAIL: a services_vm check failed"; exit 1; fi
     echo "services_vm checks: all passed"
     echo "PASS: services_vm on a $distro VM over SSH (run 1 ok; run 2 CHANGED 0; run 3 one restart, one daemon-reload; run 4 guarded reload, no daemon-reload; run 5 CHANGED 0)"
+    exit 0
+fi
+
+# ---- reboot_vm: marks, the barrier and --reboot never on a booted VM (gating) ------
+# Run 1 is done (exit 0). Every check prints ok or FAIL; the verdict comes
+# after the checks of each run.
+if [[ $container == reboot_vm ]]; then
+    wrc=0
+    ok() { echo "ok   $1"; }
+    bad() { echo "FAIL $1"; wrc=1; }
+    # vexpect <label> <want> <command>: the command's stdout, run over SSH, is <want>
+    vexpect() {
+        local o r=0
+        o=$(sshv "$3" 2>&1) || r=$?
+        if [[ $o == "$2" ]]; then ok "$1: $o"; else bad "$1 printed '$o' (exit $r), wanted '$2'"; fi
+    }
+    # boot_is <label> <same|changed> <boot id to compare with>: sets bnow
+    bnow=
+    boot_is() {
+        bnow=$(sshv "$boot_cmd" 2>&1) || bnow="(failed: $bnow)"
+        if [[ $bnow == '(failed'* || -z $bnow ]]; then bad "$1: boot id unreadable ('$bnow')"
+        elif [[ $2 == changed && $bnow != "$3" ]]; then ok "$1: boot id changed ($3 -> $bnow)"
+        elif [[ $2 == same && $bnow == "$3" ]]; then ok "$1: boot id unchanged ($bnow)"
+        else bad "$1: boot id $3 -> $bnow, wanted it $2"; fi
+    }
+    pend_cmd='test -e /run/telepatch/reboot-pending && echo present || echo absent'
+    # n_reboots <label> <run n> <want>
+    n_reboots() {
+        local n
+        n=$(reboot_events "$out/run$2.jsonl")
+        if [[ $n -eq $3 ]]; then ok "$1: $n reboot event(s)"; else bad "$1: $n reboot events, wanted $3"; fi
+    }
+    [[ $b0 != '(failed'* && -n $b0 ]] || { echo "FAIL: the boot id before run 1 is unreadable ('$b0')"; exit 1; }
+
+    echo "=== reboot_vm after run 1: the marked file op, the barrier, the file after it ==="
+    grep '^== .* \[reboot\]' "$out/run1.out" || true
+    if [[ $(status_of "$out/run1.out") == changed ]]; then ok "run 1: exit 0, STATUS changed"
+    else bad "run 1: STATUS $(status_of "$out/run1.out"), wanted changed (log: $out/run1.out)"; fi
+    boot_is "after run 1" changed "$b0"
+    b1=$bnow
+    if grep -qF 'boot id changed, shells reopened' "$out/run1.out"; then ok "run 1: the stream says 'boot id changed, shells reopened'"
+    else bad "run 1: run1.out lacks 'boot id changed, shells reopened'"; fi
+    n_reboots "run 1" 1 1
+    vexpect "after run 1 /etc/tp-reboot-after (the op after the barrier ran)" 'after=1' 'cat /etc/tp-reboot-after'
+    vexpect "after run 1 /etc/tp-reboot-marked" 'marked=1' 'cat /etc/tp-reboot-marked'
+    vexpect "after run 1 /run/telepatch/reboot-pending" absent "$pend_cmd"
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a reboot_vm check after run 1 failed"; exit 1; }
+
+    echo "=== reboot_vm run 2: same vars, nothing changes, no reboot ==="
+    rc2=0; run 2 || rc2=$?
+    if [[ $rc2 -eq 0 && $(status_of "$out/run2.out") == ok && $(changed_of "$out/run2.out") == 0 ]]; then ok "run 2: STATUS ok, CHANGED 0"
+    else
+        bad "run 2 exited $rc2, STATUS $(status_of "$out/run2.out"), CHANGED $(changed_of "$out/run2.out") (log: $out/run2.out)"
+        changed_ops "$out/run2.out" | sed 's/^/     changed: /'
+    fi
+    n_reboots "run 2" 2 0
+    boot_is "after run 2" same "$b1"
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a reboot_vm check after run 2 failed"; exit 1; }
+
+    echo "=== reboot_vm run 3: a fresh mark, --reboot never stops at the barrier ==="
+    RUN_VARS=$out/vars-run3.toml
+    reboot_vm_vars3 "$RUN_VARS"
+    echo "run 3's vars (runs 4 and 5 too): $RUN_VARS"; sed 's/^/     | /' "$RUN_VARS"
+    RUN_EXTRA=(--reboot never)
+    rc3=0; run 3 || rc3=$?
+    RUN_EXTRA=()
+    if [[ $rc3 -eq 1 ]]; then ok "run 3: exit 1"; else bad "run 3 exited $rc3, wanted 1 (log: $out/run3.out)"; fi
+    if [[ $(status_of "$out/run3.out") == 'reboot pending' ]]; then ok "run 3: STATUS reboot pending"
+    else bad "run 3: STATUS '$(status_of "$out/run3.out")', wanted 'reboot pending' (log: $out/run3.out)"; fi
+    if grep -qF 'reboot pending at barrier' "$out/run3.out"; then ok "run 3: run3.out says 'reboot pending at barrier'"
+    else bad "run 3: run3.out lacks 'reboot pending at barrier'"; fi
+    vexpect "after run 3 /etc/tp-reboot-marked (the marked op ran)" 'marked=2' 'cat /etc/tp-reboot-marked'
+    vexpect "after run 3 /etc/tp-reboot-after (the op after the barrier did not run)" 'after=1' 'cat /etc/tp-reboot-after'
+    vexpect "after run 3 /run/telepatch/reboot-pending" present "$pend_cmd"
+    mk=$(sshv 'sudo -n cat /run/telepatch/reboot-pending' 2>&1) || mk="(failed: $mk)"
+    if [[ $mk == *'/etc/tp-reboot-marked'* ]]; then ok "run 3: the mark lists the marked file: $mk"
+    else bad "run 3: the mark file says '$mk', wanted a line naming /etc/tp-reboot-marked"; fi
+    n_reboots "run 3" 3 0
+    boot_is "after run 3" same "$b1"
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a reboot_vm check after run 3 failed"; exit 1; }
+
+    echo "=== reboot_vm run 4: same vars, default policy: the mark run 3 left reboots ==="
+    rc4=0; run 4 || rc4=$?
+    grep '^== .* \[reboot\]' "$out/run4.out" || true
+    if [[ $rc4 -eq 0 ]]; then ok "run 4: exit 0"; else bad "run 4 exited $rc4, wanted 0 (log: $out/run4.out)"; fi
+    n_reboots "run 4" 4 1
+    boot_is "after run 4" changed "$b1"
+    b4=$bnow
+    vexpect "after run 4 /etc/tp-reboot-after" 'after=2' 'cat /etc/tp-reboot-after'
+    vexpect "after run 4 /run/telepatch/reboot-pending" absent "$pend_cmd"
+    r4=$(op_result "$out/run4.out" 'file /etc/tp-reboot-marked content')
+    if [[ $r4 == '-> ok' ]]; then ok "run 4: the marked file op ended -> ok (the reboot came from run 3's mark)"
+    else bad "run 4: the marked file op ended '$r4', wanted '-> ok'"; fi
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a reboot_vm check after run 4 failed"; exit 1; }
+
+    echo "=== reboot_vm run 5: same vars, nothing changes, no reboot ==="
+    rc5=0; run 5 || rc5=$?
+    if [[ $rc5 -eq 0 && $(status_of "$out/run5.out") == ok && $(changed_of "$out/run5.out") == 0 ]]; then ok "run 5: STATUS ok, CHANGED 0"
+    else
+        bad "run 5 exited $rc5, STATUS $(status_of "$out/run5.out"), CHANGED $(changed_of "$out/run5.out") (log: $out/run5.out)"
+        changed_ops "$out/run5.out" | sed 's/^/     changed: /'
+    fi
+    n_reboots "run 5" 5 0
+    boot_is "after run 5" same "$b4"
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: a reboot_vm check failed"; exit 1; fi
+    echo "reboot_vm checks: all passed"
+    echo "PASS: reboot_vm on a $distro VM over SSH (run 1 crossed the barrier; run 2 CHANGED 0, no reboot; run 3 --reboot never stopped at the barrier; run 4 rebooted from the mark; run 5 CHANGED 0)"
     exit 0
 fi
 
