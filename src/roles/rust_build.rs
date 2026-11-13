@@ -188,11 +188,12 @@ pub async fn rust_build(h: &Host<Vars>) -> Result<(), TraceError> {
 
     // Once per user.
     for u in users(&h.vars.rust_build) {
-        // Every op through `s` runs in a fresh `bash -l` of `u`, not the
+        // Every op through `s` runs in `u`'s persistent login bash, not the
         // passwd shell the YAML parsed. The installer adds
         // `. "$HOME/.cargo/env"` to `~/.profile` (observed 2026-10-30), which
-        // a login bash reads, so `~/.cargo/bin` is on PATH once the install
-        // ran and the YAML's `. ~/.cargo/env &&` prefix is not written (the
+        // a login bash reads; the `rustup` pkg op stales `u`'s shell, so it
+        // reopens and `~/.cargo/bin` is on PATH once the install ran and the
+        // YAML's `. ~/.cargo/env &&` prefix is not written (the
         // two sources also prepend `${CARGO_HOME:-$HOME/.cargo}/bin` to PATH
         // themselves, before probing and after the installer). The
         // equivalence run confirmed it for the `sh!` form. The profile edit
