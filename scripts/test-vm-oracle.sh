@@ -29,7 +29,8 @@
 # gated.
 #
 # The VMs are tp-<container>-ansible-<UTC stamp> and
-# tp-<container>-telepatch-<UTC stamp>; each is deleted after its side, and a
+# tp-<container>-telepatch-<UTC stamp> (each `_` of the container as `-`:
+# dev_desktop_kept -> tp-dev-desktop-kept-...); each is deleted after its side, and a
 # trap deletes whichever still exists on every exit, unless --keep. The SSH key
 # is vmtool's, used in place from .machines/<vm>/ when the VM host is local, or
 # a per-run key made here (scripts/lib/vm.sh) when TP_VM_HOST names a remote
@@ -174,6 +175,10 @@ write_kept_playbook() {
         '- name: dev_desktop, kept roles' '  hosts: all' '  remote_user: root' '  roles:' '    - admin_users' '    - tmux' >"$1"
 }
 
+# vm_name_for <container> <side> <stamp> : the VM's name, tp-<container>-<side>-<stamp>,
+# with every `_` of the container as `-` (vm.sh accepts only tp-[a-z0-9-]+).
+vm_name_for() { echo "tp-${1//_/-}-$2-$3"; }
+
 self_test() {
     local t fails=0
     t=$(mktemp -d)
@@ -290,6 +295,17 @@ self_test() {
         '- name: dev_desktop, kept roles' '  hosts: all' '  remote_user: root' '  roles:' '    - admin_users' '    - tmux') \
         "$t/src/playbooks/tp_dev_desktop_kept.yml" >/dev/null; then echo "ok   kept playbook written"
     else echo "FAIL kept playbook:"; sed 's/^/     | /' "$t/src/playbooks/tp_dev_desktop_kept.yml"; fails=1; fi
+    # the VM names of both sides pass vm.sh's guard (`_` is not in tp-[a-z0-9-]+); lowercase stamp
+    local c side got stamp_t
+    stamp_t=$(date -u +%Y%m%dt%H%M%Sz)
+    if [[ $stamp_t == "${stamp_t,,}" ]]; then echo "ok   stamp is lowercase -> $stamp_t"; else echo "FAIL stamp has uppercase: $stamp_t"; fails=1; fi
+    for c in dev_base dev_desktop_kept; do
+        for side in ansible telepatch; do
+            got=$(vm_name_for "$c" "$side" 20261114t051210z 2>&1)
+            if [[ $got == "tp-${c//_/-}-$side-20261114t051210z" ]] && vm_name_ok "$got"; then echo "ok   vm name for $c $side -> $got"
+            else echo "FAIL vm name for $c $side -> '$got'"; fails=1; fi
+        done
+    done
     return $fails
 }
 
@@ -321,8 +337,8 @@ git -C "$ANSIBLE_REPO" cat-file -e "$sha^{commit}" 2>/dev/null \
     || die "commit $sha not in $ANSIBLE_REPO (only read here: no fetch)"
 
 stamp=$(date -u +%Y%m%dt%H%M%Sz)
-name_ansible=tp-$container-ansible-$stamp
-name_telepatch=tp-$container-telepatch-$stamp
+name_ansible=$(vm_name_for "$container" ansible "$stamp")
+name_telepatch=$(vm_name_for "$container" telepatch "$stamp")
 for n in "$name_ansible" "$name_telepatch"; do
     vm_listed "$n" && die "a VM named $n already exists; not touching it"
 done

@@ -24,6 +24,14 @@
 # `systemctl is-enabled` of docker and libvirtd.socket must print enabled and
 # `is-active` active. dev_base stays two runs (run 2 CHANGED 0).
 # The daemon-reload of a changed unit is proved by services_vm (below).
+# After the working checks dev_desktop also proves T104's goals 8 and 9 on the
+# settled VM: no `undo/` directory under /var/tmp/telepatch and no .telepatch at
+# the root of any real filesystem (findmnt, per mount, pseudo filesystems
+# skipped); `tp-basic run dev_desktop --check` exits 0 with the header `N will
+# change, K ok, B blocked` at N=0, B=0, and run 3's JSONL (jq) shows each
+# `[coverage]` role counts at least its file, unit, repo and user ops
+# reversible; after a manual line appended to /etc/profile.d/go.sh, `--check
+# --diff` exits 2 with N >= 1, B=0 and a `-# tp-t104 manual change` diff line.
 #
 # services_vm (test-only, vars/services_vm.toml, 1 GiB, the image's disk, five
 # runs, every check prints ok or FAIL and all gate): run 1 exits 0 and
@@ -77,15 +85,26 @@
 # The mid-run listing shows the downloads on /srv/tpfs/.telepatch/ (the cache
 # entries there) and only links in the stage; after the run the cache entries
 # stay on /srv/tpfs/.telepatch/cache/sha256 (the main cache is unused), its tmp is
-# gone, and run 2 is STATUS ok, CHANGED 0, with both fetches `cached` (a hit on
+# gone, and run 2 exits 0 with only the mid-run listing op changed (an unguarded sh,
+# so never CHANGED 0; every other op `-> ok`), with both fetches `cached` (a hit on
 # /srv/tpfs, no download).
-# T123's cache case (written, run in T104), after run 2: `tp-basic cache usage
-# --host <vm>` lists /srv/tpfs/.telepatch/cache/sha256 with its two items and a
-# size (the main cache /var/cache/telepatch/sha256 is listed only if it exists;
-# this case fetches onto /srv/tpfs, so it may not, and the check says which);
-# `cache purge --host <vm>` without --yes changes nothing; `cache purge --yes`
-# empties both (/srv/tpfs/.telepatch is gone, the main cache holds no file) and
-# usage then shows 0 items.
+# The cache case (T123 as reshaped by T135 and T136), over ssh from here, after
+# run 2. Touch on use: each item's mtime (`stat -c %Y`) after run 2 is later
+# than after run 1 (a `sleep 2` between the two, for the one-second resolution).
+# Owner markers: cache/owners/undo_fs/<sum> exists beside the cache on /srv/tpfs
+# for each fetched item (and beside the main cache for any item it holds). No
+# .telepatch-usage*, .lock or .caches.lock under /var/cache/telepatch or
+# /srv/tpfs/.telepatch. `tp-basic cache usage --host <vm>` exits 0 with `host
+# <vm>`, a `  /srv/tpfs/.telepatch/cache/sha256: <size>` line, `  working: <size>`,
+# `  host total: <size>` and `inventory total: 1 host, <size>`; the main cache
+# line `  /var/cache/telepatch/sha256: <size>` is required if the directory
+# exists, and when it does not (this case fetches onto /srv/tpfs) a `GAP` line
+# says the step's main-cache line cannot be shown by this case. `cache purge`
+# without --yes says `nothing changed; add --yes` and removes nothing. A
+# stand-in for a dead run's undo data is put in /srv/tpfs/.telepatch/tmp; then
+# `cache purge --yes` leaves no file in either cache and no owners/, leaves
+# the stand-in, /srv/tpfs/.telepatch/tmp and the fetched file alone, and usage
+# shows every listed cache directory at 0.0 MB (a removed one is not listed).
 # local_user (T120, test-only, written and run in T104, one VM): as_user over
 # --local, run INSIDE the VM. The script copies the musl build/tp-basic to
 # /usr/local/bin/tp-basic-local-user and makes `tpuser` (a login shell) and
@@ -808,30 +827,150 @@ undo_fs_fetch_problems() {
     return 0
 }
 
-# cache_usage_problems <usage output> <host> <items on /srv/tpfs> : one line per
-# way `tp-basic cache usage` output (the table) fails the undo_fs cache check:
-# the host is named, /srv/tpfs/.telepatch/cache/sha256 is listed with that many
-# items and a size in MB or GB, and the run total says as many items.
+# The size `tp-basic cache usage` prints (report.rs human_bytes): one decimal,
+# MB below a GiB, GB above. T136 retired the item counts and the run total.
+CACHE_SIZE_RE='[0-9]+\.[0-9] (MB|GB)'
+
+# cache_usage_problems <usage output> <host> <main: yes|no> : one line per way
+# `tp-basic cache usage` output (T136's form) fails the undo_fs cache check: the
+# `host <name>` head; `  /srv/tpfs/.telepatch/cache/sha256: <size>`; the main
+# cache line `  /var/cache/telepatch/sha256: <size>` when <main> is yes (the
+# directory exists on the host; a directory that does not exist is not listed);
+# `  working: <size>`; `  host total: <size>`; `inventory total: 1 host, <size>`.
 cache_usage_problems() {
-    local f=$1 host=$2 n=$3 line
-    local re='^  /srv/tpfs/.telepatch/cache/sha256: ([0-9]+) items?, [0-9]+\.[0-9] (MB|GB)'
+    local f=$1 host=$2 main=$3 line d dirs=(/srv/tpfs/.telepatch/cache/sha256)
+    [[ $main != yes ]] || dirs+=(/var/cache/telepatch/sha256)
     grep -qxF "host $host" "$f" || echo "no 'host $host' line"
-    line=$(grep -F '  /srv/tpfs/.telepatch/cache/sha256: ' "$f" | head -1)
-    if [[ -z $line ]]; then
-        [[ $n -eq 0 ]] || echo "/srv/tpfs/.telepatch/cache/sha256 is not listed"
-    elif [[ $line =~ $re ]]; then
-        [[ ${BASH_REMATCH[1]} == "$n" ]] || echo "/srv/tpfs/.telepatch/cache/sha256 lists '${BASH_REMATCH[1]}' items, wanted $n"
-    else
-        echo "no item count and size on '$line'"
-    fi
-    grep -qE "^run total: 1 host, $n items?, [0-9]+\.[0-9] (MB|GB)\$" "$f" || echo "the run total is not $n item(s)"
+    for d in "${dirs[@]}"; do
+        line=$(grep -F "  $d: " "$f" | head -1 || true)
+        if [[ -z $line ]]; then echo "$d is not listed"
+        elif ! [[ $line =~ ^\ \ $d:\ $CACHE_SIZE_RE$ ]]; then echo "no size on '$line'"; fi
+    done
+    grep -qE "^  working: $CACHE_SIZE_RE\$" "$f" || echo "no 'working: <size>' line"
+    grep -qE "^  host total: $CACHE_SIZE_RE\$" "$f" || echo "no 'host total: <size>' line"
+    grep -qE "^inventory total: 1 host, $CACHE_SIZE_RE\$" "$f" || echo "no 'inventory total: 1 host, <size>' line"
     return 0
 }
 
-# cache_main_listed <usage output> : prints listed or unlisted for the main
-# cache /var/cache/telepatch/sha256 (listed only when the directory exists).
-cache_main_listed() {
-    if grep -qF '  /var/cache/telepatch/sha256: ' "$1"; then echo listed; else echo unlisted; fi
+# cache_usage_zero_problems <usage output> <host> : one line per way the usage
+# after `cache purge --yes` fails: every listed cache directory (a line ending
+# in `/sha256: <size>`) shows 0.0 MB (a directory the purge removed is not
+# listed, which is also zero), and the `working:` line is there.
+cache_usage_zero_problems() {
+    local f=$1 host=$2 line
+    grep -qxF "host $host" "$f" || echo "no 'host $host' line"
+    while IFS= read -r line; do
+        [[ $line == *' 0.0 MB' ]] || echo "${line%%: *} still shows ${line#*: }, wanted 0.0 MB"
+    done < <(grep -E "/sha256: $CACHE_SIZE_RE\$" "$f" | sed 's/^ *//' || true)
+    grep -qE "^  working: $CACHE_SIZE_RE\$" "$f" || echo "no 'working: <size>' line"
+    return 0
+}
+
+# check_header_problems <check output> <host> <zero|some> : one line per way the
+# header of a `--check` fails: exactly one `== <host> [prepare] N will change,
+# K ok, B blocked ==` line (executor.rs say(), report.rs CheckInfo::summary),
+# B is 0, and N is 0 (zero) or at least 1 (some).
+check_header_problems() {
+    local f=$1 host=$2 want=$3 n lines re
+    re="^== ${host//./\\.} \\[prepare\\] ([0-9]+) will change, ([0-9]+) ok, ([0-9]+) blocked ==\$"
+    lines=$(grep -cE "$re" "$f" || true)
+    if [[ $lines -ne 1 ]]; then echo "$lines header line(s) '== $host [prepare] N will change, K ok, B blocked ==', wanted 1"; return 0; fi
+    [[ $(grep -E "$re" "$f") =~ $re ]]
+    n=${BASH_REMATCH[1]}
+    if [[ $want == zero ]]; then [[ $n -eq 0 ]] || echo "the header says $n will change, wanted 0"
+    else [[ $n -ge 1 ]] || echo "the header says $n will change, wanted at least 1"; fi
+    [[ ${BASH_REMATCH[3]} -eq 0 ]] || echo "the header says ${BASH_REMATCH[3]} blocked, wanted 0"
+    return 0
+}
+
+# coverage_table <check output> <host> <run jsonl> : one line per `[coverage]`
+# role, tab separated: role, ops, reversible, sh without undo, and furu: the
+# number of ops in the run's JSONL (`op_start` events; `role` is the role the
+# report names, joined with ", " for a merged op) whose description starts with
+# file, unit, repo or user, for exactly that role. Those kinds are never merged,
+# so their op_start names one role and the match is exact. A role that has such
+# ops in the JSONL but no [coverage] line gets a row with `-` for ops,
+# reversible and sh. Needs jq.
+coverage_table() {
+    local f=$1 host=$2 jl=$3 re line role ops rev sh furu
+    local seen=$'\n'
+    re="^== ${host//./\\.} \\[coverage\\] (.+): ([0-9]+) ops, ([0-9]+) reversible(, ([0-9]+) sh without undo)? ==\$"
+    while IFS= read -r line; do
+        [[ $line =~ $re ]] || continue
+        role=${BASH_REMATCH[1]} ops=${BASH_REMATCH[2]} rev=${BASH_REMATCH[3]} sh=${BASH_REMATCH[5]:-0}
+        seen+="$role"$'\n'
+        furu=$(jq -r --arg r "$role" 'select(.ev=="op_start" and .role==$r) | .desc | split(" ")[0]' "$jl" \
+            | grep -cxE 'file|unit|repo|user' || true)
+        printf '%s\t%s\t%s\t%s\t%s\n' "$role" "$ops" "$rev" "$sh" "$furu"
+    done <"$f"
+    while IFS=$'\t' read -r role furu; do
+        [[ $seen == *$'\n'"$role"$'\n'* ]] || printf '%s\t-\t-\t-\t%s\n' "$role" "$furu"
+    done < <(jq -r 'select(.ev=="op_start" and (.role | contains(", ") | not) and ((.desc | split(" ")[0]) | IN("file","unit","repo","user"))) | .role' "$jl" \
+        | sort | uniq -c | awk '{n=$1; $1=""; sub(/^ /,""); print $0 "\t" n}')
+}
+
+# coverage_problems <table> : one line per way the coverage_table fails the
+# proof that every file, unit, repo and user op counts reversible: no
+# [coverage] line at all, a role whose reversible count is below its
+# file/unit/repo/user ops, or such ops in a role [coverage] does not name.
+coverage_problems() {
+    local role ops rev sh furu n=0
+    while IFS=$'\t' read -r role ops rev sh furu; do
+        [[ -n $role ]] || continue
+        if [[ $ops == - ]]; then echo "$role: ran $furu file/unit/repo/user op(s) but has no [coverage] line"; continue; fi
+        n=$((n + 1))
+        [[ $rev -ge $furu ]] || echo "$role: $rev reversible, but $furu file/unit/repo/user op(s)"
+    done <"$1"
+    [[ $n -gt 0 ]] || echo "no [coverage] line"
+    return 0
+}
+
+# check_diff_problems <check --diff output> <host> <path> <removed line> : one
+# line per way `--check --diff` fails to show the manual change: no
+# `[prepare] file <path>: will change` line, or no `<host> | -<removed line>`
+# line (the diff is hunks only, each line prefixed `<host> | `; the diff goes
+# from the host's content to the wanted, so the line the manual change added is
+# a `-` line).
+check_diff_problems() {
+    local f=$1 host=$2 path=$3 gone=$4
+    grep -qxF "== $host [prepare] file $path: will change ==" "$f" || echo "no [prepare] line 'file $path: will change'"
+    grep -qxF "$host | -$gone" "$f" || echo "no diff line '-$gone'"
+    return 0
+}
+
+# real_mounts <file of "TARGET FSTYPE" lines> : the targets of real filesystems,
+# skipping pseudo and image ones (findmnt -rn -o TARGET,FSTYPE).
+real_mounts() {
+    awk '$2 !~ /^(proc|sysfs|tmpfs|devtmpfs|cgroup2?|devpts|mqueue|debugfs|tracefs|securityfs|pstore|bpf|configfs|fusectl|hugetlbfs|autofs|binfmt_misc|efivarfs|nsfs|squashfs|overlay|ramfs)$/ {print $1}' "$1"
+}
+
+# undo_fs_run2_ops <run.out> : one `<result><TAB><desc>` line per op (`== h [roles] #N desc ==`
+# then its `-> result`); prepare/coverage headers have no #N and are skipped.
+undo_fs_run2_ops() {
+    awk '/^== [^]]*\] #[0-9]+ /{h = $0; sub(/^== [^]]*\] #[0-9]+ /, "", h); sub(/ ==$/, "", h); want = 1; next}
+         /^== /{want = 0; next}
+         want && /^-> /{r = $2; sub(/:$/, "", r); print r "\t" h; want = 0}' "$1"
+}
+
+# undo_fs_run2_problems <run.out> <exit code> : what is wrong with the settled run of undo_fs.
+# The test playbook's last op lists the run's own undo data mid-run (src/playbooks/undo.rs,
+# `HACK(test)`): an unguarded `sh!` that writes /root/tp-undo-fs-mid.txt on every run, so it
+# always ends `-> changed` and run 2 can never be CHANGED 0. Right for run 2: exit 0, the
+# listing op (header starting `sh ( for d in /srv/tpfs/.telepatch/tmp/`) is the only op that
+# changed, and every other op ended `-> ok`. A listing op that did not change did not run
+# (or the instrumentation moved): a problem, not a pass.
+undo_fs_run2_problems() {
+    local f=$1 rc=$2 res desc nl=0 nok=0 nother=0
+    [[ $rc -eq 0 ]] || echo "exit code $rc, wanted 0"
+    while IFS=$'\t' read -r res desc; do
+        if [[ $desc == 'sh ( for d in /srv/tpfs/.telepatch/tmp/'* ]]; then
+            nl=$((nl + 1))
+            [[ $res == changed ]] || echo "the listing op ended '-> $res', wanted '-> changed'"
+        elif [[ $res == ok ]]; then nok=$((nok + 1))
+        else nother=$((nother + 1)); echo "op '$desc' ended '-> $res', wanted '-> ok'"; fi
+    done < <(undo_fs_run2_ops "$f")
+    [[ $nl -eq 1 ]] || echo "$nl listing op(s) in the run, wanted 1 (the instrumentation op did not run, or ran twice)"
+    [[ $((nok + nother)) -gt 0 ]] || echo "no other op in the run"
 }
 
 # undo_fs_self_test : the listing readers of the undo_fs checks.
@@ -885,20 +1024,136 @@ undo_fs_self_test() {
     : >"$t/empty"
     got=$(undo_fs_mid_problems "$t/empty")
     if [[ $got == "no 'run <id>' line" ]]; then echo "ok   undo_fs_mid_problems: an empty listing says so"; else echo "FAIL empty listing: '$got'"; fails=1; fi
-    printf '%s\n' 'host bot@192.0.2.7' '  /srv/tpfs/.telepatch/cache/sha256: 2 items, 0.0 MB' '    unowned: 2 items, 0.0 MB' '  host total: 2 items, 0.0 MB' '' 'run total: 1 host, 2 items, 0.0 MB' >"$t/cu2"
-    printf '%s\n' 'host bot@192.0.2.7' '  host total: 0 items, 0.0 MB' '' 'run total: 1 host, 0 items, 0.0 MB' >"$t/cu0"
-    printf '%s\n' 'host bot@192.0.2.7' '  /srv/tpfs/.telepatch/cache/sha256: 1 item, 1.5 GB' '  /var/cache/telepatch/sha256: 0 items, 0.0 MB' 'run total: 1 host, 1 item, 1.5 GB' >"$t/cu1"
-    got=$(cache_usage_problems "$t/cu2" bot@192.0.2.7 2)
-    if [[ -z $got ]]; then echo "ok   cache_usage_problems: a good listing has none"; else echo "FAIL good usage: $got"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu0" bot@192.0.2.7 0)
-    if [[ -z $got ]]; then echo "ok   cache_usage_problems: an emptied cache lists nothing and totals 0"; else echo "FAIL empty usage: $got"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu0" bot@192.0.2.7 2)
-    if [[ $got == *'is not listed'* && $got == *'run total is not 2'* ]]; then echo "ok   cache_usage_problems: a missing directory and total are named"; else echo "FAIL missing dir: '$got'"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu1" bot@192.0.2.7 2)
-    if [[ $got == *"lists '1' items, wanted 2"* ]]; then echo "ok   cache_usage_problems: a wrong count is named"; else echo "FAIL wrong count: '$got'"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu2" bot@other 2)
-    if [[ $got == *"no 'host bot@other' line"* ]]; then echo "ok   cache_usage_problems: a wrong host is named"; else echo "FAIL wrong host: '$got'"; fails=1; fi
-    if [[ $(cache_main_listed "$t/cu1") == listed && $(cache_main_listed "$t/cu2") == unlisted ]]; then echo "ok   cache_main_listed"; else echo "FAIL cache_main_listed"; fails=1; fi
+    # run 2 of undo_fs: only the unguarded listing op changes
+    local L='sh ( for d in /srv/tpfs/.telepatch/tmp/$__tp_run/undo/root/*/; do ... )'
+    printf '%s\n' '== bot@h [prepare] fetch file:///var/lib/tp-fetch/blob.txt: cached ==' \
+        '== bot@h [(none)] #0 file /srv/tpfs/tp-undo-file content ==' '-> ok' \
+        '== bot@h [(none)] #1 absent /srv/tpfs/tp-undo-gone ==' '-> ok' \
+        '== bot@h [(none)] #2 fetch /srv/tpfs/tp-fetch-blob.txt ==' '-> ok' \
+        "== bot@h [(none)] #3 $L ==" '-> changed' 'bot@h  changed  4  1  0  0' >"$t/u2good"
+    got=$(undo_fs_run2_problems "$t/u2good" 0 2>&1)
+    if [[ -z $got ]]; then echo "ok   undo_fs_run2_problems: only the listing op changed -> none"; else echo "FAIL good run 2: '$got'"; fails=1; fi
+    awk 'NR==3{print "-> changed"; next} {print}' "$t/u2good" >"$t/u2file"
+    got=$(undo_fs_run2_problems "$t/u2file" 0 2>&1)
+    if [[ $got == *"op 'file /srv/tpfs/tp-undo-file content' ended '-> changed'"* ]]; then echo "ok   undo_fs_run2_problems: a changed file op is named"; else echo "FAIL changed file op: '$got'"; fails=1; fi
+    awk '/^== .* #3 /{skip=2} skip>0{skip--; next} {print}' "$t/u2good" >"$t/u2none"
+    got=$(undo_fs_run2_problems "$t/u2none" 0 2>&1)
+    if [[ $got == *'0 listing op(s)'* ]]; then echo "ok   undo_fs_run2_problems: no listing op is a problem"; else echo "FAIL no listing op: '$got'"; fails=1; fi
+    sed 's/^-> changed$/-> ok/' "$t/u2good" >"$t/u2quiet"
+    got=$(undo_fs_run2_problems "$t/u2quiet" 0 2>&1)
+    if [[ $got == *"the listing op ended '-> ok'"* ]]; then echo "ok   undo_fs_run2_problems: an unchanged listing op is a problem"; else echo "FAIL quiet listing op: '$got'"; fails=1; fi
+    got=$(undo_fs_run2_problems "$t/u2good" 1 2>&1)
+    if [[ $got == *'exit code 1'* ]]; then echo "ok   undo_fs_run2_problems: a failed run is named"; else echo "FAIL failed run: '$got'"; fails=1; fi
+    awk 'NR==3{print "-> failed: boom"; next} {print}' "$t/u2good" >"$t/u2fail"
+    got=$(undo_fs_run2_problems "$t/u2fail" 1 2>&1)
+    if [[ $got == *"ended '-> failed'"* && $got == *'exit code 1'* ]]; then echo "ok   undo_fs_run2_problems: a failed op and exit code are both named"; else echo "FAIL failed op: '$got'"; fails=1; fi
+    local H=bot@192.0.2.7 U='  /srv/tpfs/.telepatch/cache/sha256: 0.2 MB' M='  /var/cache/telepatch/sha256: 0.0 MB'
+    printf '%s\n' "host $H" "$U" '  working: 0.0 MB' '  host total: 0.2 MB' '' 'inventory total: 1 host, 0.2 MB' >"$t/cu_good"
+    printf '%s\n' "host $H" "$U" "$M" '  working: 0.0 MB' '  host total: 0.2 MB' '' 'inventory total: 1 host, 0.2 MB' >"$t/cu_main"
+    grep -v '/srv/tpfs' "$t/cu_main" >"$t/cu_nosrv"
+    grep -v 'working:' "$t/cu_main" >"$t/cu_nowork"
+    grep -v 'inventory total' "$t/cu_main" >"$t/cu_noinv"
+    got=$(cache_usage_problems "$t/cu_main" "$H" yes)
+    if [[ -z $got ]]; then echo "ok   cache_usage_problems: a good listing with the main cache has none"; else echo "FAIL good usage: $got"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_good" "$H" no)
+    if [[ -z $got ]]; then echo "ok   cache_usage_problems: a good listing without a main cache (none on the host) has none"; else echo "FAIL good usage, no main: $got"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_good" "$H" yes)
+    if [[ $got == *'/var/cache/telepatch/sha256 is not listed'* ]]; then echo "ok   cache_usage_problems: a main cache that exists but is not listed is named"; else echo "FAIL main not listed: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_nosrv" "$H" yes)
+    if [[ $got == *'/srv/tpfs/.telepatch/cache/sha256 is not listed'* ]]; then echo "ok   cache_usage_problems: a missing /srv/tpfs line is named"; else echo "FAIL missing srv: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_nowork" "$H" yes)
+    if [[ $got == *"no 'working: <size>' line"* ]]; then echo "ok   cache_usage_problems: a missing working line is named"; else echo "FAIL missing working: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_noinv" "$H" yes)
+    if [[ $got == *"no 'inventory total: "* ]]; then echo "ok   cache_usage_problems: a missing inventory total is named"; else echo "FAIL missing inventory: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_main" other@host yes)
+    if [[ $got == *"no 'host other@host' line"* ]]; then echo "ok   cache_usage_problems: a wrong host is named"; else echo "FAIL wrong host: '$got'"; fails=1; fi
+    sed 's/: 0.2 MB/: 12 items, 0.2 MB/' "$t/cu_good" >"$t/cu_old"
+    got=$(cache_usage_problems "$t/cu_old" "$H" no)
+    if [[ $got == *"no size on '  /srv/tpfs/.telepatch/cache/sha256: 12 items"* ]]; then echo "ok   cache_usage_problems: the retired item-count form is not accepted"; else echo "FAIL old form: '$got'"; fails=1; fi
+    printf '%s\n' "host $H" '  working: 0.0 MB' '  host total: 0.0 MB' '' 'inventory total: 1 host, 0.0 MB' >"$t/cz_good"
+    printf '%s\n' "host $H" '  /srv/tpfs/.telepatch/cache/sha256: 0.0 MB' '  working: 0.0 MB' '  host total: 0.0 MB' '' 'inventory total: 1 host, 0.0 MB' >"$t/cz_listed"
+    got=$(cache_usage_zero_problems "$t/cz_good" "$H"); got+=$(cache_usage_zero_problems "$t/cz_listed" "$H")
+    if [[ -z $got ]]; then echo "ok   cache_usage_zero_problems: no cache line, or a 0.0 MB one, has none"; else echo "FAIL zero usage: $got"; fails=1; fi
+    got=$(cache_usage_zero_problems "$t/cu_good" "$H")
+    if [[ $got == *"/srv/tpfs/.telepatch/cache/sha256 still shows 0.2 MB"* ]]; then echo "ok   cache_usage_zero_problems: a nonzero cache after the purge is named"; else echo "FAIL nonzero after purge: '$got'"; fails=1; fi
+    grep -v working "$t/cz_good" >"$t/cz_nowork"
+    got=$(cache_usage_zero_problems "$t/cz_nowork" "$H")
+    if [[ $got == *"no 'working: <size>' line"* ]]; then echo "ok   cache_usage_zero_problems: a missing working line is named"; else echo "FAIL zero, no working: '$got'"; fails=1; fi
+    rm -rf "$t"
+    return $fails
+}
+
+# check_proof_self_test : the readers of dev_desktop's --check proof, on
+# synthetic text shaped like `tp-basic run --check` output and run 3's JSONL.
+check_proof_self_test() {
+    local fails=0 t got H=bot@192.0.2.7
+    t=$(mktemp -d)
+    printf '%s\n' "== $H [prepare] 0 will change, 87 ok, 0 blocked ==" \
+        "== $H [coverage] golang: 3 ops, 3 reversible ==" \
+        "== $H [coverage] dev_common > docker: 6 ops, 6 reversible ==" \
+        "== $H [coverage] rust_build: 14 ops, 12 reversible, 2 sh without undo ==" \
+        "HOST  STATUS" >"$t/c0"
+    sed 's/0 will change, 87 ok/4 will change, 83 ok/' "$t/c0" >"$t/c4"
+    got=$(check_header_problems "$t/c0" "$H" zero)
+    if [[ -z $got ]]; then echo "ok   check_header_problems: '0 will change, K ok, 0 blocked' is a settled host"; else echo "FAIL good header: $got"; fails=1; fi
+    got=$(check_header_problems "$t/c4" "$H" some)
+    if [[ -z $got ]]; then echo "ok   check_header_problems: 4 will change, 0 blocked is accepted where some are wanted"; else echo "FAIL good header (some): $got"; fails=1; fi
+    got=$(check_header_problems "$t/c4" "$H" zero)
+    if [[ $got == *'4 will change, wanted 0'* ]]; then echo "ok   check_header_problems: a wrong N is named"; else echo "FAIL wrong N: '$got'"; fails=1; fi
+    got=$(check_header_problems "$t/c0" "$H" some)
+    if [[ $got == *'0 will change, wanted at least 1'* ]]; then echo "ok   check_header_problems: no change where one is wanted is named"; else echo "FAIL zero where some: '$got'"; fails=1; fi
+    sed 's/0 blocked/1 blocked/' "$t/c0" >"$t/cb"
+    got=$(check_header_problems "$t/cb" "$H" zero)
+    if [[ $got == *'1 blocked, wanted 0'* ]]; then echo "ok   check_header_problems: a blocked host is named"; else echo "FAIL blocked: '$got'"; fails=1; fi
+    grep -v 'will change' "$t/c0" >"$t/cn"
+    got=$(check_header_problems "$t/cn" "$H" zero)
+    if [[ $got == *'0 header line'* ]]; then echo "ok   check_header_problems: a missing header is named"; else echo "FAIL missing header: '$got'"; fails=1; fi
+    { cat "$t/c0"; grep 'will change' "$t/c0"; } >"$t/c2"
+    got=$(check_header_problems "$t/c2" "$H" zero)
+    if [[ $got == *'2 header line'* ]]; then echo "ok   check_header_problems: two headers are named"; else echo "FAIL two headers: '$got'"; fails=1; fi
+    # run 3's JSONL: a merged op names several roles (not counted); only op_start counts
+    printf '%s\n' \
+        '{"ev":"op_start","host":"h","id":1,"role":"golang","desc":"file /etc/profile.d/go.sh content"}' \
+        '{"ev":"op_start","host":"h","id":2,"role":"golang","desc":"pkg binary_release go latest"}' \
+        '{"ev":"op_start","host":"h","id":3,"role":"golang","desc":"user bot"}' \
+        '{"ev":"op_start","host":"h","id":4,"role":"dev_common > docker","desc":"repo docker"}' \
+        '{"ev":"op_start","host":"h","id":5,"role":"dev_common > docker","desc":"unit docker.service drop-in"}' \
+        '{"ev":"op_start","host":"h","id":6,"role":"dev_common > docker, golang","desc":"file merged-like"}' \
+        '{"ev":"op_start","host":"h","id":7,"role":"rust_build","desc":"sh cargo build"}' \
+        '{"ev":"op_end","host":"h","id":7,"role":"rust_build","desc":"file not an op_start"}' >"$t/r3.jsonl"
+    got=$(coverage_table "$t/c0" "$H" "$t/r3.jsonl" | tr '\t' '|' | tr '\n' ' ')
+    if [[ $got == 'golang|3|3|0|2 dev_common > docker|6|6|0|2 rust_build|14|12|2|0 ' ]]; then echo "ok   coverage_table: role, ops, reversible, sh without undo and the file/unit/repo/user count per role"
+    else echo "FAIL coverage_table: '$got'"; fails=1; fi
+    coverage_table "$t/c0" "$H" "$t/r3.jsonl" >"$t/tab"
+    got=$(coverage_problems "$t/tab")
+    if [[ -z $got ]]; then echo "ok   coverage_problems: every role reversible for its file/unit/repo/user ops has none"; else echo "FAIL good coverage: $got"; fails=1; fi
+    sed 's/golang: 3 ops, 3 reversible/golang: 3 ops, 1 reversible, 2 sh without undo/' "$t/c0" >"$t/cshort"
+    coverage_table "$t/cshort" "$H" "$t/r3.jsonl" >"$t/tabshort"
+    got=$(coverage_problems "$t/tabshort")
+    if [[ $got == *'golang: 1 reversible, but 2 file/unit/repo/user op(s)'* ]]; then echo "ok   coverage_problems: a role short of reversible is named"; else echo "FAIL short role: '$got'"; fails=1; fi
+    grep -v 'rust_build\|golang' "$t/c0" >"$t/cmiss"
+    coverage_table "$t/cmiss" "$H" "$t/r3.jsonl" >"$t/tabmiss"
+    got=$(coverage_problems "$t/tabmiss")
+    if [[ $got == *"golang: ran 2 file/unit/repo/user op(s) but has no [coverage] line"* ]]; then echo "ok   coverage_problems: a role the run used but coverage lacks is named"; else echo "FAIL role missing: '$got'"; fails=1; fi
+    : >"$t/notab"
+    got=$(coverage_problems "$t/notab")
+    if [[ $got == *'no [coverage] line'* ]]; then echo "ok   coverage_problems: no coverage lines at all is named"; else echo "FAIL no coverage: '$got'"; fails=1; fi
+    # the diff of go.sh
+    printf '%s\n' "== $H [prepare] file /etc/profile.d/go.sh: will change ==" "$H | @@ -1,2 +1 @@" \
+        "$H |  export PATH=x" "$H | -# tp-t104 manual change" "== $H [prepare] 1 will change, 86 ok, 0 blocked ==" >"$t/d1"
+    got=$(check_diff_problems "$t/d1" "$H" /etc/profile.d/go.sh '# tp-t104 manual change')
+    if [[ -z $got ]]; then echo "ok   check_diff_problems: the will-change line and the removed line are found"; else echo "FAIL good diff: $got"; fails=1; fi
+    grep -v '^bot@192.0.2.7 | -' "$t/d1" >"$t/d2"
+    got=$(check_diff_problems "$t/d2" "$H" /etc/profile.d/go.sh '# tp-t104 manual change')
+    if [[ $got == *"no diff line '-# tp-t104 manual change'"* ]]; then echo "ok   check_diff_problems: a missing removed line is named"; else echo "FAIL no diff line: '$got'"; fails=1; fi
+    grep -v 'go.sh: will change' "$t/d1" >"$t/d3"
+    got=$(check_diff_problems "$t/d3" "$H" /etc/profile.d/go.sh '# tp-t104 manual change')
+    if [[ $got == *'no [prepare] line'* ]]; then echo "ok   check_diff_problems: a missing will-change line is named"; else echo "FAIL no will-change: '$got'"; fails=1; fi
+    # the mounts
+    printf '%s\n' '/ ext4' '/proc proc' '/sys sysfs' '/dev devtmpfs' '/run tmpfs' '/sys/fs/cgroup cgroup2' '/boot ext4' '/boot/efi vfat' \
+        '/snap/core/1 squashfs' '/var/lib/docker/overlay2/x/merged overlay' '/srv/tpfs ext4' '/dev/pts devpts' >"$t/mnt"
+    got=$(real_mounts "$t/mnt" | tr '\n' ' ')
+    if [[ $got == '/ /boot /boot/efi /srv/tpfs ' ]]; then echo "ok   real_mounts: pseudo filesystems are skipped, real ones kept: $got"; else echo "FAIL real_mounts: '$got'"; fails=1; fi
     rm -rf "$t"
     return $fails
 }
@@ -1077,6 +1332,7 @@ self_test() {
     if [[ $got == "undo_fs|vars/undo_fs.toml|0|1|" ]]; then echo "ok   playbook undo_fs -> $got"
     else echo "FAIL playbook undo_fs -> '$got'"; fails=1; fi
     undo_fs_self_test || fails=1
+    check_proof_self_test || fails=1
     got=$(playbook_config local_user && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
     if [[ $got == "local_user|vars/local_user.toml|0|1|" ]]; then echo "ok   playbook local_user -> $got"
     else echo "FAIL playbook local_user -> '$got'"; fails=1; fi
@@ -1635,6 +1891,11 @@ if [[ $container == undo_fs ]]; then
         o=$(sshv "$3" 2>&1) || r=$?
         if [[ $o == "$2" ]]; then ok "$1: $o"; else bad "$1 printed '$o' (exit $r), wanted '$2'"; fi
     }
+    # rpresent <test flag> <path>: the command for vexpect that prints present/absent for a path
+    # as root. /srv/tpfs/.telepatch and /var/cache/telepatch are root-only (undo.rs: 0700/0711), so
+    # as the login user a `[ -e ]` under them cannot tell absent from not-allowed: it says absent
+    # (a false pass). Here sudo must work first, else the output is "(sudo failed)" and the check fails.
+    rpresent() { echo "sudo -n true 2>/dev/null || { echo '(sudo failed)'; exit 0; }; if sudo -n test $1 $2; then echo present; else echo absent; fi"; }
     echo "=== undo_fs after run 1: the mid-run listing and what is left ==="
     mid=$out/undo-fs-mid.txt
     sshv 'sudo -n cat /root/tp-undo-fs-mid.txt' >"$mid" 2>&1 || true
@@ -1651,29 +1912,44 @@ if [[ $container == undo_fs ]]; then
     if [[ -z $fprobs ]]; then ok "mid-run: both downloads are cache entries under /srv/tpfs/.telepatch/cache/sha256/, the stage holds only a link to each, no .part left"
     else while IFS= read -r l; do bad "mid-run fetch listing: $l"; done <<<"$fprobs"; fi
     # what is left: /srv/tpfs/.telepatch holds the cache only (its tmp went with the run); the main cache was not used
-    vexpect "after the run /srv/tpfs/.telepatch/tmp" absent '[ -e /srv/tpfs/.telepatch/tmp ] && echo present || echo absent'
-    vexpect "after the run /srv/tpfs/.telepatch holds" cache 'ls /srv/tpfs/.telepatch'
-    vexpect "after the run the cache on /srv/tpfs" "$(printf '%s\n' "${UNDO_FETCH_SUMS[@]}" | sort | tr '\n' ' ' | sed 's/ $//')" 'ls /srv/tpfs/.telepatch/cache/sha256 | sort | tr "\n" " " | sed "s/ $//"'
-    vexpect "the cache entries are root-owned 0644" '644 root' 'for f in /srv/tpfs/.telepatch/cache/sha256/*; do stat -c "%a %U" "$f"; done | sort -u'
-    vexpect "the main cache holds neither file" absent '[ -e /var/cache/telepatch/sha256/'"${UNDO_FETCH_SUMS[0]}"' ] || [ -e /var/cache/telepatch/sha256/'"${UNDO_FETCH_SUMS[1]}"' ] && echo present || echo absent'
+    vexpect "after the run /srv/tpfs/.telepatch/tmp" absent "$(rpresent -e /srv/tpfs/.telepatch/tmp)"
+    vexpect "after the run /srv/tpfs/.telepatch holds" cache 'sudo -n ls /srv/tpfs/.telepatch'
+    vexpect "after the run the cache on /srv/tpfs" "$(printf '%s\n' "${UNDO_FETCH_SUMS[@]}" | sort | tr '\n' ' ' | sed 's/ $//')" 'sudo -n ls /srv/tpfs/.telepatch/cache/sha256 | sort | tr "\n" " " | sed "s/ $//"'
+    vexpect "the cache entries are root-owned 0644" '644 root' 'sudo -n sh -c '"'"'for f in /srv/tpfs/.telepatch/cache/sha256/*; do stat -c "%a %U" "$f"; done'"'"' | sort -u'
+    vexpect "the main cache holds neither file (one line each)" $'absent\nabsent' "$(rpresent -e "/var/cache/telepatch/sha256/${UNDO_FETCH_SUMS[0]}"); $(rpresent -e "/var/cache/telepatch/sha256/${UNDO_FETCH_SUMS[1]}")"
     vexpect "after the run /srv/tpfs/tp-fetch-blob.txt" 'tp fetch bytes' 'cat /srv/tpfs/tp-fetch-blob.txt'
     vexpect "after the run /srv/tpfs/tp-fetch-tree/README" 'tp fetch readme' 'cat /srv/tpfs/tp-fetch-tree/README'
     if [[ -n $run ]]; then
-        vexpect "after the run /var/tmp/telepatch/$run" absent "if [ -e /var/tmp/telepatch/$run ] || [ -L /var/tmp/telepatch/$run ]; then echo present; else echo absent; fi"
+        vexpect "after the run /var/tmp/telepatch/$run" absent "sudo -n true 2>/dev/null || { echo '(sudo failed)'; exit 0; }; if sudo -n test -e /var/tmp/telepatch/$run || sudo -n test -L /var/tmp/telepatch/$run; then echo present; else echo absent; fi"
     else bad "after the run: no run id in the listing, /var/tmp/telepatch/<run> not checked"; fi
     vexpect "after the run /.telepatch" absent '[ -e /.telepatch ] && echo present || echo absent'
     vexpect "after the run /srv/tpfs/tp-undo-file" 'new bytes' 'cat /srv/tpfs/tp-undo-file'
     vexpect "after the run /srv/tpfs/tp-undo-gone" absent '[ -e /srv/tpfs/tp-undo-gone ] && echo present || echo absent'
     vexpect "after the run /var/tmp/tp-undo-fs/gone" absent '[ -e /var/tmp/tp-undo-fs/gone ] && echo present || echo absent'
+    # T135, touch on use: the mtime of each cache item after run 1 (run 1 made the
+    # item, so this is the download's time), to compare with run 2's hit below.
+    declare -A mt1
+    for s in "${UNDO_FETCH_SUMS[@]}"; do
+        mt1[$s]=$(sshv "sudo -n stat -c %Y /srv/tpfs/.telepatch/cache/sha256/$s" 2>&1) || mt1[$s]="(failed: ${mt1[$s]})"
+        echo "after run 1: mtime of /srv/tpfs/.telepatch/cache/sha256/$s = ${mt1[$s]}"
+    done
+    # mtime has a one second resolution: wait two seconds so run 2's touch cannot
+    # land in the same second as run 1's, whatever the run lengths.
+    sleep 2
     # T119, run 2: nothing changes, and both fetches are a hit on /srv/tpfs (no download, no fetch directory)
     echo "=== undo_fs run 2: the cache on /srv/tpfs answers ==="
     rc2=0; run 2 || rc2=$?
     mid2=$out/undo-fs-mid2.txt
     sshv 'sudo -n cat /root/tp-undo-fs-mid.txt' >"$mid2" 2>&1 || true
     echo "mid-run listing of run 2:"; sed 's/^/     | /' "$mid2"
-    if [[ $rc2 -eq 0 && $(status_of "$out/run2.out") == ok && $(changed_of "$out/run2.out") == 0 ]]; then ok "run 2: STATUS ok, CHANGED 0"
+    # not CHANGED 0: the playbook's listing op is unguarded instrumentation and always changes
+    r2probs=$(undo_fs_run2_problems "$out/run2.out" "$rc2")
+    r2ops=$(undo_fs_run2_ops "$out/run2.out")
+    r2ok=$(grep -c '^ok	' <<<"$r2ops" || true); r2ch=$(grep -c '^changed	' <<<"$r2ops" || true)
+    if [[ -z $r2probs ]]; then ok "run 2: exit 0; $r2ok op(s) ok, $r2ch changed (the mid-run listing op only)"
     else
-        bad "run 2 exited $rc2, STATUS $(status_of "$out/run2.out"), CHANGED $(changed_of "$out/run2.out") (log: $out/run2.out)"
+        while IFS= read -r l; do bad "run 2: $l"; done <<<"$r2probs"
+        echo "     (run 2: $r2ok op(s) ok, $r2ch changed; log: $out/run2.out)"
         changed_ops "$out/run2.out" | sed 's/^/     changed: /'
     fi
     nhit=$(grep -c '\[prepare\] fetch file:///var/lib/tp-fetch/.*: cached' "$out/run2.out" || true)
@@ -1682,8 +1958,14 @@ if [[ $container == undo_fs ]]; then
     fprobs2=$(undo_fs_fetch_problems "$mid2" hit)
     if [[ -z $fprobs2 ]]; then ok "run 2 mid-run: a stage link to each cache entry on /srv/tpfs, no fetch directory made"
     else while IFS= read -r l; do bad "run 2 mid-run fetch listing: $l"; done <<<"$fprobs2"; fi
-    vexpect "after run 2 /srv/tpfs/.telepatch holds" cache 'ls /srv/tpfs/.telepatch'
-    # T123: tp-basic cache usage and cache purge over the same SSH path (a single --host)
+    vexpect "after run 2 /srv/tpfs/.telepatch holds" cache 'sudo -n ls /srv/tpfs/.telepatch'
+    # T135, touch on use: each item's mtime after run 2 (a hit) is strictly later than after run 1
+    for s in "${UNDO_FETCH_SUMS[@]}"; do
+        mt2=$(sshv "sudo -n stat -c %Y /srv/tpfs/.telepatch/cache/sha256/$s" 2>&1) || mt2="(failed: $mt2)"
+        if [[ ${mt1[$s]} =~ ^[0-9]+$ && $mt2 =~ ^[0-9]+$ && $mt2 -gt ${mt1[$s]} ]]; then ok "touch on use: item ${s:0:12}... mtime ${mt1[$s]} after run 1, $mt2 after run 2 (later)"
+        else bad "touch on use: item ${s:0:12}... mtime ${mt1[$s]} after run 1, $mt2 after run 2, wanted a later one"; fi
+    done
+    # T123/T135/T136: tp-basic cache usage and cache purge over the same SSH path (a single --host)
     echo "=== undo_fs: tp-basic cache usage / purge --host $dest ==="
     cache_cmd() { # <name> <tp-basic cache args>: output in $out/<name>.out, the exit code returned
         local name=$1 rc=0; shift
@@ -1692,29 +1974,61 @@ if [[ $container == undo_fs ]]; then
         echo "tp-basic cache $* --host $dest (exit $rc):"; sed 's/^/     | /' "$out/$name.out"
         return $rc
     }
+    # owner markers: owners/undo_fs/<sum> beside each cache, for each item the playbook fetched
+    for s in "${UNDO_FETCH_SUMS[@]}"; do
+        vexpect "owner marker /srv/tpfs/.telepatch/cache/owners/undo_fs/${s:0:12}..." present "$(rpresent -e "/srv/tpfs/.telepatch/cache/owners/undo_fs/$s")"
+    done
+    # the main cache holds items only if something fetched onto the root filesystem; a marker is
+    # checked for each of this playbook's items it does hold, and what is there is printed
+    main_exists=$(sshv "$(rpresent -d /var/cache/telepatch/sha256)" 2>&1) || main_exists="(failed: $main_exists)"
+    case $main_exists in present) main_exists=yes ;; absent) main_exists=no ;; *) bad "could not tell whether /var/cache/telepatch/sha256 exists: '$main_exists'" ;; esac
+    echo "the main cache /var/cache/telepatch/sha256 exists: $main_exists; holds: $(sshv 'sudo -n ls /var/cache/telepatch/sha256 2>&1 | tr "\n" " "'); owners/undo_fs: $(sshv 'sudo -n ls /var/cache/telepatch/owners/undo_fs 2>&1 | tr "\n" " "')"
+    for s in "${UNDO_FETCH_SUMS[@]}"; do
+        if [[ $(sshv "$(rpresent -e "/var/cache/telepatch/sha256/$s")") == present ]]; then
+            vexpect "owner marker /var/cache/telepatch/owners/undo_fs/${s:0:12}..." present "$(rpresent -e "/var/cache/telepatch/owners/undo_fs/$s")"
+        fi
+    done
+    # no lock and no usage record anywhere under either cache's parent (T135 removed them)
+    locks_cmd='sudo -n find /var/cache/telepatch /srv/tpfs/.telepatch \( -name ".telepatch-usage*" -o -name .lock -o -name .caches.lock \) -print 2>/dev/null; true'
+    vexpect "no .telepatch-usage*, .lock or .caches.lock under /var/cache/telepatch or /srv/tpfs/.telepatch" "" "$locks_cmd"
     crc=0; cache_cmd cache-usage1 usage || crc=$?
     if [[ $crc -eq 0 ]]; then ok "cache usage exited 0"; else bad "cache usage exited $crc (log: $out/cache-usage1.out)"; fi
-    cprobs=$(cache_usage_problems "$out/cache-usage1.out" "$dest" 2)
-    if [[ -z $cprobs ]]; then ok "cache usage lists /srv/tpfs/.telepatch/cache/sha256 with 2 items and a size"
+    main_want=no; [[ $main_exists == yes ]] && main_want=yes
+    cprobs=$(cache_usage_problems "$out/cache-usage1.out" "$dest" "$main_want")
+    if [[ -z $cprobs ]]; then ok "cache usage: host $dest, /srv/tpfs/.telepatch/cache/sha256 with a size, a working line, a host total and an inventory total"
     else while IFS= read -r l; do bad "cache usage: $l"; done <<<"$cprobs"; fi
-    echo "note: the main cache /var/cache/telepatch/sha256 is $(cache_main_listed "$out/cache-usage1.out") in the usage (this case fetches onto /srv/tpfs; the main cache is listed only if it exists)"
+    if [[ $main_want == yes ]]; then ok "cache usage lists the main cache /var/cache/telepatch/sha256 (it exists on the VM)"
+    else echo "GAP  the main cache /var/cache/telepatch/sha256 does not exist on this VM (this case fetches onto /srv/tpfs), so the step's main-cache usage line cannot be shown by this case; not a pass, not a failure"; fi
     # without --yes nothing is removed
     crc=0; cache_cmd cache-purge-dry purge || crc=$?
-    if [[ $crc -eq 0 ]] && grep -q 'would remove' "$out/cache-purge-dry.out"; then ok "cache purge without --yes exited 0 and said what it would remove"
-    else bad "cache purge without --yes: exit $crc, no 'would remove' (log: $out/cache-purge-dry.out)"; fi
-    vexpect "after a purge without --yes the cache on /srv/tpfs still holds" 2 'ls /srv/tpfs/.telepatch/cache/sha256 | wc -l'
+    if [[ $crc -eq 0 ]] && grep -qF 'nothing changed; add --yes' "$out/cache-purge-dry.out" \
+        && grep -qE "^  /srv/tpfs/.telepatch/cache/sha256: would remove $CACHE_SIZE_RE\$" "$out/cache-purge-dry.out"; then ok "cache purge without --yes exited 0, said 'nothing changed; add --yes' and what it would remove from /srv/tpfs/.telepatch/cache/sha256"
+    else bad "cache purge without --yes: exit $crc, no 'nothing changed; add --yes' or no '/srv/tpfs/.telepatch/cache/sha256: would remove <size>' (log: $out/cache-purge-dry.out)"; fi
+    vexpect "after a purge without --yes the cache on /srv/tpfs still holds" 2 'sudo -n ls /srv/tpfs/.telepatch/cache/sha256 | wc -l'
+    # A stand-in for a dead run's undo data in /srv/tpfs/.telepatch/tmp (a real run's own tmp is
+    # gone after it, see above), so the purge's "leaves tmp alone while it holds anything" clause
+    # can be tested: made as root, with a known content.
+    dead=/srv/tpfs/.telepatch/tmp/tp-t104-dead/undo/root
+    sshv "sudo -n mkdir -p $dead && printf '%s\n' 'tp-t104 dead run data' | sudo -n tee $dead/keep >/dev/null" >/dev/null 2>&1 || bad "could not make the stand-in $dead/keep"
+    vexpect "the stand-in for a dead run's undo data is there before the purge" 'tp-t104 dead run data' "sudo -n cat $dead/keep"
     crc=0; cache_cmd cache-purge purge --yes || crc=$?
     if [[ $crc -eq 0 ]]; then ok "cache purge --yes exited 0"; else bad "cache purge --yes exited $crc (log: $out/cache-purge.out)"; fi
-    vexpect "after cache purge --yes /srv/tpfs/.telepatch" absent '[ -e /srv/tpfs/.telepatch ] && echo present || echo absent'
-    vexpect "after cache purge --yes the main cache holds no file" 0 'ls /var/cache/telepatch/sha256 2>/dev/null | wc -l'
+    vexpect "after cache purge --yes /srv/tpfs/.telepatch/cache/sha256 holds no file" 0 'sudo -n find /srv/tpfs/.telepatch/cache/sha256 -type f 2>/dev/null | wc -l'
+    vexpect "after cache purge --yes /srv/tpfs/.telepatch/cache/owners" absent "$(rpresent -e /srv/tpfs/.telepatch/cache/owners)"
+    vexpect "after cache purge --yes the main cache holds no file" 0 'sudo -n find /var/cache/telepatch/sha256 -type f 2>/dev/null | wc -l'
+    vexpect "after cache purge --yes /var/cache/telepatch/owners" absent "$(rpresent -e /var/cache/telepatch/owners)"
+    vexpect "after cache purge --yes the stand-in in /srv/tpfs/.telepatch/tmp is untouched" 'tp-t104 dead run data' "sudo -n cat $dead/keep"
+    vexpect "after cache purge --yes /srv/tpfs/.telepatch/tmp still exists" present "$(rpresent -d /srv/tpfs/.telepatch/tmp)"
     vexpect "after cache purge --yes the fetched file itself is untouched" 'tp fetch bytes' 'cat /srv/tpfs/tp-fetch-blob.txt'
+    vexpect "after cache purge --yes no .telepatch-usage*, .lock or .caches.lock is left" "" "$locks_cmd"
     crc=0; cache_cmd cache-usage2 usage || crc=$?
-    cprobs=$(cache_usage_problems "$out/cache-usage2.out" "$dest" 0)
-    if [[ $crc -eq 0 && -z $cprobs ]]; then ok "cache usage after the purge shows 0 items"
+    cprobs=$(cache_usage_zero_problems "$out/cache-usage2.out" "$dest")
+    if [[ $crc -eq 0 && -z $cprobs ]]; then ok "cache usage after the purge: exit 0, every listed cache directory shows 0.0 MB, working line printed"
     else bad "cache usage after the purge: exit $crc ${cprobs//$'\n'/; } (log: $out/cache-usage2.out)"; fi
+    echo "listed cache directories after the purge: $(grep -cE '/sha256: ' "$out/cache-usage2.out" || true) (a directory the purge removed is simply not listed)"
     if [[ $wrc -ne 0 ]]; then echo "FAIL: an undo_fs check failed"; exit 1; fi
     echo "undo_fs checks: all passed"
-    echo "PASS: undo_fs on a $distro VM over SSH (backups on the target's own filesystem, a stage link each, no /.telepatch on the root filesystem, all gone after the run; fetches cached on the target's filesystem, run 2 CHANGED 0)"
+    echo "PASS: undo_fs on a $distro VM over SSH (backups on the target's own filesystem, a stage link each, no /.telepatch on the root filesystem, all gone after the run; fetches cached on the target's filesystem, run 2 only the listing op changed)"
     exit 0
 fi
 
@@ -1842,6 +2156,83 @@ if [[ $container == dev_desktop ]]; then
     echo "working checks: all passed"
 fi
 
+# ---- dev_desktop: the cleanup and --check proofs (T104, goals 8 and 9; gating) -------
+# On the settled VM, after run 3. Every check prints ok or FAIL; all run before
+# the verdict. (1) The real run left no `undo/` directory under
+# /var/tmp/telepatch and no .telepatch at the root of any real filesystem
+# (T106's cleanup). (2) `tp-basic run dev_desktop --check` exits 0, its header is
+# `N will change, K ok, B blocked` with N and B 0, and its [coverage] lines count
+# every file, unit, repo and user op of run 3 as reversible. (3) After a manual
+# change to /etc/profile.d/go.sh, `--check --diff` exits 2, says N >= 1, B 0, and
+# shows the change as a `-` line of the unified diff for that file.
+if [[ $container == dev_desktop ]]; then
+    wrc=0
+    ok() { echo "ok   $1"; }
+    bad() { echo "FAIL $1"; wrc=1; }
+    echo "=== after the real run: no undo/ directory, no .telepatch at a filesystem root ==="
+    ul=$(sshv 'sudo -n find /var/tmp/telepatch -type d -name undo 2>/dev/null; true' 2>&1) || ul="(failed: $ul)"
+    if [[ -z $ul ]]; then ok "no undo/ directory under /var/tmp/telepatch"
+    else bad "undo/ left under /var/tmp/telepatch: $(printf '%s' "$ul" | tr '\n' ' ')"; fi
+    sshv 'findmnt -rn -o TARGET,FSTYPE' >"$out/mounts.txt" 2>&1 || true
+    mnts=$(real_mounts "$out/mounts.txt")
+    echo "real filesystems checked (findmnt, pseudo and image filesystems skipped): $(printf '%s' "$mnts" | tr '\n' ' ')"
+    [[ -n $mnts ]] || bad "findmnt listed no real filesystem (log: $out/mounts.txt)"
+    while IFS= read -r m; do
+        [[ -n $m ]] || continue
+        f=$(sshv "sudo -n find '$m' -xdev -maxdepth 1 -name .telepatch 2>/dev/null; true" 2>&1) || f="(failed: $f)"
+        if [[ -z $f ]]; then ok "no .telepatch at the root of $m"; else bad "$m has $f"; fi
+    done <<<"$mnts"
+
+    echo "=== dev_desktop --check on the settled VM ==="
+    command -v jq >/dev/null || bad "jq is needed on this machine to read run 3's JSONL for the coverage proof"
+    check_run() { # <name> [extra args]: tp-basic run --check with run 3's vars; output $out/<name>.out, exit code returned
+        local name=$1 rc=0; shift
+        tpb_ssh_args "$key" "$out/known_hosts"
+        "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" "${TPB_SSH_ARGS[@]}" \
+            --vars "${RUN_VARS:-$ROOT/$PB_VARS}" --log "$out/$name.jsonl" --check "$@" >"$out/$name.out" 2>&1 || rc=$?
+        return $rc
+    }
+    crc=0; check_run check1 || crc=$?
+    echo "tp-basic run $PB_NAME --check --host $dest (exit $crc); header and coverage lines:"
+    grep -E "^== .* \[(prepare|coverage)\] ([0-9]+ will change|[^ ]+.*: [0-9]+ ops)" "$out/check1.out" | sed 's/^/     | /' || true
+    if [[ $crc -eq 0 ]]; then ok "--check exited 0"; else bad "--check exited $crc, wanted 0 (log: $out/check1.out)"; fi
+    hprobs=$(check_header_problems "$out/check1.out" "$dest" zero)
+    if [[ -z $hprobs ]]; then ok "--check header: $(grep -E "\[prepare\] [0-9]+ will change" "$out/check1.out" | sed 's/^== [^ ]* \[prepare\] //; s/ ==$//')"
+    else while IFS= read -r l; do bad "--check header: $l"; done <<<"$hprobs"; fi
+    if grep -qF 'check stopped' "$out/check1.out"; then bad "--check stopped early, so [coverage] is partial (log: $out/check1.out)"; else ok "--check did not stop early"; fi
+    # coverage: each [coverage] role against run 3's op_start events (roles match
+    # exactly: a file, unit, repo or user op is never merged, so its op_start names one role)
+    coverage_table "$out/check1.out" "$dest" "$out/run3.jsonl" >"$out/coverage.tsv" || true
+    echo "coverage per role (role | ops | reversible | sh without undo | file/unit/repo/user ops run 3 ran):"
+    tr '\t' '|' <"$out/coverage.tsv" | sed 's/^/     | /'
+    furu_total=$(awk -F'\t' '{s += $5} END {print s + 0}' "$out/coverage.tsv")
+    rev_total=$(awk -F'\t' '$2 != "-" {s += $3} END {print s + 0}' "$out/coverage.tsv")
+    cprobs=$(coverage_problems "$out/coverage.tsv")
+    if [[ -z $cprobs && $furu_total -gt 0 ]]; then ok "[coverage]: every role counts at least its file/unit/repo/user ops reversible ($furu_total such ops in run 3, $rev_total reversible in all)"
+    else
+        [[ $furu_total -gt 0 ]] || bad "[coverage]: run 3's JSONL has no file/unit/repo/user op_start to count (log: $out/run3.jsonl)"
+        while IFS= read -r l; do [[ -z $l ]] || bad "[coverage]: $l"; done <<<"$cprobs"
+    fi
+
+    echo "=== dev_desktop: a manual change to /etc/profile.d/go.sh, then --check --diff ==="
+    sshv 'sudo -n sh -c "printf \"%s\\n\" \"# tp-t104 manual change\" >> /etc/profile.d/go.sh"' || bad "could not append the manual change to /etc/profile.d/go.sh"
+    echo "go.sh now ends: $(sshv 'tail -n 2 /etc/profile.d/go.sh' 2>&1 | tr '\n' '|')"
+    crc=0; check_run check2 --diff || crc=$?
+    echo "tp-basic run $PB_NAME --check --diff --host $dest (exit $crc); the file's section:"
+    grep -F -A12 'file /etc/profile.d/go.sh: will change' "$out/check2.out" | sed 's/^/     | /' || true
+    if [[ $crc -eq 2 ]]; then ok "--check --diff exited 2"; else bad "--check --diff exited $crc, wanted 2 (log: $out/check2.out)"; fi
+    hprobs=$(check_header_problems "$out/check2.out" "$dest" some)
+    if [[ -z $hprobs ]]; then ok "--check --diff header: $(grep -E "\[prepare\] [0-9]+ will change" "$out/check2.out" | sed 's/^== [^ ]* \[prepare\] //; s/ ==$//')"
+    else while IFS= read -r l; do bad "--check --diff header: $l"; done <<<"$hprobs"; fi
+    dprobs=$(check_diff_problems "$out/check2.out" "$dest" /etc/profile.d/go.sh '# tp-t104 manual change')
+    if [[ -z $dprobs ]]; then ok "--check --diff shows /etc/profile.d/go.sh will change, with the line '-# tp-t104 manual change'"
+    else while IFS= read -r l; do bad "--check --diff: $l"; done <<<"$dprobs"; fi
+    # put the file back (the check changed nothing; this is the manual change's own undo)
+    sshv 'sudo -n sed -i "/^# tp-t104 manual change\$/d" /etc/profile.d/go.sh' >/dev/null 2>&1 || true
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: a --check or cleanup check failed"; exit 1; fi
+    echo "cleanup and --check checks: all passed"
+fi
+
 # ---- state after -----------------------------------------------------------------
 # The capture does not decide the exit code. PB_ORACLE stays 0: the production
 # acceptance runner was retired, and this script does not read a container record.
@@ -1857,7 +2248,7 @@ else
     fi
 fi
 if [[ $container == dev_desktop ]]; then
-    if logs_have_secret "$out"/run*.out "$out"/run*.jsonl "$out"/desktop-secret.toml; then
+    if logs_have_secret "$out"/run*.out "$out"/run*.jsonl "$out"/check*.out "$out"/check*.jsonl "$out"/desktop-secret.toml; then
         echo "FAIL: a run log contains the throwaway password or its hash"
         exit 1
     fi
