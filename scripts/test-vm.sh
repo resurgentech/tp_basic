@@ -79,6 +79,13 @@
 # stay on /srv/tpfs/.telepatch/cache/sha256 (the main cache is unused), its tmp is
 # gone, and run 2 is STATUS ok, CHANGED 0, with both fetches `cached` (a hit on
 # /srv/tpfs, no download).
+# T123's cache case (written, run in T104), after run 2: `tp-basic cache usage
+# --host <vm>` lists /srv/tpfs/.telepatch/cache/sha256 with its two items and a
+# size (the main cache /var/cache/telepatch/sha256 is listed only if it exists;
+# this case fetches onto /srv/tpfs, so it may not, and the check says which);
+# `cache purge --host <vm>` without --yes changes nothing; `cache purge --yes`
+# empties both (/srv/tpfs/.telepatch is gone, the main cache holds no file) and
+# usage then shows 0 items.
 #
 #   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm, reboot_vm or undo_fs)
 #   scripts/test-vm.sh --self-test
@@ -787,6 +794,32 @@ undo_fs_fetch_problems() {
     return 0
 }
 
+# cache_usage_problems <usage output> <host> <items on /srv/tpfs> : one line per
+# way `tp-basic cache usage` output (the table) fails the undo_fs cache check:
+# the host is named, /srv/tpfs/.telepatch/cache/sha256 is listed with that many
+# items and a size in MB or GB, and the run total says as many items.
+cache_usage_problems() {
+    local f=$1 host=$2 n=$3 line
+    local re='^  /srv/tpfs/.telepatch/cache/sha256: ([0-9]+) items?, [0-9]+\.[0-9] (MB|GB)'
+    grep -qxF "host $host" "$f" || echo "no 'host $host' line"
+    line=$(grep -F '  /srv/tpfs/.telepatch/cache/sha256: ' "$f" | head -1)
+    if [[ -z $line ]]; then
+        [[ $n -eq 0 ]] || echo "/srv/tpfs/.telepatch/cache/sha256 is not listed"
+    elif [[ $line =~ $re ]]; then
+        [[ ${BASH_REMATCH[1]} == "$n" ]] || echo "/srv/tpfs/.telepatch/cache/sha256 lists '${BASH_REMATCH[1]}' items, wanted $n"
+    else
+        echo "no item count and size on '$line'"
+    fi
+    grep -qE "^run total: 1 host, $n items?, [0-9]+\.[0-9] (MB|GB)\$" "$f" || echo "the run total is not $n item(s)"
+    return 0
+}
+
+# cache_main_listed <usage output> : prints listed or unlisted for the main
+# cache /var/cache/telepatch/sha256 (listed only when the directory exists).
+cache_main_listed() {
+    if grep -qF '  /var/cache/telepatch/sha256: ' "$1"; then echo listed; else echo unlisted; fi
+}
+
 # undo_fs_self_test : the listing readers of the undo_fs checks.
 undo_fs_self_test() {
     local fails=0 t got r=RUNX
@@ -838,6 +871,20 @@ undo_fs_self_test() {
     : >"$t/empty"
     got=$(undo_fs_mid_problems "$t/empty")
     if [[ $got == "no 'run <id>' line" ]]; then echo "ok   undo_fs_mid_problems: an empty listing says so"; else echo "FAIL empty listing: '$got'"; fails=1; fi
+    printf '%s\n' 'host bot@192.0.2.7' '  /srv/tpfs/.telepatch/cache/sha256: 2 items, 0.0 MB' '    unowned: 2 items, 0.0 MB' '  host total: 2 items, 0.0 MB' '' 'run total: 1 host, 2 items, 0.0 MB' >"$t/cu2"
+    printf '%s\n' 'host bot@192.0.2.7' '  host total: 0 items, 0.0 MB' '' 'run total: 1 host, 0 items, 0.0 MB' >"$t/cu0"
+    printf '%s\n' 'host bot@192.0.2.7' '  /srv/tpfs/.telepatch/cache/sha256: 1 item, 1.5 GB' '  /var/cache/telepatch/sha256: 0 items, 0.0 MB' 'run total: 1 host, 1 item, 1.5 GB' >"$t/cu1"
+    got=$(cache_usage_problems "$t/cu2" bot@192.0.2.7 2)
+    if [[ -z $got ]]; then echo "ok   cache_usage_problems: a good listing has none"; else echo "FAIL good usage: $got"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu0" bot@192.0.2.7 0)
+    if [[ -z $got ]]; then echo "ok   cache_usage_problems: an emptied cache lists nothing and totals 0"; else echo "FAIL empty usage: $got"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu0" bot@192.0.2.7 2)
+    if [[ $got == *'is not listed'* && $got == *'run total is not 2'* ]]; then echo "ok   cache_usage_problems: a missing directory and total are named"; else echo "FAIL missing dir: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu1" bot@192.0.2.7 2)
+    if [[ $got == *"lists '1' items, wanted 2"* ]]; then echo "ok   cache_usage_problems: a wrong count is named"; else echo "FAIL wrong count: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu2" bot@other 2)
+    if [[ $got == *"no 'host bot@other' line"* ]]; then echo "ok   cache_usage_problems: a wrong host is named"; else echo "FAIL wrong host: '$got'"; fails=1; fi
+    if [[ $(cache_main_listed "$t/cu1") == listed && $(cache_main_listed "$t/cu2") == unlisted ]]; then echo "ok   cache_main_listed"; else echo "FAIL cache_main_listed"; fails=1; fi
     rm -rf "$t"
     return $fails
 }
@@ -1483,6 +1530,35 @@ if [[ $container == undo_fs ]]; then
     if [[ -z $fprobs2 ]]; then ok "run 2 mid-run: a stage link to each cache entry on /srv/tpfs, no fetch directory made"
     else while IFS= read -r l; do bad "run 2 mid-run fetch listing: $l"; done <<<"$fprobs2"; fi
     vexpect "after run 2 /srv/tpfs/.telepatch holds" cache 'ls /srv/tpfs/.telepatch'
+    # T123: tp-basic cache usage and cache purge over the same SSH path (a single --host)
+    echo "=== undo_fs: tp-basic cache usage / purge --host $dest ==="
+    cache_cmd() { # <name> <tp-basic cache args>: output in $out/<name>.out, the exit code returned
+        local name=$1 rc=0; shift
+        tpb_ssh_args "$key" "$out/known_hosts"
+        "$ROOT/build/tp-basic" cache "$@" --host "$dest" "${TPB_SSH_ARGS[@]}" >"$out/$name.out" 2>&1 || rc=$?
+        echo "tp-basic cache $* --host $dest (exit $rc):"; sed 's/^/     | /' "$out/$name.out"
+        return $rc
+    }
+    crc=0; cache_cmd cache-usage1 usage || crc=$?
+    if [[ $crc -eq 0 ]]; then ok "cache usage exited 0"; else bad "cache usage exited $crc (log: $out/cache-usage1.out)"; fi
+    cprobs=$(cache_usage_problems "$out/cache-usage1.out" "$dest" 2)
+    if [[ -z $cprobs ]]; then ok "cache usage lists /srv/tpfs/.telepatch/cache/sha256 with 2 items and a size"
+    else while IFS= read -r l; do bad "cache usage: $l"; done <<<"$cprobs"; fi
+    echo "note: the main cache /var/cache/telepatch/sha256 is $(cache_main_listed "$out/cache-usage1.out") in the usage (this case fetches onto /srv/tpfs; the main cache is listed only if it exists)"
+    # without --yes nothing is removed
+    crc=0; cache_cmd cache-purge-dry purge || crc=$?
+    if [[ $crc -eq 0 ]] && grep -q 'would remove' "$out/cache-purge-dry.out"; then ok "cache purge without --yes exited 0 and said what it would remove"
+    else bad "cache purge without --yes: exit $crc, no 'would remove' (log: $out/cache-purge-dry.out)"; fi
+    vexpect "after a purge without --yes the cache on /srv/tpfs still holds" 2 'ls /srv/tpfs/.telepatch/cache/sha256 | wc -l'
+    crc=0; cache_cmd cache-purge purge --yes || crc=$?
+    if [[ $crc -eq 0 ]]; then ok "cache purge --yes exited 0"; else bad "cache purge --yes exited $crc (log: $out/cache-purge.out)"; fi
+    vexpect "after cache purge --yes /srv/tpfs/.telepatch" absent '[ -e /srv/tpfs/.telepatch ] && echo present || echo absent'
+    vexpect "after cache purge --yes the main cache holds no file" 0 'ls /var/cache/telepatch/sha256 2>/dev/null | wc -l'
+    vexpect "after cache purge --yes the fetched file itself is untouched" 'tp fetch bytes' 'cat /srv/tpfs/tp-fetch-blob.txt'
+    crc=0; cache_cmd cache-usage2 usage || crc=$?
+    cprobs=$(cache_usage_problems "$out/cache-usage2.out" "$dest" 0)
+    if [[ $crc -eq 0 && -z $cprobs ]]; then ok "cache usage after the purge shows 0 items"
+    else bad "cache usage after the purge: exit $crc ${cprobs//$'\n'/; } (log: $out/cache-usage2.out)"; fi
     if [[ $wrc -ne 0 ]]; then echo "FAIL: an undo_fs check failed"; exit 1; fi
     echo "undo_fs checks: all passed"
     echo "PASS: undo_fs on a $distro VM over SSH (backups on the target's own filesystem, a stage link each, no /.telepatch on the root filesystem, all gone after the run; fetches cached on the target's filesystem, run 2 CHANGED 0)"
