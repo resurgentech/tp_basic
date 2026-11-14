@@ -108,7 +108,7 @@ matrix_self_test() {
 
     # the map: tests/plans.rs DISTROS, in order, to the stock images
     local -A images=([debian12]=debian:12 [debian13]=debian:13 [ubuntu2404]=ubuntu:24.04
-        [ubuntu2604]=ubuntu:26.04 [fedora43]=fedora:43 [fedora44]=fedora:44 [rockylinux9]=rockylinux:9
+        [ubuntu2604]=ubuntu:26.04 [fedora43]=fedora:43 [fedora44]=fedora:44 [rockylinux9]=rockylinux/rockylinux:9
         [rockylinux10]=rockylinux/rockylinux:10 [almalinux9]=almalinux:9 [almalinux10]=almalinux:10
         [amazonlinux2023]=amazonlinux:2023 [arch]=archlinux:latest)
     local plans

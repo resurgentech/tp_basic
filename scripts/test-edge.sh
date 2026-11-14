@@ -69,8 +69,9 @@ die() { echo "test-edge: $*" >&2; exit 2; }
 
 # edge_image <distro> : the stock image of a tests/plans.rs DISTROS entry (T97f).
 # omarchy has no stock image (it is not baked here either): no line, status 1.
-# Rocky 10 is the Rocky project's own repository: Docker's library `rockylinux`
-# stops at 9 (no `rockylinux:10` tag), and its `rockylinux:9` is the 2024 build.
+# Rocky is the Rocky project's own repository: Docker's library `rockylinux`
+# stops at 9 (no `rockylinux:10` tag), and its `rockylinux:9` is the 2024 build
+# (T117: Rocky 9 moved to `rockylinux/rockylinux:9`, as ../docker_images builds).
 edge_image() {
     case ${1:-} in
         debian12) echo debian:12 ;;
@@ -79,7 +80,7 @@ edge_image() {
         ubuntu2604) echo ubuntu:26.04 ;;
         fedora43) echo fedora:43 ;;
         fedora44) echo fedora:44 ;;
-        rockylinux9) echo rockylinux:9 ;;
+        rockylinux9) echo rockylinux/rockylinux:9 ;;
         rockylinux10) echo rockylinux/rockylinux:10 ;;
         almalinux9) echo almalinux:9 ;;
         almalinux10) echo almalinux:10 ;;

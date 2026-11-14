@@ -92,7 +92,7 @@ just test-edge
 is not a goal gate. It runs the same cell on every distro of
 `tests/plans.rs`, one after another, in one 1 GiB `tp-*` VM, each from its
 stock image (`debian:12`, `debian:13`, `ubuntu:24.04`, `ubuntu:26.04`,
-`fedora:43`, `fedora:44`, `rockylinux:9`, `rockylinux/rockylinux:10`,
+`fedora:43`, `fedora:44`, `rockylinux/rockylinux:9`, `rockylinux/rockylinux:10`,
 `almalinux:9`, `almalinux:10`, `amazonlinux:2023`, `archlinux:latest`). The
 bootstrap is the family's package manager (apt, dnf, pacman). omarchy has no
 stock image: the matrix prints `SKIP omarchy`, does not bake
