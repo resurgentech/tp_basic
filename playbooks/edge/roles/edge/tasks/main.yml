@@ -15,14 +15,18 @@
     state: present
     update_cache: true
 
+# EL9 (major version 9): every image ships curl-minimal, which provides
+# /usr/bin/curl (asking for curl conflicts with it), and EL9's s-nail
+# provides /bin/mailx but nothing provides mailx. EL10, Fedora and Amazon
+# keep the names. The telepatch role branches on the same major version.
 - name: install support packages and the Red Hat virtual name
   when: ansible_os_family == "RedHat"
   ansible.builtin.dnf:
     name:
-      - curl
+      - "{{ '/usr/bin/curl' if ansible_distribution_major_version == '9' else 'curl' }}"
       - ca-certificates
       - s-nail
-      - mailx
+      - "{{ '/bin/mailx' if ansible_distribution_major_version == '9' else 'mailx' }}"
     state: present
     update_cache: true
 

@@ -5,7 +5,12 @@
 //! Order is the list's order. Support packages (`curl`, `ca-certificates`)
 //! and the family's virtual name go in one `pkg` before the repo and
 //! before rustup. Debian asks for `libz-dev` (provided by `zlib1g-dev`).
-//! Red Hat, Amazon included, asks for `mailx` (provided by `s-nail`).
+//! Red Hat, Amazon included, asks for `mailx` (provided by `s-nail`). On
+//! EL9 (major version 9) nothing provides `mailx` and every image ships
+//! `curl-minimal`, so EL9 asks for the virtual name `/bin/mailx` (provided
+//! by EL9's `s-nail`) and the file provide `/usr/bin/curl` (provided by
+//! `curl-minimal`, or by `curl`): the same intent, a curl client and a
+//! virtual name the manager resolves to its provider (T133).
 //! Arch, omarchy included, asks for `sh` (provided by `bash`). Docker's
 //! repo is the one `docker` spells: apt `linux/{debian,ubuntu}` or a dnf
 //! `.repo` of `fedora` or `rhel`, then only `docker-ce-cli`. Amazon and
@@ -73,7 +78,18 @@ fn docker(h: &Host<Vars>) -> Result<(), TraceError> {
 pub async fn edge(h: &Host<Vars>) -> Result<(), TraceError> {
     match h.os.family {
         Family::Debian => h.pkg(["curl", "ca-certificates", "zlib1g-dev", "libz-dev"]),
-        Family::RedHat => h.pkg(["curl", "ca-certificates", "s-nail", "mailx"]),
+        Family::RedHat => {
+            // EL9: the image's `curl-minimal` provides `/usr/bin/curl` (asking
+            // for `curl` conflicts with it), and `s-nail` provides
+            // `/bin/mailx` but not `mailx`. EL10, Fedora and Amazon keep the
+            // names. The Ansible task branches on the same major version.
+            let (curl, mailx) = if h.os.version.major() == Some(9) {
+                ("/usr/bin/curl", "/bin/mailx")
+            } else {
+                ("curl", "mailx")
+            };
+            h.pkg([curl, "ca-certificates", "s-nail", mailx])
+        }
         Family::Arch => h.pkg(["curl", "ca-certificates", "bash", "sh"]),
         Family::Other(ref name) => {
             return Err(TraceError::new(format!(

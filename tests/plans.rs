@@ -844,6 +844,28 @@ fn edge_family_branches_match_the_table() {
     assert!(rocky.contains("docker-ce-cli"));
     let alma = plan("edge", "almalinux9");
     assert!(alma.contains("https://download.docker.com/linux/rhel/docker-ce.repo"));
+    // T133: EL9 asks for what its curl-minimal and s-nail provide (the file
+    // provide /usr/bin/curl, the virtual name /bin/mailx); EL10 keeps the
+    // names, and the window still splits after the curl install on both.
+    for el9 in ["rockylinux9", "almalinux9"] {
+        let p = plan("edge", el9);
+        assert!(
+            p.contains("tp_want=('/usr/bin/curl' 'ca-certificates' 's-nail' '/bin/mailx')"),
+            "{el9}:\n{p}"
+        );
+        assert!(
+            !p.contains("pkg:mailx") && !p.contains("pkg:curl,"),
+            "{el9}:\n{p}"
+        );
+        assert!(p.contains("-- split after #1 (pkg curl)"), "{el9}:\n{p}");
+    }
+    for el10 in ["rockylinux10", "almalinux10"] {
+        let p = plan("edge", el10);
+        assert!(
+            p.contains("tp_want=('curl' 'ca-certificates' 's-nail' 'mailx')"),
+            "{el10}:\n{p}"
+        );
+    }
     let amz = plan("edge", "amazonlinux2023");
     assert!(amz.contains("mailx"));
     assert!(amz.contains("s-nail"));

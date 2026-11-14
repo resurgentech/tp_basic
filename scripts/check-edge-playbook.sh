@@ -117,7 +117,13 @@ else
 fi
 
 # ---- packages: only curl, ca-certificates and the table ----------------------
-allowed=" curl ca-certificates zlib1g-dev libz-dev docker-ce-cli s-nail mailx bash sh "
+# EL9 (T133): /usr/bin/curl (curl-minimal provides it) and /bin/mailx (EL9's
+# s-nail provides it; nothing provides mailx there), chosen in the Red Hat
+# task by an item of the one form
+#   - "{{ '<EL9 name>' if ansible_distribution_major_version == '9' else '<name>' }}"
+# which counts both names as seen.
+allowed=" curl ca-certificates zlib1g-dev libz-dev docker-ce-cli s-nail mailx bash sh /usr/bin/curl /bin/mailx "
+el9_item="^[[:space:]]*-[[:space:]]*\"\\{\\{ '([^']+)' if ansible_distribution_major_version == '9' else '([^']+)' \\}\\}\"[[:space:]]*$"
 seen=" "
 shopt -s nullglob
 for f in "$EDGE"/roles/*/tasks/*.yml; do
@@ -142,6 +148,10 @@ for f in "$EDGE"/roles/*/tasks/*.yml; do
             seen+="${BASH_REMATCH[1]} "
             continue
         fi
+        if [[ $in_names -eq 1 && $line =~ $el9_item ]]; then
+            seen+="${BASH_REMATCH[1]} ${BASH_REMATCH[2]} "
+            continue
+        fi
         if [[ $in_names -eq 1 ]]; then in_names=0; fi
     done <"$f"
 done
@@ -151,7 +161,7 @@ for p in $seen; do
         *) bad "package not in the edge list or the support set: $p" ;;
     esac
 done
-for p in curl ca-certificates zlib1g-dev libz-dev docker-ce-cli s-nail mailx bash sh; do
+for p in curl ca-certificates zlib1g-dev libz-dev docker-ce-cli s-nail mailx bash sh /usr/bin/curl /bin/mailx; do
     case $seen in
         *" $p "*) ;;
         *) bad "package list never names $p" ;;
