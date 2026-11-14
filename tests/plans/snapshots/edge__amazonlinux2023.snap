@@ -62,7 +62,7 @@ role edge
       | tp_sbx "$tp_cd" "$tp_sd" || { tp_cd=/dev/null/refused; tp_sd=/dev/null/refused; }
       | tp_s='5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5'
       | tp_f="$tp_cd/$tp_s"; if [ -L "$tp_sd/$__tp_run/f-$tp_s" ]; then tp_f="$tp_sd/$__tp_run/f-$tp_s"; tp_r=$(readlink "$tp_f"); tp_r=${tp_r%/.telepatch/*}; tp_q=$(tp_fsroot "$tp_p"); [ "$tp_q" = "$tp_r" ] || echo 'telepatch: fetch https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64: staged on '"$tp_r, target now on $tp_q" >&2; fi
-      | if [ ! -f "$tp_f" ]; then echo "telepatch: fetched file $tp_f is missing (prepare did not fetch it)" >&2; rc=1; fi
+      | if [ ! -f "$tp_f" ]; then echo 'telepatch: the cached download 5942c9b0934e for https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 is gone (a cache purge during the run?); run again to download it' >&2; rc=1; fi
       | if [ "$rc" -eq 0 ] && [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
       | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(sha256sum < "$tp_p" | cut -d' ' -f1)" = "$tp_s" ]; }; then
       |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?

@@ -69,7 +69,7 @@ role (none)
       | tp_sbx "$tp_cd" "$tp_sd" || { tp_cd=/dev/null/refused; tp_sd=/dev/null/refused; }
       | tp_s='9c2355ab6d8d2a8020c65547e567e31f80eb41eede1ce611e591d82779be5cc0'
       | tp_f="$tp_cd/$tp_s"; if [ -L "$tp_sd/$__tp_run/f-$tp_s" ]; then tp_f="$tp_sd/$__tp_run/f-$tp_s"; tp_r=$(readlink "$tp_f"); tp_r=${tp_r%/.telepatch/*}; tp_q=$(tp_fsroot "$tp_p"); [ "$tp_q" = "$tp_r" ] || echo 'telepatch: fetch file:///var/lib/tp-fetch/blob.txt: staged on '"$tp_r, target now on $tp_q" >&2; fi
-      | if [ ! -f "$tp_f" ]; then echo "telepatch: fetched file $tp_f is missing (prepare did not fetch it)" >&2; rc=1; fi
+      | if [ ! -f "$tp_f" ]; then echo 'telepatch: the cached download 9c2355ab6d8d for file:///var/lib/tp-fetch/blob.txt is gone (a cache purge during the run?); run again to download it' >&2; rc=1; fi
       | if [ "$rc" -eq 0 ] && [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
       | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(sha256sum < "$tp_p" | cut -d' ' -f1)" = "$tp_s" ]; }; then
       |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
@@ -94,7 +94,7 @@ role (none)
       | tp_sbx "$tp_cd" "$tp_sd" || { tp_cd=/dev/null/refused; tp_sd=/dev/null/refused; }
       | tp_s='2d44dca14b5af2c8e4f1c784d246deacf22fb8c613641a9422696514249c0789'
       | tp_f="$tp_cd/$tp_s"; if [ -L "$tp_sd/$__tp_run/f-$tp_s" ]; then tp_f="$tp_sd/$__tp_run/f-$tp_s"; tp_r=$(readlink "$tp_f"); tp_r=${tp_r%/.telepatch/*}; tp_q=$(tp_fsroot "$tp_p"); [ "$tp_q" = "$tp_r" ] || echo 'telepatch: fetch file:///var/lib/tp-fetch/pkg.tgz: staged on '"$tp_r, target now on $tp_q" >&2; fi
-      | if [ ! -f "$tp_f" ]; then echo "telepatch: fetched file $tp_f is missing (prepare did not fetch it)" >&2; rc=1; fi
+      | if [ ! -f "$tp_f" ]; then echo 'telepatch: the cached download 2d44dca14b5a for file:///var/lib/tp-fetch/pkg.tgz is gone (a cache purge during the run?); run again to download it' >&2; rc=1; fi
       | tp_magic() {
       |   local h
       |   h=$(head -c 6 "$1" | od -An -tx1 | tr -d ' \n')
