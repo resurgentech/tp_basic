@@ -911,7 +911,8 @@ fn edge_plans() {
 }
 
 /// `undo_fs` (test-only, see `playbooks/undo.rs`): a content op over an
-/// existing file and two `.absent()` ops, then the mid-run listing op last.
+/// existing file, two `.absent()` ops and the fetch ops (one onto the root
+/// filesystem, T139), then the mid-run listing op last.
 #[test]
 fn undo_fs_plan_has_three_file_ops_and_the_listing_last() {
     for d in DISTROS {
@@ -925,6 +926,8 @@ fn undo_fs_plan_has_three_file_ops_and_the_listing_last() {
         let a = find("file:/srv/tpfs/tp-undo-file");
         let b = find("file:/srv/tpfs/tp-undo-gone");
         let c = find("file:/var/tmp/tp-undo-fs/gone");
+        // T139: the root-filesystem fetch, which lands in the main cache
+        let m = find("file:/opt/tp-undo-fs/main.bin");
         let last = ops.len() - 1;
         assert!(
             ops[last].contains("sh") && !ops[last].contains("file:"),
@@ -932,7 +935,7 @@ fn undo_fs_plan_has_three_file_ops_and_the_listing_last() {
             ops[last]
         );
         assert!(
-            a < last && b < last && c < last,
+            a < last && b < last && c < last && m < last,
             "{d}: the listing is not last\n{text}"
         );
         assert!(text.contains("/root/tp-undo-fs-mid.txt"), "{d}: {text}");

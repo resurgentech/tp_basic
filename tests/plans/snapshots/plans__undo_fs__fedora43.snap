@@ -158,13 +158,38 @@ role (none)
       |     if [ -n "$tp_n" ]; then rm -rf -- "$tp_n" "$tp_n.raw"; fi
       |   fi
       | fi
+  #5 file as shell:root reads [] writes [file:/opt/tp-undo-fs/main.bin] post [file:/opt/tp-undo-fs/main.bin=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/opt/tp-undo-fs/main.bin'
+      | tp_was "$tp_p"
+      | tp_sbx() { [ "${TP_SANDBOX_REQUIRED-}" = 1 ] || return 0; local p s=${TP_SANDBOX-}; s=${s%/}; for p; do case $p/ in */../*) ;; /*) [ -n "$s" ] && [ -d "$s" ] && case $p/ in "$s"/*) continue;; esac;; esac; echo "telepatch: sandbox: refusing $p (TP_SANDBOX_REQUIRED is set; tests must use telepatch::testing::sandbox)" >&2; return 1; done; }
+      | tp_cd="${TP_FETCH_CACHE:-/var/cache/telepatch/sha256}"
+      | tp_sd="${TP_FETCH_STAGE:-/var/tmp/telepatch}"
+      | tp_sbx "$tp_cd" "$tp_sd" || { tp_cd=/dev/null/refused; tp_sd=/dev/null/refused; }
+      | tp_s='1cc327a15a79fa6b99b66669635de5befe295a05b82b30702724245c05591ad0'
+      | tp_f="$tp_cd/$tp_s"; if [ -L "$tp_sd/$__tp_run/f-$tp_s" ]; then tp_f="$tp_sd/$__tp_run/f-$tp_s"; tp_r=$(readlink "$tp_f"); tp_r=${tp_r%/.telepatch/*}; tp_q=$(tp_fsroot "$tp_p"); [ "$tp_q" = "$tp_r" ] || echo 'telepatch: fetch file:///var/lib/tp-fetch/main.bin: staged on '"$tp_r, target now on $tp_q" >&2; fi
+      | if [ ! -f "$tp_f" ]; then echo 'telepatch: the cached download 1cc327a15a79 for file:///var/lib/tp-fetch/main.bin is gone (a cache purge during the run?); run again to download it' >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ] && [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(sha256sum < "$tp_p" | cut -d' ' -f1)" = "$tp_s" ]; }; then
+      |   tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      |   if [ "$rc" -eq 0 ]; then
+      |     cp -- "$tp_f" "$tp_t" || rc=$?
+      |     if [ "$rc" -eq 0 ]; then
+      |       if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_t" || rc=$?; else chmod 644 "$tp_t" || rc=$?; fi
+      |     fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_t" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" && mv -f "$tp_t" "$tp_p"; rc=$?; fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi
 
 window 2 (at end)
 role (none)
-  #5 sh as shell:root reads [] writes [*] at_end
+  #6 sh as shell:root reads [] writes [*] at_end
       | rc=0; changed=0; skipped=0
-      | ( for d in /srv/tpfs/.telepatch/tmp/$__tp_run/undo/root/*/; do [ -d "$d" ] && echo "backup $d"; done; for l in /var/tmp/telepatch/$__tp_run/undo/root/*; do if [ -L "$l" ]; then echo "link $l -> $(readlink "$l")"; elif [ -d "$l" ]; then echo "stagedir $l"; fi; done; for f in /var/tmp/telepatch/$__tp_run/*; do if [ -L "$f" ]; then echo "fetchlink $f -> $(readlink "$f")"; elif [ -f "$f" ] && [ "$(basename "$f")" != fsroots ]; then echo "stagefile $f"; fi; done; for f in /srv/tpfs/.telepatch/cache/sha256/*; do [ -f "$f" ] && echo "fetchcache $f"; done; for f in /srv/tpfs/.telepatch/tmp/$__tp_run/fetch/*; do [ -e "$f" ] && echo "fetchtmp $f"; done; if [ -d /srv/tpfs/.telepatch/tmp/$__tp_run/fetch ]; then echo 'fetchdir present'; else echo 'fetchdir absent'; fi; if [ -e /.telepatch ]; then echo 'root-telepatch PRESENT'; else echo 'root-telepatch absent'; fi; echo "run $__tp_run" ) > /root/tp-undo-fs-mid.txt
+      | ( for d in /srv/tpfs/.telepatch/tmp/$__tp_run/undo/root/*/; do [ -d "$d" ] && echo "backup $d"; done; for l in /var/tmp/telepatch/$__tp_run/undo/root/*; do if [ -L "$l" ]; then echo "link $l -> $(readlink "$l")"; elif [ -d "$l" ]; then echo "stagedir $l"; fi; done; for f in /var/tmp/telepatch/$__tp_run/*; do if [ -L "$f" ]; then echo "fetchlink $f -> $(readlink "$f")"; elif [ -f "$f" ] && [ "$(basename "$f")" != fsroots ]; then echo "stagefile $f"; fi; done; for f in /srv/tpfs/.telepatch/cache/sha256/*; do [ -f "$f" ] && echo "fetchcache $f"; done; for f in /srv/tpfs/.telepatch/tmp/$__tp_run/fetch/*; do [ -e "$f" ] && echo "fetchtmp $f"; done; for f in /var/cache/telepatch/sha256/*; do [ -f "$f" ] && echo "maincache $f"; done; for f in /var/cache/telepatch/owners/undo_fs/*; do [ -e "$f" ] && echo "mainowner $f"; done; if [ -d /srv/tpfs/.telepatch/tmp/$__tp_run/fetch ]; then echo 'fetchdir present'; else echo 'fetchdir absent'; fi; if [ -e /.telepatch ]; then echo 'root-telepatch PRESENT'; else echo 'root-telepatch absent'; fi; echo "run $__tp_run" ) > /root/tp-undo-fs-mid.txt
       | rc=$?
       | if [ "$rc" -eq 0 ]; then changed=1; fi
 
-warning: sh! in a role body at src/playbooks/undo.rs:64
+warning: sh! in a role body at src/playbooks/undo.rs:81

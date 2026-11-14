@@ -84,26 +84,31 @@
 # into /srv/tpfs/tp-fetch-blob.txt (.from) and /srv/tpfs/tp-fetch-tree (.unpack).
 # The mid-run listing shows the downloads on /srv/tpfs/.telepatch/ (the cache
 # entries there) and only links in the stage; after the run the cache entries
-# stay on /srv/tpfs/.telepatch/cache/sha256 (the main cache is unused), its tmp is
-# gone, and run 2 exits 0 with only the mid-run listing op changed (an unguarded sh,
-# so never CHANGED 0; every other op `-> ok`), with both fetches `cached` (a hit on
-# /srv/tpfs, no download).
+# stay on /srv/tpfs/.telepatch/cache/sha256, its tmp is gone, and run 2 exits 0
+# with only the mid-run listing op changed (an unguarded sh, so never CHANGED 0;
+# every other op `-> ok`), with all three fetches `cached` (no download).
+# T139's main-cache file: the setup also serves /var/lib/tp-fetch/main.bin (256 KiB
+# of `m`, so `cache usage` shows a nonzero size) and makes /opt/tp-undo-fs; a third
+# .from puts it at /opt/tp-undo-fs/main.bin, on the root filesystem, so it is the
+# one item in the main cache /var/cache/telepatch/sha256/<sum> (root 0644) with its
+# owners/undo_fs/<sum> marker, no stage link, and the mid-run listing shows
+# `maincache` and `mainowner` lines for it.
 # The cache case (T123 as reshaped by T135 and T136), over ssh from here, after
 # run 2. Touch on use: each item's mtime (`stat -c %Y`) after run 2 is later
 # than after run 1 (a `sleep 2` between the two, for the one-second resolution).
 # Owner markers: cache/owners/undo_fs/<sum> exists beside the cache on /srv/tpfs
-# for each fetched item (and beside the main cache for any item it holds). No
+# for each fetched item (and beside the main cache for main.bin). No
 # .telepatch-usage*, .lock or .caches.lock under /var/cache/telepatch or
 # /srv/tpfs/.telepatch. `tp-basic cache usage --host <vm>` exits 0 with `host
 # <vm>`, a `  /srv/tpfs/.telepatch/cache/sha256: <size>` line, `  working: <size>`,
 # `  host total: <size>` and `inventory total: 1 host, <size>`; the main cache
-# line `  /var/cache/telepatch/sha256: <size>` is required if the directory
-# exists, and when it does not (this case fetches onto /srv/tpfs) a `GAP` line
-# says the step's main-cache line cannot be shown by this case. `cache purge`
+# line `  /var/cache/telepatch/sha256: <size>` is required, with a nonzero size
+# (not 0.0 MB). `cache purge`
 # without --yes says `nothing changed; add --yes` and removes nothing. A
 # stand-in for a dead run's undo data is put in /srv/tpfs/.telepatch/tmp; then
-# `cache purge --yes` leaves no file in either cache and no owners/, leaves
-# the stand-in, /srv/tpfs/.telepatch/tmp and the fetched file alone, and usage
+# `cache purge --yes` leaves no file in either cache (the main cache entry is
+# gone too) and no owners/, leaves the stand-in, /srv/tpfs/.telepatch/tmp and
+# the fetched files alone, and usage
 # shows every listed cache directory at 0.0 MB (a removed one is not listed).
 # local_user (T120, test-only, written and run in T104, one VM): as_user over
 # --local, run INSIDE the VM. The script copies the musl build/tp-basic to
@@ -797,11 +802,17 @@ undo_fs_mid_problems() {
 
 # The fixed sums of the fetch case's two served files (src/playbooks/undo.rs).
 UNDO_FETCH_SUMS=(9c2355ab6d8d2a8020c65547e567e31f80eb41eede1ce611e591d82779be5cc0 2d44dca14b5af2c8e4f1c784d246deacf22fb8c613641a9422696514249c0789)
+# T139: the third served file, /var/lib/tp-fetch/main.bin (256 KiB of 'm'), fetched onto the root
+# filesystem so it lands in the main cache. Big enough that `cache usage` (one decimal of MB,
+# `du -sb`) shows a nonzero size for it.
+UNDO_MAIN_SUM=1cc327a15a79fa6b99b66669635de5befe295a05b82b30702724245c05591ad0
 
 # undo_fs_fetch_problems <listing> <download|hit> : one line per way the fetch
 # part of the mid-run listing is not what T119 promises, nothing when it is.
-# Each served file has a `fetchcache` entry under /srv/tpfs/.telepatch/cache/sha256/
-# and a `fetchlink` from /var/tmp/telepatch/<run>/f-<sum> to it; the stage holds no
+# Each of the first two served files has a `fetchcache` entry under /srv/tpfs/.telepatch/cache/sha256/
+# and a `fetchlink` from /var/tmp/telepatch/<run>/f-<sum> to it (T139: the third, whose target
+# is on the root filesystem, is in the main cache: a `maincache` entry and a `mainowner`
+# marker, and no stage link, so exactly 2 fetchlink lines); the stage holds no
 # regular file (`stagefile`, the `fsroots` index aside); no `.part` is left in
 # the run's fetch directory (`fetchtmp`); and that directory exists after a
 # download (`fetchdir present`) but not after a cache hit (nothing was made).
@@ -811,6 +822,8 @@ undo_fs_fetch_problems() {
     [[ -n $run ]] || { echo "no 'run <id>' line"; return 0; }
     n=$(grep -c '^fetchlink ' "$f" || true)
     [[ $n -eq 2 ]] || echo "$n fetchlink lines, wanted 2"
+    grep -qxF "maincache /var/cache/telepatch/sha256/$UNDO_MAIN_SUM" "$f" || echo "no main cache entry $UNDO_MAIN_SUM in /var/cache/telepatch/sha256"
+    grep -qxF "mainowner /var/cache/telepatch/owners/undo_fs/$UNDO_MAIN_SUM" "$f" || echo "no owner marker for $UNDO_MAIN_SUM beside the main cache"
     for s in "${UNDO_FETCH_SUMS[@]}"; do
         grep -qxF "fetchcache /srv/tpfs/.telepatch/cache/sha256/$s" "$f" || echo "no cache entry $s on /srv/tpfs/.telepatch/cache/sha256"
         grep -qxF "fetchlink /var/tmp/telepatch/$run/f-$s -> /srv/tpfs/.telepatch/cache/sha256/$s" "$f" || echo "no stage link f-$s to the cache entry on /srv/tpfs"
@@ -831,20 +844,21 @@ undo_fs_fetch_problems() {
 # MB below a GiB, GB above. T136 retired the item counts and the run total.
 CACHE_SIZE_RE='[0-9]+\.[0-9] (MB|GB)'
 
-# cache_usage_problems <usage output> <host> <main: yes|no> : one line per way
+# cache_usage_problems <usage output> <host> : one line per way
 # `tp-basic cache usage` output (T136's form) fails the undo_fs cache check: the
 # `host <name>` head; `  /srv/tpfs/.telepatch/cache/sha256: <size>`; the main
-# cache line `  /var/cache/telepatch/sha256: <size>` when <main> is yes (the
-# directory exists on the host; a directory that does not exist is not listed);
+# cache line `  /var/cache/telepatch/sha256: <size>`, required (T139: the case
+# fetches one file onto the root filesystem) and not 0.0 MB (a directory that
+# does not exist is not listed, so it is not there either);
 # `  working: <size>`; `  host total: <size>`; `inventory total: 1 host, <size>`.
 cache_usage_problems() {
-    local f=$1 host=$2 main=$3 line d dirs=(/srv/tpfs/.telepatch/cache/sha256)
-    [[ $main != yes ]] || dirs+=(/var/cache/telepatch/sha256)
+    local f=$1 host=$2 line d dirs=(/srv/tpfs/.telepatch/cache/sha256 /var/cache/telepatch/sha256)
     grep -qxF "host $host" "$f" || echo "no 'host $host' line"
     for d in "${dirs[@]}"; do
         line=$(grep -F "  $d: " "$f" | head -1 || true)
         if [[ -z $line ]]; then echo "$d is not listed"
-        elif ! [[ $line =~ ^\ \ $d:\ $CACHE_SIZE_RE$ ]]; then echo "no size on '$line'"; fi
+        elif ! [[ $line =~ ^\ \ $d:\ $CACHE_SIZE_RE$ ]]; then echo "no size on '$line'"
+        elif [[ $d == /var/cache/telepatch/sha256 && $line == *' 0.0 MB' ]]; then echo "$d shows 0.0 MB, wanted a nonzero size"; fi
     done
     grep -qE "^  working: $CACHE_SIZE_RE\$" "$f" || echo "no 'working: <size>' line"
     grep -qE "^  host total: $CACHE_SIZE_RE\$" "$f" || echo "no 'host total: <size>' line"
@@ -978,8 +992,10 @@ undo_fs_self_test() {
     local fails=0 t got r=RUNX
     t=$(mktemp -d)
     local c=/srv/tpfs/.telepatch/cache/sha256 s0=${UNDO_FETCH_SUMS[0]} s1=${UNDO_FETCH_SUMS[1]}
+    local sm=$UNDO_MAIN_SUM
     printf '%s\n' "fetchlink /var/tmp/telepatch/$r/f-$s0 -> $c/$s0" "fetchlink /var/tmp/telepatch/$r/f-$s1 -> $c/$s1" \
-        "fetchcache $c/$s0" "fetchcache $c/$s1" 'fetchdir present' "run $r" >"$t/fgood"
+        "fetchcache $c/$s0" "fetchcache $c/$s1" "maincache /var/cache/telepatch/sha256/$sm" \
+        "mainowner /var/cache/telepatch/owners/undo_fs/$sm" 'fetchdir present' "run $r" >"$t/fgood"
     got=$(undo_fs_fetch_problems "$t/fgood" download)
     if [[ -z $got ]]; then echo "ok   undo_fs_fetch_problems: a good download listing has none"; else echo "FAIL good fetch listing: $got"; fails=1; fi
     got=$(undo_fs_fetch_problems "$t/fgood" hit)
@@ -1001,6 +1017,15 @@ undo_fs_self_test() {
     got=$(undo_fs_fetch_problems "$t/fmain" download)
     if [[ $got == *"no stage link f-$s0 to the cache entry on /srv/tpfs"* ]]; then echo "ok   undo_fs_fetch_problems: a link into the main cache is named"
     else echo "FAIL link into the main cache: '$got'"; fails=1; fi
+    grep -v '^maincache ' "$t/fgood" >"$t/fnomain"
+    got=$(undo_fs_fetch_problems "$t/fnomain" download)
+    if [[ $got == *"no main cache entry $sm"* ]]; then echo "ok   undo_fs_fetch_problems: a missing main cache entry is named"; else echo "FAIL missing main entry: '$got'"; fails=1; fi
+    grep -v '^mainowner ' "$t/fgood" >"$t/fnoown"
+    got=$(undo_fs_fetch_problems "$t/fnoown" download)
+    if [[ $got == *"no owner marker for $sm beside the main cache"* ]]; then echo "ok   undo_fs_fetch_problems: a missing main owner marker is named"; else echo "FAIL missing main owner: '$got'"; fails=1; fi
+    { cat "$t/fgood"; echo "fetchlink /var/tmp/telepatch/$r/f-$sm -> /var/cache/telepatch/sha256/$sm"; } >"$t/fmainlink"
+    got=$(undo_fs_fetch_problems "$t/fmainlink" download)
+    if [[ $got == *'3 fetchlink lines, wanted 2'* ]]; then echo "ok   undo_fs_fetch_problems: a stage link for the main-cache item is named"; else echo "FAIL main-cache stage link: '$got'"; fails=1; fi
     printf '%s\n' "backup /srv/tpfs/.telepatch/tmp/$r/undo/root/0/" "backup /srv/tpfs/.telepatch/tmp/$r/undo/root/1/" \
         "link /var/tmp/telepatch/$r/undo/root/0 -> /srv/tpfs/.telepatch/tmp/$r/undo/root/0" \
         "link /var/tmp/telepatch/$r/undo/root/1 -> /srv/tpfs/.telepatch/tmp/$r/undo/root/1" \
@@ -1030,13 +1055,14 @@ undo_fs_self_test() {
         '== bot@h [(none)] #0 file /srv/tpfs/tp-undo-file content ==' '-> ok' \
         '== bot@h [(none)] #1 absent /srv/tpfs/tp-undo-gone ==' '-> ok' \
         '== bot@h [(none)] #2 fetch /srv/tpfs/tp-fetch-blob.txt ==' '-> ok' \
-        "== bot@h [(none)] #3 $L ==" '-> changed' 'bot@h  changed  4  1  0  0' >"$t/u2good"
+        '== bot@h [(none)] #3 fetch /opt/tp-undo-fs/main.bin ==' '-> ok' \
+        "== bot@h [(none)] #4 $L ==" '-> changed' 'bot@h  changed  5  1  0  0' >"$t/u2good"
     got=$(undo_fs_run2_problems "$t/u2good" 0 2>&1)
     if [[ -z $got ]]; then echo "ok   undo_fs_run2_problems: only the listing op changed -> none"; else echo "FAIL good run 2: '$got'"; fails=1; fi
     awk 'NR==3{print "-> changed"; next} {print}' "$t/u2good" >"$t/u2file"
     got=$(undo_fs_run2_problems "$t/u2file" 0 2>&1)
     if [[ $got == *"op 'file /srv/tpfs/tp-undo-file content' ended '-> changed'"* ]]; then echo "ok   undo_fs_run2_problems: a changed file op is named"; else echo "FAIL changed file op: '$got'"; fails=1; fi
-    awk '/^== .* #3 /{skip=2} skip>0{skip--; next} {print}' "$t/u2good" >"$t/u2none"
+    awk '/^== .* #4 /{skip=2} skip>0{skip--; next} {print}' "$t/u2good" >"$t/u2none"
     got=$(undo_fs_run2_problems "$t/u2none" 0 2>&1)
     if [[ $got == *'0 listing op(s)'* ]]; then echo "ok   undo_fs_run2_problems: no listing op is a problem"; else echo "FAIL no listing op: '$got'"; fails=1; fi
     sed 's/^-> changed$/-> ok/' "$t/u2good" >"$t/u2quiet"
@@ -1047,28 +1073,29 @@ undo_fs_self_test() {
     awk 'NR==3{print "-> failed: boom"; next} {print}' "$t/u2good" >"$t/u2fail"
     got=$(undo_fs_run2_problems "$t/u2fail" 1 2>&1)
     if [[ $got == *"ended '-> failed'"* && $got == *'exit code 1'* ]]; then echo "ok   undo_fs_run2_problems: a failed op and exit code are both named"; else echo "FAIL failed op: '$got'"; fails=1; fi
-    local H=bot@192.0.2.7 U='  /srv/tpfs/.telepatch/cache/sha256: 0.2 MB' M='  /var/cache/telepatch/sha256: 0.0 MB'
+    local H=bot@192.0.2.7 U='  /srv/tpfs/.telepatch/cache/sha256: 0.2 MB' M='  /var/cache/telepatch/sha256: 0.3 MB'
     printf '%s\n' "host $H" "$U" '  working: 0.0 MB' '  host total: 0.2 MB' '' 'inventory total: 1 host, 0.2 MB' >"$t/cu_good"
     printf '%s\n' "host $H" "$U" "$M" '  working: 0.0 MB' '  host total: 0.2 MB' '' 'inventory total: 1 host, 0.2 MB' >"$t/cu_main"
     grep -v '/srv/tpfs' "$t/cu_main" >"$t/cu_nosrv"
     grep -v 'working:' "$t/cu_main" >"$t/cu_nowork"
     grep -v 'inventory total' "$t/cu_main" >"$t/cu_noinv"
-    got=$(cache_usage_problems "$t/cu_main" "$H" yes)
+    sed 's#: 0.3 MB#: 0.0 MB#' "$t/cu_main" >"$t/cu_main0"
+    got=$(cache_usage_problems "$t/cu_main" "$H")
     if [[ -z $got ]]; then echo "ok   cache_usage_problems: a good listing with the main cache has none"; else echo "FAIL good usage: $got"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu_good" "$H" no)
-    if [[ -z $got ]]; then echo "ok   cache_usage_problems: a good listing without a main cache (none on the host) has none"; else echo "FAIL good usage, no main: $got"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu_good" "$H" yes)
-    if [[ $got == *'/var/cache/telepatch/sha256 is not listed'* ]]; then echo "ok   cache_usage_problems: a main cache that exists but is not listed is named"; else echo "FAIL main not listed: '$got'"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu_nosrv" "$H" yes)
+    got=$(cache_usage_problems "$t/cu_good" "$H")
+    if [[ $got == *'/var/cache/telepatch/sha256 is not listed'* ]]; then echo "ok   cache_usage_problems: a listing without the main cache is named (it is required)"; else echo "FAIL main not listed: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_main0" "$H")
+    if [[ $got == *'/var/cache/telepatch/sha256 shows 0.0 MB, wanted a nonzero size'* ]]; then echo "ok   cache_usage_problems: a main cache line at 0.0 MB is named"; else echo "FAIL main at zero: '$got'"; fails=1; fi
+    got=$(cache_usage_problems "$t/cu_nosrv" "$H")
     if [[ $got == *'/srv/tpfs/.telepatch/cache/sha256 is not listed'* ]]; then echo "ok   cache_usage_problems: a missing /srv/tpfs line is named"; else echo "FAIL missing srv: '$got'"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu_nowork" "$H" yes)
+    got=$(cache_usage_problems "$t/cu_nowork" "$H")
     if [[ $got == *"no 'working: <size>' line"* ]]; then echo "ok   cache_usage_problems: a missing working line is named"; else echo "FAIL missing working: '$got'"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu_noinv" "$H" yes)
+    got=$(cache_usage_problems "$t/cu_noinv" "$H")
     if [[ $got == *"no 'inventory total: "* ]]; then echo "ok   cache_usage_problems: a missing inventory total is named"; else echo "FAIL missing inventory: '$got'"; fails=1; fi
-    got=$(cache_usage_problems "$t/cu_main" other@host yes)
+    got=$(cache_usage_problems "$t/cu_main" other@host)
     if [[ $got == *"no 'host other@host' line"* ]]; then echo "ok   cache_usage_problems: a wrong host is named"; else echo "FAIL wrong host: '$got'"; fails=1; fi
-    sed 's/: 0.2 MB/: 12 items, 0.2 MB/' "$t/cu_good" >"$t/cu_old"
-    got=$(cache_usage_problems "$t/cu_old" "$H" no)
+    sed 's/: 0.2 MB/: 12 items, 0.2 MB/' "$t/cu_main" >"$t/cu_old"
+    got=$(cache_usage_problems "$t/cu_old" "$H")
     if [[ $got == *"no size on '  /srv/tpfs/.telepatch/cache/sha256: 12 items"* ]]; then echo "ok   cache_usage_problems: the retired item-count form is not accepted"; else echo "FAIL old form: '$got'"; fails=1; fi
     printf '%s\n' "host $H" '  working: 0.0 MB' '  host total: 0.0 MB' '' 'inventory total: 1 host, 0.0 MB' >"$t/cz_good"
     printf '%s\n' "host $H" '  /srv/tpfs/.telepatch/cache/sha256: 0.0 MB' '  working: 0.0 MB' '  host total: 0.0 MB' '' 'inventory total: 1 host, 0.0 MB' >"$t/cz_listed"
@@ -1076,6 +1103,8 @@ undo_fs_self_test() {
     if [[ -z $got ]]; then echo "ok   cache_usage_zero_problems: no cache line, or a 0.0 MB one, has none"; else echo "FAIL zero usage: $got"; fails=1; fi
     got=$(cache_usage_zero_problems "$t/cu_good" "$H")
     if [[ $got == *"/srv/tpfs/.telepatch/cache/sha256 still shows 0.2 MB"* ]]; then echo "ok   cache_usage_zero_problems: a nonzero cache after the purge is named"; else echo "FAIL nonzero after purge: '$got'"; fails=1; fi
+    got=$(cache_usage_zero_problems "$t/cu_main" "$H")
+    if [[ $got == *"/var/cache/telepatch/sha256 still shows 0.3 MB"* ]]; then echo "ok   cache_usage_zero_problems: a nonzero main cache after the purge is named"; else echo "FAIL nonzero main after purge: '$got'"; fails=1; fi
     grep -v working "$t/cz_good" >"$t/cz_nowork"
     got=$(cache_usage_zero_problems "$t/cz_nowork" "$H")
     if [[ $got == *"no 'working: <size>' line"* ]]; then echo "ok   cache_usage_zero_problems: a missing working line is named"; else echo "FAIL zero, no working: '$got'"; fails=1; fi
@@ -1546,8 +1575,12 @@ printf 'y\n' > /var/tmp/tp-undo-fs/gone/sub/f
 # T119: two files served from the root filesystem (file:// URLs, no network)
 mkdir -p /var/lib/tp-fetch
 printf 'tp fetch bytes\n' > /var/lib/tp-fetch/blob.txt
+# T139: a third file, 256 KiB (so the main cache shows a nonzero size in `cache usage`), whose
+# target /opt/tp-undo-fs/main.bin is on the root filesystem; the parent must exist for the op
+head -c 262144 /dev/zero | tr '\0' m > /var/lib/tp-fetch/main.bin
+mkdir -p /opt/tp-undo-fs
 printf '%s' 'H4sIAAAAAAAAA+3VSwrCMBSFYceuIhtQ00eSsWCHTtxB1frAR0uN+7cVC7Yo4iBR8f8myexeOOSk2K0HwVCOeg7JilHqela654O7NjrsCeVyqcb5ZNNSCB+jvlFxy3+WjCfTxM2MOlQdx8/zD7v5Gx1V+Us367T9ef62EKvMLjaizNLlIet/eh/41bz/+fbo7A94v/+Niuh/L+7zt3m+dzHjZf9L1c4/kHGo6H8f6swpfQAAAAAAAAAAAAD4fRfw7WVeACgAAA==' | base64 -d > /var/lib/tp-fetch/pkg.tgz
-echo "undo_fs fetch files: $(sha256sum /var/lib/tp-fetch/blob.txt /var/lib/tp-fetch/pkg.tgz | cut -c1-16 | tr '\n' ' ')"
+echo "undo_fs fetch files: $(sha256sum /var/lib/tp-fetch/blob.txt /var/lib/tp-fetch/pkg.tgz /var/lib/tp-fetch/main.bin | cut -c1-16 | tr '\n' ' ')"
 echo "undo_fs setup: device $(stat -c %d /srv/tpfs) on /srv/tpfs, $(stat -c %d /var/tmp) on /var/tmp"
 SETUP
 }
@@ -1911,12 +1944,15 @@ if [[ $container == undo_fs ]]; then
     fprobs=$(undo_fs_fetch_problems "$mid" download)
     if [[ -z $fprobs ]]; then ok "mid-run: both downloads are cache entries under /srv/tpfs/.telepatch/cache/sha256/, the stage holds only a link to each, no .part left"
     else while IFS= read -r l; do bad "mid-run fetch listing: $l"; done <<<"$fprobs"; fi
-    # what is left: /srv/tpfs/.telepatch holds the cache only (its tmp went with the run); the main cache was not used
+    # what is left: /srv/tpfs/.telepatch holds the cache only (its tmp went with the run); the main cache holds only main.bin (T139)
     vexpect "after the run /srv/tpfs/.telepatch/tmp" absent "$(rpresent -e /srv/tpfs/.telepatch/tmp)"
     vexpect "after the run /srv/tpfs/.telepatch holds" cache 'sudo -n ls /srv/tpfs/.telepatch'
     vexpect "after the run the cache on /srv/tpfs" "$(printf '%s\n' "${UNDO_FETCH_SUMS[@]}" | sort | tr '\n' ' ' | sed 's/ $//')" 'sudo -n ls /srv/tpfs/.telepatch/cache/sha256 | sort | tr "\n" " " | sed "s/ $//"'
     vexpect "the cache entries are root-owned 0644" '644 root' 'sudo -n sh -c '"'"'for f in /srv/tpfs/.telepatch/cache/sha256/*; do stat -c "%a %U" "$f"; done'"'"' | sort -u'
-    vexpect "the main cache holds neither file (one line each)" $'absent\nabsent' "$(rpresent -e "/var/cache/telepatch/sha256/${UNDO_FETCH_SUMS[0]}"); $(rpresent -e "/var/cache/telepatch/sha256/${UNDO_FETCH_SUMS[1]}")"
+    vexpect "the main cache holds neither /srv/tpfs file, and the root-filesystem file (one line each)" $'absent\nabsent\npresent' "$(rpresent -e "/var/cache/telepatch/sha256/${UNDO_FETCH_SUMS[0]}"); $(rpresent -e "/var/cache/telepatch/sha256/${UNDO_FETCH_SUMS[1]}"); $(rpresent -e "/var/cache/telepatch/sha256/$UNDO_MAIN_SUM")"
+    vexpect "the main cache holds exactly the root-filesystem file" "$UNDO_MAIN_SUM" 'sudo -n ls /var/cache/telepatch/sha256'
+    vexpect "the main cache entry is root-owned 0644" '644 root' "sudo -n stat -c '%a %U' /var/cache/telepatch/sha256/$UNDO_MAIN_SUM"
+    vexpect "after the run /opt/tp-undo-fs/main.bin is the 256 KiB file" "262144 $UNDO_MAIN_SUM" "echo \"\$(stat -c %s /opt/tp-undo-fs/main.bin) \$(sha256sum < /opt/tp-undo-fs/main.bin | cut -d' ' -f1)\""
     vexpect "after the run /srv/tpfs/tp-fetch-blob.txt" 'tp fetch bytes' 'cat /srv/tpfs/tp-fetch-blob.txt'
     vexpect "after the run /srv/tpfs/tp-fetch-tree/README" 'tp fetch readme' 'cat /srv/tpfs/tp-fetch-tree/README'
     if [[ -n $run ]]; then
@@ -1953,8 +1989,8 @@ if [[ $container == undo_fs ]]; then
         changed_ops "$out/run2.out" | sed 's/^/     changed: /'
     fi
     nhit=$(grep -c '\[prepare\] fetch file:///var/lib/tp-fetch/.*: cached' "$out/run2.out" || true)
-    if [[ $nhit -eq 2 ]]; then ok "run 2: both fetches say cached (the cache on /srv/tpfs, no download)"
-    else bad "run 2: $nhit fetch line(s) say cached, wanted 2 (log: $out/run2.out)"; fi
+    if [[ $nhit -eq 3 ]]; then ok "run 2: all three fetches say cached (two on /srv/tpfs, one in the main cache, no download)"
+    else bad "run 2: $nhit fetch line(s) say cached, wanted 3 (log: $out/run2.out)"; fi
     fprobs2=$(undo_fs_fetch_problems "$mid2" hit)
     if [[ -z $fprobs2 ]]; then ok "run 2 mid-run: a stage link to each cache entry on /srv/tpfs, no fetch directory made"
     else while IFS= read -r l; do bad "run 2 mid-run fetch listing: $l"; done <<<"$fprobs2"; fi
@@ -1978,33 +2014,24 @@ if [[ $container == undo_fs ]]; then
     for s in "${UNDO_FETCH_SUMS[@]}"; do
         vexpect "owner marker /srv/tpfs/.telepatch/cache/owners/undo_fs/${s:0:12}..." present "$(rpresent -e "/srv/tpfs/.telepatch/cache/owners/undo_fs/$s")"
     done
-    # the main cache holds items only if something fetched onto the root filesystem; a marker is
-    # checked for each of this playbook's items it does hold, and what is there is printed
-    main_exists=$(sshv "$(rpresent -d /var/cache/telepatch/sha256)" 2>&1) || main_exists="(failed: $main_exists)"
-    case $main_exists in present) main_exists=yes ;; absent) main_exists=no ;; *) bad "could not tell whether /var/cache/telepatch/sha256 exists: '$main_exists'" ;; esac
-    echo "the main cache /var/cache/telepatch/sha256 exists: $main_exists; holds: $(sshv 'sudo -n ls /var/cache/telepatch/sha256 2>&1 | tr "\n" " "'); owners/undo_fs: $(sshv 'sudo -n ls /var/cache/telepatch/owners/undo_fs 2>&1 | tr "\n" " "')"
-    for s in "${UNDO_FETCH_SUMS[@]}"; do
-        if [[ $(sshv "$(rpresent -e "/var/cache/telepatch/sha256/$s")") == present ]]; then
-            vexpect "owner marker /var/cache/telepatch/owners/undo_fs/${s:0:12}..." present "$(rpresent -e "/var/cache/telepatch/owners/undo_fs/$s")"
-        fi
-    done
+    # T139: the root-filesystem file is in the main cache, with its marker beside it (required)
+    echo "the main cache /var/cache/telepatch/sha256 holds: $(sshv 'sudo -n ls /var/cache/telepatch/sha256 2>&1 | tr "\n" " "'); owners/undo_fs: $(sshv 'sudo -n ls /var/cache/telepatch/owners/undo_fs 2>&1 | tr "\n" " "')"
+    vexpect "owner marker /var/cache/telepatch/owners/undo_fs/${UNDO_MAIN_SUM:0:12}..." present "$(rpresent -e "/var/cache/telepatch/owners/undo_fs/$UNDO_MAIN_SUM")"
     # no lock and no usage record anywhere under either cache's parent (T135 removed them)
     locks_cmd='sudo -n find /var/cache/telepatch /srv/tpfs/.telepatch \( -name ".telepatch-usage*" -o -name .lock -o -name .caches.lock \) -print 2>/dev/null; true'
     vexpect "no .telepatch-usage*, .lock or .caches.lock under /var/cache/telepatch or /srv/tpfs/.telepatch" "" "$locks_cmd"
     crc=0; cache_cmd cache-usage1 usage || crc=$?
     if [[ $crc -eq 0 ]]; then ok "cache usage exited 0"; else bad "cache usage exited $crc (log: $out/cache-usage1.out)"; fi
-    main_want=no; [[ $main_exists == yes ]] && main_want=yes
-    cprobs=$(cache_usage_problems "$out/cache-usage1.out" "$dest" "$main_want")
-    if [[ -z $cprobs ]]; then ok "cache usage: host $dest, /srv/tpfs/.telepatch/cache/sha256 with a size, a working line, a host total and an inventory total"
+    cprobs=$(cache_usage_problems "$out/cache-usage1.out" "$dest")
+    if [[ -z $cprobs ]]; then ok "cache usage: host $dest, /srv/tpfs/.telepatch/cache/sha256 and /var/cache/telepatch/sha256 (nonzero) with a size, a working line, a host total and an inventory total"
     else while IFS= read -r l; do bad "cache usage: $l"; done <<<"$cprobs"; fi
-    if [[ $main_want == yes ]]; then ok "cache usage lists the main cache /var/cache/telepatch/sha256 (it exists on the VM)"
-    else echo "GAP  the main cache /var/cache/telepatch/sha256 does not exist on this VM (this case fetches onto /srv/tpfs), so the step's main-cache usage line cannot be shown by this case; not a pass, not a failure"; fi
     # without --yes nothing is removed
     crc=0; cache_cmd cache-purge-dry purge || crc=$?
     if [[ $crc -eq 0 ]] && grep -qF 'nothing changed; add --yes' "$out/cache-purge-dry.out" \
         && grep -qE "^  /srv/tpfs/.telepatch/cache/sha256: would remove $CACHE_SIZE_RE\$" "$out/cache-purge-dry.out"; then ok "cache purge without --yes exited 0, said 'nothing changed; add --yes' and what it would remove from /srv/tpfs/.telepatch/cache/sha256"
     else bad "cache purge without --yes: exit $crc, no 'nothing changed; add --yes' or no '/srv/tpfs/.telepatch/cache/sha256: would remove <size>' (log: $out/cache-purge-dry.out)"; fi
     vexpect "after a purge without --yes the cache on /srv/tpfs still holds" 2 'sudo -n ls /srv/tpfs/.telepatch/cache/sha256 | wc -l'
+    vexpect "after a purge without --yes the main cache still holds" 1 'sudo -n ls /var/cache/telepatch/sha256 | wc -l'
     # A stand-in for a dead run's undo data in /srv/tpfs/.telepatch/tmp (a real run's own tmp is
     # gone after it, see above), so the purge's "leaves tmp alone while it holds anything" clause
     # can be tested: made as root, with a known content.
@@ -2016,7 +2043,9 @@ if [[ $container == undo_fs ]]; then
     vexpect "after cache purge --yes /srv/tpfs/.telepatch/cache/sha256 holds no file" 0 'sudo -n find /srv/tpfs/.telepatch/cache/sha256 -type f 2>/dev/null | wc -l'
     vexpect "after cache purge --yes /srv/tpfs/.telepatch/cache/owners" absent "$(rpresent -e /srv/tpfs/.telepatch/cache/owners)"
     vexpect "after cache purge --yes the main cache holds no file" 0 'sudo -n find /var/cache/telepatch/sha256 -type f 2>/dev/null | wc -l'
+    vexpect "after cache purge --yes the main cache entry $UNDO_MAIN_SUM" absent "$(rpresent -e "/var/cache/telepatch/sha256/$UNDO_MAIN_SUM")"
     vexpect "after cache purge --yes /var/cache/telepatch/owners" absent "$(rpresent -e /var/cache/telepatch/owners)"
+    vexpect "after cache purge --yes /opt/tp-undo-fs/main.bin itself is untouched" 262144 'stat -c %s /opt/tp-undo-fs/main.bin'
     vexpect "after cache purge --yes the stand-in in /srv/tpfs/.telepatch/tmp is untouched" 'tp-t104 dead run data' "sudo -n cat $dead/keep"
     vexpect "after cache purge --yes /srv/tpfs/.telepatch/tmp still exists" present "$(rpresent -d /srv/tpfs/.telepatch/tmp)"
     vexpect "after cache purge --yes the fetched file itself is untouched" 'tp fetch bytes' 'cat /srv/tpfs/tp-fetch-blob.txt'

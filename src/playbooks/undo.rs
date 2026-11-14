@@ -28,6 +28,14 @@ const BLOB_URL: &str = "file:///var/lib/tp-fetch/blob.txt";
 const BLOB_SUM: &str = "9c2355ab6d8d2a8020c65547e567e31f80eb41eede1ce611e591d82779be5cc0";
 const PKG_URL: &str = "file:///var/lib/tp-fetch/pkg.tgz";
 const PKG_SUM: &str = "2d44dca14b5af2c8e4f1c784d246deacf22fb8c613641a9422696514249c0789";
+/// T139: 256 KiB of `m`, a third file whose target `/opt/tp-undo-fs/main.bin`
+/// is on the root filesystem, so it lands in the main cache
+/// `/var/cache/telepatch/sha256` (not `/srv/tpfs`). Its own file, not the
+/// blob again: one `(url, sum)` is one item, placed by its first consumer, so
+/// reusing the blob would leave the main cache empty. 256 KiB so `cache usage`
+/// (one decimal of MB) shows a nonzero size.
+const MAIN_URL: &str = "file:///var/lib/tp-fetch/main.bin";
+const MAIN_SUM: &str = "1cc327a15a79fa6b99b66669635de5befe295a05b82b30702724245c05591ad0";
 
 /// The proof of the real device walk, with no `TP_FS_ROOTS` seam
 /// (`scripts/test-vm.sh undo_fs`). The script's setup, as root in the VM,
@@ -50,6 +58,13 @@ const PKG_SUM: &str = "2d44dca14b5af2c8e4f1c784d246deacf22fb8c613641a94226965142
 /// the run's `fetch` directory) and the stage holds only links to it
 /// (`fetchlink` lines, and no regular file but the `fsroots` index).
 ///
+/// The main-cache case (T139): a third `.from`, of `/var/lib/tp-fetch/main.bin`
+/// into `/opt/tp-undo-fs/main.bin` (new, so no backup; the setup makes the
+/// directory). Its target is on the stage's filesystem, so the download is
+/// the main cache entry `/var/cache/telepatch/sha256/<sum>` with its marker
+/// `/var/cache/telepatch/owners/undo_fs/<sum>`, and the stage holds no link
+/// to it. The listing shows both (`maincache`, `mainowner` lines).
+///
 /// The last op lists all of that into [`MID_LISTING`] while the run is still
 /// in flight (`.at_end()` puts it after the others).
 async fn undo_fs(h: &Host<Vars>) -> Result<(), TraceError> {
@@ -60,6 +75,8 @@ async fn undo_fs(h: &Host<Vars>) -> Result<(), TraceError> {
     h.file("/srv/tpfs/tp-fetch-blob.txt").from(&blob);
     let pkg = h.fetch(PKG_URL).sha256(PKG_SUM);
     h.file("/srv/tpfs/tp-fetch-tree").unpack(&pkg).strip(1);
+    let main = h.fetch(MAIN_URL).sha256(MAIN_SUM);
+    h.file("/opt/tp-undo-fs/main.bin").from(&main);
     // HACK(test): lists the run's own undo data mid-run, which no primitive reads (the proof must see it before cleanup)
     sh!(
         h,
@@ -72,6 +89,8 @@ async fn undo_fs(h: &Host<Vars>) -> Result<(), TraceError> {
            elif [ -f \"$f\" ] && [ \"$(basename \"$f\")\" != fsroots ]; then echo \"stagefile $f\"; fi; done; \
          for f in /srv/tpfs/.telepatch/cache/sha256/*; do [ -f \"$f\" ] && echo \"fetchcache $f\"; done; \
          for f in /srv/tpfs/.telepatch/tmp/$__tp_run/fetch/*; do [ -e \"$f\" ] && echo \"fetchtmp $f\"; done; \
+         for f in /var/cache/telepatch/sha256/*; do [ -f \"$f\" ] && echo \"maincache $f\"; done; \
+         for f in /var/cache/telepatch/owners/undo_fs/*; do [ -e \"$f\" ] && echo \"mainowner $f\"; done; \
          if [ -d /srv/tpfs/.telepatch/tmp/$__tp_run/fetch ]; then echo 'fetchdir present'; else echo 'fetchdir absent'; fi; \
          if [ -e /.telepatch ]; then echo 'root-telepatch PRESENT'; else echo 'root-telepatch absent'; fi; \
          echo \"run $__tp_run\" ) > /root/tp-undo-fs-mid.txt"
