@@ -926,3 +926,28 @@ fn undo_fs_plans() {
         });
     }
 }
+
+/// `local_user` (test-only, see `playbooks/local_user.rs`): a file op and an
+/// `sh` op, both in the login shell of `tpuser`; the nologin variant is the
+/// same plan for `tpnologin`. No snapshots: the plan is two lines.
+#[test]
+fn local_user_plans_run_in_the_users_login_shell() {
+    for (name, user) in [
+        ("local_user", "tpuser"),
+        ("local_user_nologin", "tpnologin"),
+    ] {
+        let text = plan(name, "ubuntu2404");
+        let ops = op_lines(&text);
+        assert_eq!(ops.len(), 2, "{name}:\n{text}");
+        assert!(
+            ops[0].contains("file:~/file-marker") && ops[0].contains(&format!("login:{user}")),
+            "{name}: {}",
+            ops[0]
+        );
+        assert!(
+            ops[1].contains("sh") && ops[1].contains(&format!("login:{user}")),
+            "{name}: {}",
+            ops[1]
+        );
+    }
+}

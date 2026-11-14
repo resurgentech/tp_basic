@@ -86,8 +86,19 @@
 # `cache purge --host <vm>` without --yes changes nothing; `cache purge --yes`
 # empties both (/srv/tpfs/.telepatch is gone, the main cache holds no file) and
 # usage then shows 0 items.
+# local_user (T120, test-only, written and run in T104, one VM): as_user over
+# --local, run INSIDE the VM. The script copies the musl build/tp-basic to
+# /usr/local/bin/tp-basic-local-user and makes `tpuser` (a login shell) and
+# `tpnologin` (/usr/sbin/nologin). Run A is `sudo tp-basic run local_user
+# --local` (the caller is root, so `sudo -n -iu tpuser bash`); run B is the
+# same as the VM's passwordless-sudo login user. After each, ~tpuser/marker
+# holds `tpuser` (id -un in the user's shell) and ~tpuser/file-marker (a file
+# op) is there, both owned by tpuser. Run C is `local_user_nologin` as the
+# login user: exit non-zero, STATUS blocked, and `sudo -n -iu tpnologin bash
+# refused on this machine (no sudo rights for tpnologin, or a login shell
+# that refuses, such as nologin)`. The VM is deleted at the end.
 #
-#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm, reboot_vm or undo_fs)
+#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm, reboot_vm, undo_fs or local_user)
 #   scripts/test-vm.sh --self-test
 #
 # Needs: build/tp-basic (`just musl`). This script does not read a container
@@ -235,6 +246,9 @@ playbook_config() {
         # test-only (src/playbooks/undo.rs): a file and two directories, one
         # target on a 64 MiB loop-mounted image the setup makes in the VM.
         undo_fs) PB_NAME=undo_fs PB_VARS=vars/undo_fs.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
+        # test-only (src/playbooks/local_user.rs): as_user over --local, run
+        # inside the VM by the copied musl tp-basic (T120).
+        local_user) PB_NAME=local_user PB_VARS=vars/local_user.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
         *) return 1 ;;
     esac
 }
@@ -889,6 +903,70 @@ undo_fs_self_test() {
     return $fails
 }
 
+# ---- local_user (T120): as_user over --local, in the VM -------------------------
+# The accounts the setup makes (src/playbooks/local_user.rs).
+LU_USER=tpuser LU_NOLOGIN=tpnologin
+
+# local_user_problems <listing> <user> : one line per way what the playbook
+# left in ~<user> is not what T120 promises, nothing when it is. The listing
+# has `marker=<content>` (what `id -un` printed in the user's shell),
+# `markerowner=<owner>`, `file=<content>` and `fileowner=<owner>`.
+local_user_problems() {
+    local f=$1 u=$2
+    grep -qxF "marker=$u" "$f" || echo "~$u/marker holds '$(sed -n 's/^marker=//p' "$f" | head -1)', wanted '$u' (id -un in the user's shell)"
+    grep -qxF "markerowner=$u" "$f" || echo "~$u/marker is owned by '$(sed -n 's/^markerowner=//p' "$f" | head -1)', wanted $u"
+    grep -qxF 'file=written by the file op' "$f" || echo "~$u/file-marker does not hold what the file op wrote"
+    grep -qxF "fileowner=$u" "$f" || echo "~$u/file-marker is owned by '$(sed -n 's/^fileowner=//p' "$f" | head -1)', wanted $u"
+    return 0
+}
+
+# local_user_refusal_problems <run output> <rc> <user> : one line per way a run
+# against a user whose login shell is nologin is not the transport's refusal:
+# the run must exit non-zero, the table must say `blocked`, and the output must
+# carry `sudo -n -iu <user> bash refused on this machine (no sudo rights for
+# <user>, or a login shell that refuses, such as nologin)`.
+local_user_refusal_problems() {
+    local f=$1 rc=$2 u=$3
+    [[ $rc -ne 0 ]] || echo "the run exited 0, wanted non-zero"
+    [[ $(table_row "$f" status) == blocked ]] || echo "STATUS is '$(table_row "$f" status)', wanted blocked"
+    grep -qF "sudo -n -iu $u bash refused on this machine (no sudo rights for $u, or a login shell that refuses, such as nologin)" "$f" \
+        || echo "no 'sudo -n -iu $u bash refused on this machine (no sudo rights for $u, or a login shell that refuses, such as nologin)' in the output"
+    return 0
+}
+
+# local_user_self_test : the readers of the local_user checks, on synthetic
+# output.
+local_user_self_test() {
+    local fails=0 t got hdr='HOST                 STATUS            OK CHANGED FAILED NOT RUN  DETAIL'
+    t=$(mktemp -d)
+    printf '%s\n' 'marker=tpuser' 'markerowner=tpuser' 'file=written by the file op' 'fileowner=tpuser' >"$t/good"
+    printf '%s\n' 'marker=root' 'markerowner=root' 'file=written by the file op' 'fileowner=root' >"$t/root"
+    printf '%s\n' 'marker=tpuser' 'markerowner=tpuser' 'file=' 'fileowner=' >"$t/nofile"
+    : >"$t/empty"
+    got=$(local_user_problems "$t/good" tpuser)
+    if [[ -z $got ]]; then echo "ok   local_user_problems: a good listing has none"; else echo "FAIL good listing: $got"; fails=1; fi
+    got=$(local_user_problems "$t/root" tpuser)
+    if [[ $got == *"~tpuser/marker holds 'root'"* && $got == *'~tpuser/marker is owned by '"'root'"* && $got == *'file-marker is owned by '"'root'"* ]]; then echo "ok   local_user_problems: a shell that was root is named"
+    else echo "FAIL root listing: '$got'"; fails=1; fi
+    got=$(local_user_problems "$t/nofile" tpuser)
+    if [[ $got == *'does not hold what the file op wrote'* && $got == *'file-marker is owned by'* ]]; then echo "ok   local_user_problems: a missing file op is named"; else echo "FAIL nofile listing: '$got'"; fails=1; fi
+    got=$(local_user_problems "$t/empty" tpuser)
+    if [[ $(printf '%s\n' "$got" | wc -l) -eq 4 ]]; then echo "ok   local_user_problems: an empty listing fails all four checks"; else echo "FAIL empty listing: '$got'"; fails=1; fi
+    printf '%s\n' "$hdr" 'local               blocked            0       0      0       0  sudo -n -iu tpnologin bash refused on this machine (no sudo rights for tpnologin, or a login shell that refuses, such as nologin): it printed nothing on stderr and closed' >"$t/blocked"
+    printf '%s\n' "$hdr" 'local               ok                 1       2      0       0' >"$t/ok"
+    printf '%s\n' "$hdr" 'local               blocked            0       0      0       0  could not open a root shell: sudo refused' >"$t/other"
+    got=$(local_user_refusal_problems "$t/blocked" 1 tpnologin)
+    if [[ -z $got ]]; then echo "ok   local_user_refusal_problems: the refusal has none"; else echo "FAIL good refusal: $got"; fails=1; fi
+    got=$(local_user_refusal_problems "$t/ok" 0 tpnologin)
+    if [[ $got == *'exited 0'* && $got == *"STATUS is 'ok'"* && $got == *'no '"'sudo -n -iu tpnologin bash refused"* ]]; then echo "ok   local_user_refusal_problems: a run that worked is named"; else echo "FAIL ok run: '$got'"; fails=1; fi
+    got=$(local_user_refusal_problems "$t/other" 1 tpnologin)
+    if [[ $got != *'exited 0'* && $got != *'STATUS is'* && $got == *'no '"'sudo -n -iu tpnologin bash refused"* ]]; then echo "ok   local_user_refusal_problems: another blocked reason is named"; else echo "FAIL other reason: '$got'"; fails=1; fi
+    got=$(local_user_refusal_problems "$t/blocked" 1 tpuser)
+    if [[ $got == *"no 'sudo -n -iu tpuser bash refused"* ]]; then echo "ok   local_user_refusal_problems: the wrong user is named"; else echo "FAIL wrong user: '$got'"; fails=1; fi
+    rm -rf "$t"
+    return $fails
+}
+
 # reboot_vm_vars3 <file> : run 3's vars, a fresh mark (`marked` changed) and
 # a changed `after`, both different from vars/reboot_vm.toml's. Runs 4 and 5
 # use the same file.
@@ -999,9 +1077,13 @@ self_test() {
     if [[ $got == "undo_fs|vars/undo_fs.toml|0|1|" ]]; then echo "ok   playbook undo_fs -> $got"
     else echo "FAIL playbook undo_fs -> '$got'"; fails=1; fi
     undo_fs_self_test || fails=1
+    got=$(playbook_config local_user && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "local_user|vars/local_user.toml|0|1|" ]]; then echo "ok   playbook local_user -> $got"
+    else echo "FAIL playbook local_user -> '$got'"; fails=1; fi
+    local_user_self_test || fails=1
     # every accepted playbook gives a VM name vm.sh's guard accepts (`_` is not in tp-[a-z0-9-]+)
     local pbn
-    for pbn in dev_base dev_desktop services_vm reboot_vm undo_fs; do
+    for pbn in dev_base dev_desktop services_vm reboot_vm undo_fs local_user; do
         got=$(vm_name_for "$pbn" 20261112t000000z)
         if vm_name_ok "$got"; then echo "ok   vm name for $pbn -> $got"
         else echo "FAIL vm name for $pbn -> '$got' is refused by vm_name_ok"; fails=1; fi
@@ -1112,7 +1194,7 @@ if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
 distro=${1:-}; container=${2:-}
 [[ -n $distro && -n $container ]] || die "usage: test-vm.sh [--keep] <distro> <playbook> | --self-test"
 [[ $distro == ubuntu2404 ]] || die "only the ubuntu2404 image is supported, not '$distro'"
-playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm, reboot_vm, undo_fs"
+playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm, reboot_vm, undo_fs, local_user"
 
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
@@ -1216,6 +1298,77 @@ SETUP
 if [[ $container == undo_fs ]]; then
     echo "=== undo_fs setup in the VM: 64 MiB ext4 loop-mounted at /srv/tpfs ==="
     if ! undo_fs_setup; then echo "FAIL: the undo_fs setup failed"; exit 1; fi
+fi
+
+# ---- local_user: as_user over --local, run INSIDE the VM (gating) ---------------
+# T120 (written, run in T104). The musl tp-basic is copied into the VM and run
+# there with `--local`, the only place a real second user exists. No run goes
+# over SSH to a host: sshv only sets up, runs tp-basic and reads the files.
+# Setup, as root in the VM: `tpuser` (a login shell) and `tpnologin`
+# (/usr/sbin/nologin). Run A is `sudo tp-basic run local_user --local` (the
+# caller is root: `sudo -n -iu tpuser bash`); run B is the same as the VM's
+# passwordless-sudo login user (root shell by `sudo -n -H bash`, user shell by
+# `sudo -n -iu tpuser bash`). After each, ~tpuser/marker holds `tpuser` (id -un
+# in the user's shell) and ~tpuser/file-marker is the file op's, both owned by
+# tpuser. Run C targets tpnologin and must be refused: exit non-zero, STATUS
+# blocked, the refusal text of the transport.
+if [[ $container == local_user ]]; then
+    wrc=0
+    ok() { echo "ok   $1"; }
+    bad() { echo "FAIL $1"; wrc=1; }
+    TPB=/usr/local/bin/tp-basic-local-user
+    echo "=== local_user setup in the VM: tpuser, tpnologin and the musl tp-basic ==="
+    if ! sshv 'sudo -n sh -s' <<'SETUP'
+set -e
+id tpuser >/dev/null 2>&1 || useradd -m -s /bin/bash tpuser
+id tpnologin >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin tpnologin
+echo "local_user setup: $(getent passwd tpuser tpnologin | cut -d: -f1,6,7 | tr '\n' ' ')"
+SETUP
+    then echo "FAIL: the local_user setup failed"; exit 1; fi
+    if ! sshv "sudo -n tee $TPB >/dev/null && sudo -n chmod 755 $TPB" <"$ROOT/build/tp-basic"; then
+        echo "FAIL: copying build/tp-basic into the VM failed"; exit 1
+    fi
+    echo "tp-basic in the VM: $(sshv "$TPB list | head -1" 2>&1 || true)"
+    # lu_run <name> <sudo|plain> <playbook> : tp-basic run <playbook> --local in the VM, output in $out/<name>.out
+    lu_run() {
+        local name=$1 how=$2 pb=$3 rc=0 pre=
+        [[ $how == sudo ]] && pre='sudo -n '
+        echo "=== $name: ${pre}tp-basic run $pb --local (in the VM, as $([[ $how == sudo ]] && echo root || echo 'the login user')) ==="
+        sshv "${pre}$TPB run $pb --local" >"$out/$name.out" 2>&1 || rc=$?
+        sed -n '/^HOST  *STATUS/,$p' "$out/$name.out"
+        return $rc
+    }
+    # lu_read <file> : what the playbook left in ~tpuser, read as root
+    lu_read() {
+        sshv 'sudo -n sh -s' >"$1" 2>&1 <<'READ' || true
+printf "marker=%s\n" "$(cat /home/tpuser/marker 2>/dev/null)"
+printf "markerowner=%s\n" "$(stat -c %U /home/tpuser/marker 2>/dev/null)"
+printf "file=%s\n" "$(cat /home/tpuser/file-marker 2>/dev/null)"
+printf "fileowner=%s\n" "$(stat -c %U /home/tpuser/file-marker 2>/dev/null)"
+READ
+    }
+    for step in "runA sudo root" "runB plain the-login-user"; do
+        read -r name how who <<<"$step"
+        sshv 'sudo -n rm -f /home/tpuser/marker /home/tpuser/file-marker' || true
+        rc=0; lu_run "$name" "$how" local_user || rc=$?
+        lu_read "$out/$name.listing"
+        sed 's/^/     | /' "$out/$name.listing"
+        if [[ $rc -eq 0 && $(status_of "$out/$name.out") == changed ]]; then ok "$name ($who): exit 0, STATUS changed"
+        else bad "$name ($who): exit $rc, STATUS '$(status_of "$out/$name.out")', wanted exit 0 and changed (log: $out/$name.out)"; fi
+        probs=$(local_user_problems "$out/$name.listing" "$LU_USER")
+        if [[ -z $probs ]]; then ok "$name ($who): ~$LU_USER/marker says $LU_USER and both files are owned by $LU_USER"
+        else while IFS= read -r l; do bad "$name ($who): $l"; done <<<"$probs"; fi
+    done
+    rc=0; lu_run runC plain local_user_nologin || rc=$?
+    probs=$(local_user_refusal_problems "$out/runC.out" "$rc" "$LU_NOLOGIN")
+    if [[ -z $probs ]]; then ok "runC (nologin): refused with the transport's text, STATUS blocked"
+    else while IFS= read -r l; do bad "runC (nologin): $l"; done <<<"$probs"; fi
+    r=$(sshv 'sudo -n test -e /home/tpnologin/marker && echo present || echo absent' 2>&1) || true
+    if [[ $r == absent ]]; then ok "runC (nologin): nothing was written to ~$LU_NOLOGIN"; else bad "runC (nologin): ~$LU_NOLOGIN/marker is '$r'"; fi
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: a local_user check failed"; exit 1; fi
+    echo "local_user checks: all passed"
+    echo "PASS: local_user on a $distro VM (as_user over --local: as root and as the sudo login user the op ran as $LU_USER and wrote its files owned by $LU_USER; a nologin user was refused with the transport's text)"
+    exit 0
 fi
 
 rc1=0; run 1 || rc1=$?

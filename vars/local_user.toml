@@ -1,0 +1,2 @@
+# local_user (test-only) has no vars of its own: scripts/test-vm.sh checks this
+# file exists like the other playbooks' and passes none to `--local`.
