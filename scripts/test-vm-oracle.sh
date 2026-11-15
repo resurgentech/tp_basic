@@ -18,10 +18,10 @@
 #        ansible-playbook on this machine.
 #
 # labtwo_<role>: one role of ansible_labtwo_2's labtwo.yml. A wrapper playbook
-# (hosts all, the role; vm_server first for hashicorp_packer) is written into the
-# export, as for dev_desktop_kept. An optional pre-seed script
-# (scripts/oracle-preseed/<case>.sh) runs as root on both VMs before the pre-state
-# capture: maasfix a MAAS-style sources.list, cuda docker.io. The tp-basic
+# (hosts all, the role) is written into the export, as for dev_desktop_kept. An
+# optional pre-seed script (scripts/oracle-preseed/<case>.sh) runs as root on
+# both VMs before the pre-state capture: maasfix a MAAS-style sources.list, cuda
+# docker.io, hashicorp_packer vm_server's packages (for its groups). The tp-basic
 # playbook of the same name is added by T151-T156.
 #
 # Each side runs twice on its VM: the first run does the work, the second
@@ -169,7 +169,8 @@ tpb_ssh_args() {
 # dir H11SSL_reboot_fix is case labtwo_h11ssl_reboot_fix). OC_TP is the
 # tp-basic test playbook of the same name (T151-T156 add them). OC_VARS is
 # vars/container.toml until a step adds a vars file of its own (cuda's small
-# lists: vars/labtwo_cuda.toml, T156).
+# lists: vars/labtwo_cuda.toml, T156; hashicorp_packer's login user:
+# vars/labtwo_hashicorp_packer.toml, T154).
 #
 # dev_desktop_kept: the roles of playbooks/dev_desktop.yml that were kept as
 # ports, admin_users and tmux (the others were rewritten and have no Ansible
@@ -189,8 +190,11 @@ oracle_config() {
             OC_PLAYBOOK=playbooks/tp_labtwo_root_user.yml OC_TP=labtwo_root_user OC_VARS=vars/container.toml
             OC_EXTRA='{}' OC_USERS= OC_ROLES=root_user ;;
         labtwo_hashicorp_packer)
-            OC_PLAYBOOK=playbooks/tp_labtwo_hashicorp_packer.yml OC_TP=labtwo_hashicorp_packer OC_VARS=vars/container.toml
-            OC_EXTRA='{"admin_users":["bot"]}' OC_USERS= OC_ROLES="vm_server hashicorp_packer" ;;
+            # the tp side's vars file names the same login user as the extra vars;
+            # vm_server's groups come from the pre-seed on both VMs (the Ansible
+            # vm_server is not run: its port is a rewrite, see the pre-seed)
+            OC_PLAYBOOK=playbooks/tp_labtwo_hashicorp_packer.yml OC_TP=labtwo_hashicorp_packer OC_VARS=vars/labtwo_hashicorp_packer.toml
+            OC_EXTRA='{"admin_users":["bot"]}' OC_USERS= OC_ROLES=hashicorp_packer OC_PRESEED=$pre/labtwo_hashicorp_packer.sh ;;
         labtwo_h11ssl_reboot_fix)
             OC_PLAYBOOK=playbooks/tp_labtwo_h11ssl_reboot_fix.yml OC_TP=labtwo_h11ssl_reboot_fix OC_VARS=vars/container.toml
             OC_EXTRA='{}' OC_USERS= OC_ROLES=H11SSL_reboot_fix ;;
@@ -231,7 +235,7 @@ selftest_labtwo() {
         [labtwo_maasfix]='playbooks/tp_labtwo_maasfix.yml|labtwo_maasfix|vars/container.toml|maasfix|scripts/oracle-preseed/labtwo_maasfix.sh'
         [labtwo_systemd_time]='playbooks/tp_labtwo_systemd_time.yml|labtwo_systemd_time|vars/container.toml|systemd_time|'
         [labtwo_root_user]='playbooks/tp_labtwo_root_user.yml|labtwo_root_user|vars/container.toml|root_user|'
-        [labtwo_hashicorp_packer]='playbooks/tp_labtwo_hashicorp_packer.yml|labtwo_hashicorp_packer|vars/container.toml|vm_server hashicorp_packer|'
+        [labtwo_hashicorp_packer]='playbooks/tp_labtwo_hashicorp_packer.yml|labtwo_hashicorp_packer|vars/labtwo_hashicorp_packer.toml|hashicorp_packer|scripts/oracle-preseed/labtwo_hashicorp_packer.sh'
         [labtwo_h11ssl_reboot_fix]='playbooks/tp_labtwo_h11ssl_reboot_fix.yml|labtwo_h11ssl_reboot_fix|vars/container.toml|H11SSL_reboot_fix|'
         [labtwo_cuda]='playbooks/tp_labtwo_cuda.yml|labtwo_cuda|vars/labtwo_cuda.toml|cuda|scripts/oracle-preseed/labtwo_cuda.sh'
     )
@@ -248,6 +252,9 @@ selftest_labtwo() {
     [[ $got == '{"iana_tz":"America/Los_Angeles"}' ]] || { echo "FAIL systemd_time extra: $got"; fails=1; }
     got=$(oracle_config labtwo_hashicorp_packer && echo "$OC_EXTRA")
     [[ $got == '{"admin_users":["bot"]}' ]] || { echo "FAIL hashicorp_packer extra: $got"; fails=1; }
+    # both sides get the same admin_users (the extra vars' and the vars file's)
+    got=$(sed -n 's/^admin_users *= *//p' "$ROOT/vars/labtwo_hashicorp_packer.toml")
+    [[ $got == '["bot"]' ]] || { echo "FAIL hashicorp_packer vars file admin_users: $got"; fails=1; }
     got=$(oracle_config labtwo_cuda && echo "$OC_EXTRA")
     [[ $got == *'"nvidia_driver_packages":[]'* && $got == *'"cuda_packages":["nvtop"]'* ]] || { echo "FAIL cuda extra (small lists): $got"; fails=1; }
     # the old cases are unchanged by the new fields: no roles, no pre-seed
@@ -270,14 +277,15 @@ selftest_labtwo() {
         else echo "FAIL wrapper playbook $c:"; sed 's/^/     | /' "$t/wrap/$c.yml"; fails=1; fi
     done
     grep -qx '    - H11SSL_reboot_fix' "$t/wrap/labtwo_h11ssl_reboot_fix.yml" || { echo "FAIL h11ssl wrapper lacks the real role dir name"; fails=1; }
-    if [[ $(grep -n '^    - ' "$t/wrap/labtwo_hashicorp_packer.yml" | tr '\n' ' ') == '7:    - vm_server 8:    - hashicorp_packer ' ]]
-    then echo "ok   hashicorp_packer wrapper: vm_server first"; else echo "FAIL hashicorp_packer wrapper order"; fails=1; fi
+    # vm_server is a rewrite with no Ansible equivalent: the pre-seed stands in
+    if [[ $(grep -n '^    - ' "$t/wrap/labtwo_hashicorp_packer.yml" | tr '\n' ' ') == '7:    - hashicorp_packer ' ]]
+    then echo "ok   hashicorp_packer wrapper: the role alone"; else echo "FAIL hashicorp_packer wrapper roles"; fails=1; fi
 
     # the pre-seed scripts, on a fake root with a stub apt-get on PATH
     local r=$t/seed-root bin=$t/seed-bin
     mkdir -p "$r/etc/apt/sources.list.d" "$bin"
     printf '%s\n' '#!/bin/sh' 'echo "apt-get $*" >>"$APT_LOG"' >"$bin/apt-get"; chmod +x "$bin/apt-get"
-    for c in labtwo_maasfix labtwo_cuda labtwo_src_repos; do
+    for c in labtwo_maasfix labtwo_cuda labtwo_src_repos labtwo_hashicorp_packer; do
         sh -n "$ROOT/scripts/oracle-preseed/$c.sh" || { echo "FAIL $c pre-seed does not parse"; fails=1; }
     done
     PRESEED_ROOT=$r sh "$ROOT/scripts/oracle-preseed/labtwo_maasfix.sh" >/dev/null
@@ -291,6 +299,10 @@ selftest_labtwo() {
     PATH=$bin:$PATH APT_LOG=$t/apt.log PRESEED_ROOT=$r sh "$ROOT/scripts/oracle-preseed/labtwo_cuda.sh" >/dev/null
     if grep -qE '^apt-get .*install .*docker\.io' "$t/apt.log"; then echo "ok   cuda pre-seed installs docker.io"
     else echo "FAIL cuda pre-seed: apt-get calls: $(cat "$t/apt.log")"; fails=1; fi
+    : >"$t/apt.log"
+    PATH=$bin:$PATH APT_LOG=$t/apt.log PRESEED_ROOT=$r sh "$ROOT/scripts/oracle-preseed/labtwo_hashicorp_packer.sh" >/dev/null
+    if grep -qE '^apt-get .*install .*libvirt-daemon-system' "$t/apt.log"; then echo "ok   hashicorp_packer pre-seed installs vm_server's packages"
+    else echo "FAIL hashicorp_packer pre-seed: apt-get calls: $(cat "$t/apt.log")"; fails=1; fi
     PRESEED_ROOT=$r sh "$ROOT/scripts/oracle-preseed/labtwo_src_repos.sh" >/dev/null
     if grep -q '^Types: deb-src' "$r/etc/apt/sources.list.d/ubuntu-src.sources"
     then echo "ok   src_repos pre-seed: ubuntu-src.sources (not yet a case; T158)"; else echo "FAIL src_repos pre-seed"; fails=1; fi
@@ -342,7 +354,7 @@ selftest_labtwo() {
 }
 
 # write_role_playbook <file> <role>... : the wrapper playbook of a labtwo case:
-# hosts all, the roles in order (vm_server before hashicorp_packer), the
+# hosts all, the roles in order, the
 # original's remote_user. Written into this run's export only.
 write_role_playbook() {
     local f=$1 r; shift

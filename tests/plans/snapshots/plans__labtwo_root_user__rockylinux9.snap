@@ -1,0 +1,119 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host rockylinux9 (os: RedHat/Rocky 9.8)
+blocking reads: 0
+shell helpers: undo fe76955f
+
+window 1 (final)
+role root_user
+  #1 file as shell:root reads [] writes [file:/root/.ssh] post [file:/root/.ssh=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/root/.ssh'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then :
+      | elif [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   echo "telepatch: $tp_p exists and is not a directory" >&2; rc=1
+      | else
+      |   tp_mk "$tp_p"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; tp_ct=$tp_cx; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '700' ]; then
+      |   if chmod 700 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'root:root' ]; then
+      |   if chown 'root:root' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #2 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='@includedir /etc/sudoers.d'
+      |   tp_n=$(grep -nE -- '^[#@]includedir' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='/usr/sbin/visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #3 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='Defaults    secure_path = /usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin'
+      |   tp_n=$(grep -nE -- '^Defaults\s*secure_path' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='/usr/sbin/visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi

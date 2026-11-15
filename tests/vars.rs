@@ -143,3 +143,28 @@ fn systemd_time_zone_defaults_to_los_angeles_and_loads_from_a_section() {
     let v: Vars = load("v", "iana_tz = \"Asia/Tokyo\"\n", "").unwrap();
     assert_eq!(v.systemd_time.iana_tz, "Asia/Tokyo");
 }
+
+#[test]
+fn hashicorp_packer_admin_users_default_to_root_and_follow_the_top_level_key() {
+    assert_eq!(
+        Vars::default().hashicorp_packer.admin_users,
+        users(&["root"])
+    );
+    assert_eq!(
+        shipped("container").hashicorp_packer.admin_users,
+        users(&["root"])
+    );
+    let v: Vars = load("v", "admin_users = [\"a\", \"b\"]\n", "").unwrap();
+    assert_eq!(v.hashicorp_packer.admin_users, users(&["a", "b"]));
+    let v: Vars = load("v", "[hashicorp_packer]\nadmin_users = [\"c\"]\n", "").unwrap();
+    assert_eq!(v.hashicorp_packer.admin_users, users(&["c"]));
+}
+
+/// The oracle case's vars file: the VM's login user, to both roles of the
+/// case, as the Ansible side's `--extra-vars` gives it.
+#[test]
+fn labtwo_hashicorp_packer_vars_name_the_login_user_for_both_roles() {
+    let v = shipped("labtwo_hashicorp_packer");
+    assert_eq!(v.vm_server.admin_users, users(&["bot"]));
+    assert_eq!(v.hashicorp_packer.admin_users, users(&["bot"]));
+}

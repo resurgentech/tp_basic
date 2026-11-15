@@ -1,9 +1,10 @@
 # labtwo.yml: understanding doc (playbook level)
 
 Scope: `playbooks/labtwo.yml` as a playbook: its plays, groups, play
-vars and role list. The six roles it still needs ported each get their
-own doc (T151–T156); the eight already ported carry their understanding
-as code comments in `src/roles/`. All file:line citations are relative
+vars and role list. The six roles ported in Goal 10 (T151–T156) each
+get their own doc until their oracle passes; those ported, and the
+eight ported earlier, carry their understanding as code comments in
+`src/roles/`. All file:line citations are relative
 to `conversion/ansible/`. `playbooks/labtwo.yml` is a byte copy of the
 working tree of `ansible_labtwo_2` at 67988b9 (it modifies the
 committed file); the six role dirs are byte copies of the ansible repo
@@ -66,15 +67,15 @@ Role docs:
   `dev_common`, `src_repos`, `kernel_build`, `docker`, `vm_server`,
   `rust_build`, `tmux` (`src/roles/<role>.rs`).
 - Ported in Goal 10, understanding in code comments: `maasfix` (T151),
-  `systemd_time` (T152). Their mirrors stay, cited here.
-- To come, one per port step, `conversion/<role>.md`: `root_user`
-  (T153), `hashicorp_packer` (T154), `H11SSL_reboot_fix` (T155),
-  `cuda` (T156).
+  `systemd_time` (T152), `root_user` (T153), `hashicorp_packer` (T154).
+  Their mirrors stay, cited here.
+- To come, one per port step, `conversion/<role>.md`:
+  `H11SSL_reboot_fix` (T155), `cuda` (T156).
 
 ## Outcomes
 
 End state per group, after one run. Role-level detail (and every fault
-the port fixes) is in the role docs; this lists what a host in each
+the port fixes) is in the role modules' comments; this lists what a host in each
 group holds when the playbook is done. The surveyed state of the lab
 servers (T149, 2026-11-15, three of four reachable) is folded in where
 it changes what a run does there.
@@ -120,9 +121,9 @@ In play order:
   `permitrootlogin yes` and `passwordauthentication no`, the second
   set by the cloud image's `sshd_config.d` drop-in, which wins over the
   YAML's edit. The YAML's stated outcome is therefore not in effect
-  today. Porting the intent (T153) would turn password authentication
-  on for those hosts; that is the user's call, so real-host runs
-  exclude root_user until he rules (roadmap, Could not decide).
+  today. Ruled 2026-11-15 ("Leave as found"): the port (T153) has no
+  sshd op, so what is in effect on each host stays; root_user runs on
+  the real hosts like every other role.
 - `hashicorp_packer` (after `vm_server`): `packer` installed from the
   HashiCorp apt repo, and each admin user in `kvm` and `libvirt`
   (`roles/hashicorp_packer/tasks/main.yml:1-53`,
@@ -212,7 +213,8 @@ Decision: Decided by agent (agent-alone); not yet reviewed by the user.
 - `storage_servers` stays in the play's group list, so the playbook
   matches the YAML; no run in this goal reaches its host.
 - Real-host runs: `--serial 1`, `--reboot never` until reboots are
-  allowed, root_user excluded where it would loosen sshd.
+  allowed. root_user is not excluded: it has no sshd op (ruling of
+  2026-11-15, "Leave as found").
 
 ## Review
 

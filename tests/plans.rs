@@ -1203,3 +1203,175 @@ fn systemd_time_uses_the_iana_tz_var() {
     assert!(text.contains("Europe/Berlin"), "{text}");
     assert!(!text.contains("America/Los_Angeles"), "{text}");
 }
+
+// ---- T153: root_user (labtwo_root_user) -----------------------------------
+
+fn root_user_plan(distro: &str) -> String {
+    plan("labtwo_root_user", distro)
+}
+
+#[test]
+fn labtwo_root_user_plans() {
+    for d in DISTROS {
+        let text = root_user_plan(d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("labtwo_root_user__{d}"), text);
+        });
+    }
+}
+
+/// `/root/.ssh` as a 0700 root dir and the two sudoers edits, each checked by
+/// visudo; the includedir line is the `@` spelling so a stock Ubuntu line is
+/// kept and the secure_path line is the YAML's.
+#[test]
+fn root_user_makes_ssh_dir_and_two_validated_sudoers_edits() {
+    for d in DISTROS {
+        let text = root_user_plan(d);
+        assert!(text.contains("file:/root/.ssh"), "{d}: {text}");
+        assert!(text.contains("chmod 700"), "{d}: {text}");
+        assert_eq!(
+            text.matches("file as shell:root reads [] writes [file:/etc/sudoers]")
+                .count(),
+            2,
+            "{d}: {text}"
+        );
+        assert!(text.contains("visudo -cf"), "{d}: {text}");
+        assert!(text.contains("includedir"), "{d}: {text}");
+        assert!(text.contains("@includedir /etc/sudoers.d"), "{d}: {text}");
+        assert!(
+            !text.contains("\n#includedir /etc/sudoers.d"),
+            "{d}: {text}"
+        );
+        // admin_users' per-distro line, not the YAML's (FOREMAN, T153): the
+        // two roles edit the same line and must agree, or a full labtwo run
+        // flips it back and forth.
+        assert!(
+            !text.contains(
+                "Defaults    secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin"
+            ),
+            "{d}: {text}"
+        );
+    }
+    let ubuntu = root_user_plan("ubuntu2404");
+    assert!(
+        ubuntu.contains("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"),
+        "{ubuntu}"
+    );
+}
+
+/// "Leave as found" (user, 2026-11-15): no sshd op of any kind.
+#[test]
+fn root_user_never_touches_sshd() {
+    for d in DISTROS {
+        let text = root_user_plan(d);
+        assert!(!text.contains("sshd"), "{d}: {text}");
+        assert!(!text.contains("/etc/ssh"), "{d}: {text}");
+        assert!(!text.contains("PermitRootLogin"), "{d}: {text}");
+        assert!(!text.contains("PasswordAuthentication"), "{d}: {text}");
+        assert!(!text.contains(" sh as "), "{d}: {text}");
+        assert!(!text.contains(" svc "), "{d}: {text}");
+    }
+}
+
+// ---- T154: hashicorp_packer (labtwo_hashicorp_packer) ---------------------
+
+fn hashicorp_packer_plan(distro: &str) -> String {
+    plan("labtwo_hashicorp_packer", distro)
+}
+
+/// The role's own part of the plan: from its `role hashicorp_packer` header
+/// on (it follows `vm_server`).
+fn packer_part(text: &str) -> &str {
+    let at = text
+        .find("role hashicorp_packer")
+        .unwrap_or_else(|| panic!("no hashicorp_packer role: {text}"));
+    &text[at..]
+}
+
+#[test]
+fn labtwo_hashicorp_packer_plans() {
+    for d in DISTROS {
+        let text = hashicorp_packer_plan(d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("labtwo_hashicorp_packer__{d}"), text);
+        });
+    }
+}
+
+/// Debian family: the prerequisites, both legacy files removed, the deb822
+/// source with its key, then packer, in that order; the removals come before
+/// the repo op and the packer install so apt never reads the repo twice. No
+/// `sh`.
+#[test]
+fn hashicorp_packer_debian_removes_legacy_then_adds_the_source_then_installs() {
+    for d in ["debian12", "debian13", "ubuntu2404", "ubuntu2604"] {
+        let text = hashicorp_packer_plan(d);
+        let part = packer_part(&text);
+        assert!(!part.contains(" sh as "), "{d}: {part}");
+        let at = |needle: &str| {
+            part.find(needle)
+                .unwrap_or_else(|| panic!("{d}: no {needle:?}: {part}"))
+        };
+        // curl and ca-certificates: the optimizer folds the role's pkg op
+        // into `vm_server`'s, which wants both too, ahead of this role.
+        let before = &text[..text.len() - part.len()];
+        assert!(before.contains("pkg:curl"), "{d}: {text}");
+        assert!(before.contains("pkg:ca-certificates"), "{d}: {text}");
+        let list = at("writes [file:/etc/apt/sources.list.d/hashicorp.list]");
+        let gpg = at("writes [file:/etc/apt/trusted.gpg.d/hashicorp.gpg]");
+        let repo = at("repo as shell:root");
+        let packer = at("writes [pkg:packer]");
+        assert!(list < repo && gpg < repo, "{d}: {part}");
+        assert!(repo < packer, "{d}: {part}");
+        assert!(
+            part.contains("apt.releases.hashicorp.com/gpg"),
+            "{d}: {part}"
+        );
+        assert!(part.contains("hashicorp.sources"), "{d}: {part}");
+        assert!(
+            part.contains("'https://apt.releases.hashicorp.com'"),
+            "{d}: {part}"
+        );
+    }
+}
+
+/// The codename is the host's.
+#[test]
+fn hashicorp_packer_suite_is_the_release_codename() {
+    assert!(packer_part(&hashicorp_packer_plan("ubuntu2404")).contains("' 'noble' 'main'"));
+    assert!(packer_part(&hashicorp_packer_plan("debian12")).contains("' 'bookworm' 'main'"));
+    assert!(packer_part(&hashicorp_packer_plan("debian13")).contains("' 'trixie' 'main'"));
+}
+
+/// Each admin user joins `kvm` and `libvirt`, after the packages.
+#[test]
+fn hashicorp_packer_adds_admin_users_to_kvm_and_libvirt() {
+    let text = hashicorp_packer_plan("ubuntu2404");
+    let part = packer_part(&text);
+    let user = part
+        .find("user as shell:root")
+        .unwrap_or_else(|| panic!("no user op: {part}"));
+    assert!(part.contains("kvm"), "{part}");
+    assert!(part.contains("libvirt"), "{part}");
+    assert!(user > part.find("writes [pkg:packer]").unwrap(), "{part}");
+}
+
+/// Other families: no op at all; the role leaves the plan to `vm_server`.
+#[test]
+fn hashicorp_packer_does_nothing_off_the_debian_family() {
+    for d in [
+        "fedora43",
+        "fedora44",
+        "rockylinux9",
+        "rockylinux10",
+        "almalinux9",
+        "almalinux10",
+        "amazonlinux2023",
+        "arch",
+        "omarchy",
+    ] {
+        let text = hashicorp_packer_plan(d);
+        assert!(!text.contains("hashicorp"), "{d}: {text}");
+        assert!(!text.contains("packer"), "{d}: {text}");
+    }
+}

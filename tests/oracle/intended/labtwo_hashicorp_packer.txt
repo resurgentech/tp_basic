@@ -1,0 +1,28 @@
+# labtwo_hashicorp_packer on the Ubuntu 24.04 VM oracle, T154, 2026-11-15
+# (both VMs pre-seeded with the vm_server port's packages; Ansible runs
+# hashicorp_packer alone, telepatch vm_server then hashicorp_packer).
+# Confirmed by the run of 2026-11-15 (PASS): these lines are the whole gating
+# diff. The port is src/roles/hashicorp_packer.rs.
+#
+# Packages and the login user's groups are equal on both sides (admin_users =
+# ["bot"], vars/labtwo_hashicorp_packer.toml and the Ansible --extra-vars), so
+# only the `apt sources` section differs (membership is the `groups` section).
+#
+# Ansible writes a one-line legacy /etc/apt/sources.list.d/hashicorp.list with
+# a hard-coded architecture; telepatch removes that file (a stock VM has none)
+# and writes the deb822 hashicorp.sources, with the architecture read on the
+# host and the armored key at /etc/apt/keyrings/hashicorp.asc named in
+# Signed-By (the Ansible side trusts a dearmored key in trusted.gpg.d, which
+# the oracle does not capture).
+-apt sources|-- /etc/apt/sources.list.d/hashicorp.list
+-apt sources|deb [arch=amd64] https://apt.releases.hashicorp.com noble main
++apt sources|-- /etc/apt/sources.list.d/hashicorp.sources
++apt sources|Types: deb
++apt sources|URIs: https://apt.releases.hashicorp.com
++apt sources|Suites: noble
++apt sources|Components: main
++apt sources|Architectures: amd64
++apt sources|Signed-By: /etc/apt/keyrings/hashicorp.asc
+# Placement: scripts/lib/compare.sh merges an added "-- <path>" block into the
+# file-ordered apt sources section at its header's place (T154 fixed the
+# harness, which used to append it at the section's end).

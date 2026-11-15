@@ -112,6 +112,22 @@ impl Default for RustBuildVars {
     }
 }
 
+/// `roles/hashicorp_packer`: its users join `kvm` and `libvirt`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct HashicorpPackerVars {
+    /// Users the role sets up. Container builds run as root.
+    pub admin_users: Vec<String>,
+}
+
+impl Default for HashicorpPackerVars {
+    fn default() -> Self {
+        HashicorpPackerVars {
+            admin_users: root_only(),
+        }
+    }
+}
+
 /// `roles/systemd_time`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -185,6 +201,7 @@ pub struct Vars {
     pub vm_server: VmServerVars,
     pub rust_kernel: RustKernelVars,
     pub rust_build: RustBuildVars,
+    pub hashicorp_packer: HashicorpPackerVars,
     pub systemd_time: SystemdTimeVars,
     pub services_vm: ServicesVmVars,
     pub reboot_vm: RebootVmVars,

@@ -1,0 +1,4 @@
+# Oracle case labtwo_hashicorp_packer (vm_server, then hashicorp_packer): the
+# VM's login user, as the Ansible side's `--extra-vars` gives it. A top-level
+# key reaches every role with a field of that name.
+admin_users = ["bot"]

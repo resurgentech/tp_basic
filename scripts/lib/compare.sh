@@ -22,8 +22,10 @@
 #
 # A section that is already in LC_ALL=C sort order in ansible.state (every
 # section image-state.sh sorts) gets its "+" lines merged with
-# `LC_ALL=C sort`; any other section (apt sources, in file order) gets them
-# appended at its end. A "-" line removes one occurrence.
+# `LC_ALL=C sort`; any other section (apt sources: "-- <path>" blocks in C
+# order of path) gets each added "-- <path>" block merged in at its header's
+# place, and added lines before any header appended at its end. A "-" line
+# removes one occurrence.
 apply_intended() {
     local dir=$1 file=$2 distro=${3:-} rc=0 line kind rest sect text n=0 i lineno=0 scope members m
     local -A adds=() dels=() known=()
@@ -82,7 +84,27 @@ apply_intended() {
                 { cat "$t/sec.$i"; printf '%s' "${adds[$sect]}"; } | LC_ALL=C sort >"$t/sec.$i.new"
                 mv "$t/sec.$i.new" "$t/sec.$i"
             else
-                printf '%s' "${adds[$sect]}" >>"$t/sec.$i"
+                # file order: the section is "-- <path>" blocks in C order of
+                # path (apt sources). Added lines before any header go at
+                # the end, as before; each added block is merged in by header.
+                printf '%s' "${adds[$sect]}" >"$t/add"
+                LC_ALL=C awk '
+                    function blk(h, body) { nb++; hd[nb] = h; bd[nb] = body }
+                    FNR == 1 { f++ }
+                    f == 1 && /^-- / { cur = ++ne; eh[cur] = $0; next }
+                    f == 1 { if (cur) eb[cur] = eb[cur] $0 "\n"; else pre = pre $0 "\n"; next }
+                    f == 2 && /^-- / { ac = ++na; ah[ac] = $0; next }
+                    f == 2 { if (ac) ab[ac] = ab[ac] $0 "\n"; else tail = tail $0 "\n" }
+                    END {
+                        printf "%s", pre
+                        i = 1; j = 1
+                        while (i <= ne || j <= na) {
+                            if (j > na || (i <= ne && eh[i] <= ah[j])) { printf "%s\n%s", eh[i], eb[i]; i++ }
+                            else { printf "%s\n%s", ah[j], ab[j]; j++ }
+                        }
+                        printf "%s", tail
+                    }' "$t/sec.$i" "$t/add" >"$t/sec.$i.new"
+                mv "$t/sec.$i.new" "$t/sec.$i"
             fi
         fi
         { printf '== %s ==\n' "$sect"; cat "$t/sec.$i"; } >>"$dir/ansible.intended.state"
@@ -180,6 +202,24 @@ selftest_intended() {
     case_ "intended: scope bad characters" 1 $'[Rocky-9]+packages|awk amd64\n' "$base" 'bad distro scope'
     case_ "intended: malformed scope fails even on an unlisted distro" 1 $'# c\n[fedora43,]+packages|x\n' "$base" 'intended\.txt:2'
     case_ "intended: scope with no sign" 1 $'[rockylinux9]packages|awk amd64\n' "$base" 'bad intended line'
+    # a file-ordered section (apt sources): an added "-- <path>" block goes where
+    # the capture lists that file (headers in C order), not at the section's end
+    local src=$'== apt sources ==\n-- /etc/apt/sources.list\n# moved\n-- /etc/apt/sources.list.d/h.list\ndeb h noble main\n-- /etc/apt/sources.list.d/ubuntu.sources\nTypes: deb\n== mise ==\nprofile.d mise.sh\n'
+    local srcin=$'-apt sources|-- /etc/apt/sources.list.d/h.list\n-apt sources|deb h noble main\n+apt sources|-- /etc/apt/sources.list.d/h.sources\n+apt sources|Types: deb\n+apt sources|URIs: h\n'
+    local srcout=$'== apt sources ==\n-- /etc/apt/sources.list\n# moved\n-- /etc/apt/sources.list.d/h.sources\nTypes: deb\nURIs: h\n-- /etc/apt/sources.list.d/ubuntu.sources\nTypes: deb\n== mise ==\nprofile.d mise.sh\n'
+    local srcz=$'== apt sources ==\n-- /etc/apt/sources.list\n# moved\n-- /etc/apt/sources.list.d/ubuntu.sources\nTypes: deb\n-- /etc/apt/sources.list.d/z.sources\nURIs: z\n== mise ==\nprofile.d mise.sh\n'
+    local rc
+    rm -f "$t"/*.versions "$t"/ansible.intended.state
+    printf '%s' "$src" >"$t/ansible.state"; printf '%s' "$srcout" >"$t/telepatch.state"; printf '%s' "$srcin" >"$t/intended.txt"
+    rc=0; "$fn" "$t" "$t/intended.txt" "$dist" >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "ok   intended: + block placed by its header in a file-ordered section"
+    else echo "FAIL intended: + block placed by its header (exit $rc)"; sed 's/^/     | /' "$t/out"; fails=1; fi
+    printf '%s' "$srcz" >"$t/telepatch.state"
+    printf '%s' "${src/-- \/etc\/apt\/sources.list.d\/h.list$'\n'deb h noble main$'\n'/}" >"$t/ansible.state"
+    printf '%s' $'+apt sources|-- /etc/apt/sources.list.d/z.sources\n+apt sources|URIs: z\n' >"$t/intended.txt"
+    rc=0; "$fn" "$t" "$t/intended.txt" "$dist" >"$t/out" 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then echo "ok   intended: + block whose header sorts last goes at the end"
+    else echo "FAIL intended: + block that sorts last (exit $rc)"; sed 's/^/     | /' "$t/out"; fails=1; fi
     return $fails
 }
 

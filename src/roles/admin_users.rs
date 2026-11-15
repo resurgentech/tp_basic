@@ -127,7 +127,7 @@ fn sudo_group(os: &Os) -> &'static str {
 /// `Distro::Other` outside the Arch family): writing a guessed line would
 /// replace a line this port has not seen, which is the bug itself, so such
 /// a host keeps whatever its sudo ships.
-fn secure_path_line(os: &Os) -> Option<&'static str> {
+pub(crate) fn secure_path_line(os: &Os) -> Option<&'static str> {
     // Debian and Ubuntu write a TAB between the words, no spaces around `=`.
     match os.distro {
         Distro::Ubuntu => Some(

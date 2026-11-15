@@ -1,0 +1,24 @@
+# labtwo_root_user (root_user alone) on the Ubuntu 24.04 VM oracle, 2026-11-15.
+# Confirmed by the oracle run of 2026-11-15 (T153, PASS): these five lines are
+# the whole gating diff. The port is src/roles/root_user.rs.
+#
+# Bug: Ansible's lineinfile regexp `^#includedir` misses Ubuntu's stock
+# `@includedir /etc/sudoers.d`, so it appends a second, old-style include and
+# every drop-in is read twice. The port matches `^[#@]includedir` and keeps
+# the stock line, so telepatch lacks the appended line.
+-sudoers|#includedir /etc/sudoers.d
+# secure_path: the port writes admin_users' per-distro line (Ubuntu's stock
+# line, /usr/local first, /snap/bin kept) so the two roles of the play agree on
+# the one line; the Ansible side writes the YAML's line (drops /snap/bin,
+# /usr/local last). On the stock VM telepatch keeps the stock line.
+-sudoers|Defaults    secure_path = /sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin
++sudoers|Defaults	secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin"
+#
+# Ruling (user, 2026-11-15, "Leave as found"): the port has no sshd op. The
+# Ansible side appends `PermitRootLogin yes` to sshd_config, whose stock line
+# is commented, and that takes effect (no drop-in decides it on the stock
+# image); telepatch keeps the distro default `prohibit-password`.
+-sshd|permitrootlogin yes
++sshd|permitrootlogin without-password
+# passwordauthentication: equal on both sides (the oracle image gives `yes`),
+# so no difference is declared.
