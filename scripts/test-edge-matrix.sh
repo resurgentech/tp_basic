@@ -5,8 +5,8 @@
 # test-edge`, ubuntu2404 only.
 #
 #   scripts/test-edge-matrix.sh run        on this machine: refuses when a tp-*
-#       VM is already listed by `vmtool list` on the VM host (TP_VM_HOST, through
-#       scripts/lib/vm.sh's wrapper; vt-* and other rows are ignored and never
+#       VM is already listed by `vmtool list veritech04` (scripts/lib/vm.sh's
+#       vm_tp_rows, through its wrapper; vt-* and other rows are ignored and never
 #       printed) or when run inside a docker-vm VM (TP_DOCKER_VM set). Then
 #       `just musl` (build/tp-basic) and one `scripts/docker-vm.sh run` whose
 #       command is this script's `cells`.
@@ -42,15 +42,15 @@ matrix_distros() {
 # matrix_no_tp_vm : status 0 when the VM host lists no tp-* VM. Only tp-* names
 # are printed; a list that did not run is a refusal, never "none".
 matrix_no_tp_vm() {
-    local rows rc=0 tp
-    rows=$(vmtool list) || rc=$?
+    local rc=0 tp
+    tp=$(vm_tp_rows) || rc=$?
     if [[ $rc -ne 0 ]]; then
-        echo "test-edge-matrix: vmtool list$(vm_where) failed (exit $rc); not booting a VM" >&2
+        echo "test-edge-matrix: vmtool list $VM_HOST failed (exit $rc); not booting a VM" >&2
         return 1
     fi
-    tp=$(awk 'NR > 1 && $1 ~ /^tp-/ { print $1 }' <<<"$rows")
+    tp=$(awk '{ print $1 }' <<<"$tp")
     if [[ -n $tp ]]; then
-        echo "test-edge-matrix: refusing: a tp-* VM is already listed$(vm_where) (one VM at a time):" >&2
+        echo "test-edge-matrix: refusing: a tp-* VM is already listed on $VM_HOST (one VM at a time):" >&2
         printf '  %s\n' $tp >&2
         return 1
     fi
@@ -64,7 +64,7 @@ matrix_boot() {
 matrix_run() {
     [[ -z ${TP_DOCKER_VM:-} ]] || die "refusing: TP_DOCKER_VM=$TP_DOCKER_VM is set, so this is already inside a docker-vm VM; the matrix boots its own, one VM at a time"
     matrix_no_tp_vm || exit 2
-    echo "=== no tp-* VM$(vm_where); building build/tp-basic ==="
+    echo "=== no tp-* VM on $VM_HOST; building build/tp-basic ==="
     matrix_build
     matrix_boot
 }
@@ -161,7 +161,7 @@ matrix_self_test() {
         (
             for e in "$@"; do export "${e?}"; done
             source "$self"
-            vmtool() { echo "vmtool $* [host $TP_VM_HOST]" >>"$t/boot.log"; [[ $STUB_ROWS == FAIL ]] && return 255
+            vmtool() { echo "vmtool $*" >>"$t/boot.log"; [[ $STUB_ROWS == FAIL ]] && return 1
                 printf 'NAME STATE IP\n%b' "$STUB_ROWS"; }
             matrix_build() { echo build >>"$t/boot.log"; }
             matrix_boot() { echo boot >>"$t/boot.log"; }
@@ -169,17 +169,18 @@ matrix_self_test() {
         ) >"$t/run.out" 2>&1 || r=$?
         if [[ $r -eq $want ]]; then ok "$name (exit $r)"; else bad "$name: exit $r, wanted $want"; sed 's/^/     | /' "$t/run.out" | tail -6; fi
     }
-    local vt='vt-r1 running 192.168.122.11\nvt-a1 running 192.168.122.17\n'
-    mrun "run: no tp-* VM on the host: builds, boots one" 0 "$vt" TP_VM_HOST=h.test
-    grep -qx 'vmtool list \[host h.test\]' "$t/boot.log" && ok "run: asked 'vmtool list' through the wrapper, on TP_VM_HOST" || bad "run: no wrapper list on h.test"
+    # rows as `vmtool list veritech04` names them: host/vm
+    local vt='veritech04/vt-r1 running 192.168.122.11\nveritech04/vt-a1 running 192.168.122.17\n'
+    mrun "run: no tp-* VM on the host: builds, boots one" 0 "$vt"
+    grep -qx 'vmtool list veritech04' "$t/boot.log" && ok "run: asked 'vmtool list veritech04' through the wrapper" || bad "run: no 'vmtool list veritech04' through the wrapper"
     [[ $(grep -cx boot "$t/boot.log") -eq 1 ]] && ok "run: exactly one boot" || bad "run: boots $(grep -cx boot "$t/boot.log")"
     grep -q 'vt-' "$t/run.out" && bad "run: a vt-* name was printed" || ok "run: vt-* rows neither refuse nor are named"
-    mrun "run: a tp-* VM listed on the host refuses (one VM at a time)" 2 "${vt}tp-docker-20261112-000000 running 192.168.122.40\n" TP_VM_HOST=h.test
+    mrun "run: a tp-* VM listed on the host refuses (one VM at a time)" 2 "${vt}veritech04/tp-docker-20261112-000000 running 192.168.122.40\n"
     grep -q 'tp-docker-20261112-000000' "$t/run.out" && ! grep -q 'vt-' "$t/run.out" && ok "run: the refusal names the tp-* VM only" || bad "run: refusal text"
     grep -qx boot "$t/boot.log" || grep -qx build "$t/boot.log" && bad "run: built or booted after the refusal" || ok "run: nothing built or booted after the refusal"
-    mrun "run: a failing vmtool list refuses (never 'no tp-* VM' from a list that did not run)" 2 FAIL TP_VM_HOST=h.test
+    mrun "run: a failing vmtool list refuses (never 'no tp-* VM' from a list that did not run)" 2 FAIL
     grep -qx boot "$t/boot.log" && bad "run: booted after a failed list" || ok "run: no boot after a failed list"
-    mrun "run: inside a docker-vm VM refuses (that would be a second VM)" 2 "" TP_VM_HOST=h.test TP_DOCKER_VM=tp-docker-x
+    mrun "run: inside a docker-vm VM refuses (that would be a second VM)" 2 "" TP_DOCKER_VM=tp-docker-x
     grep -q '^vmtool' "$t/boot.log" && bad "run: listed after the TP_DOCKER_VM refusal" || ok "run: refused before any vmtool call"
     # the boot is docker-vm.sh once, running this script's cells
     if grep -qE '^ *bash "\$ROOT/scripts/docker-vm.sh" run -- bash "\$ROOT/scripts/test-edge-matrix.sh" cells$' "$self" \

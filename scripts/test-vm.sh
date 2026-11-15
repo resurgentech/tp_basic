@@ -130,10 +130,10 @@
 #
 # The VM is named tp-<container>-<UTC stamp>; a trap deletes that one VM on
 # every exit unless --keep, then checks `vmtool list` no longer shows it. The
-# SSH key is vmtool's, used in place from .machines/<vm>/ and never copied,
-# when the VM host is local; when TP_VM_HOST names a remote host it is a
-# per-run key made here (scripts/lib/vm.sh), and tp-basic and every guest
-# command reach the guest through ProxyJump=$TP_VM_HOST.
+# SSH key is vmtool's, used in place from .machines/veritech04/<vm>/ and never
+# copied; tp-basic and every guest command reach the guest through vmtool's
+# tunnel (ProxyCommand, scripts/lib/vm.sh). The VM is created, commissioned
+# and checked on veritech04 before bot is onboarded (vm_up).
 #
 # The comparison with the docker oracle's record is NON-GATING, a report only:
 # containers and VMs differ in structure (systemd, kernel, udev, cloud-init, a
@@ -144,7 +144,7 @@
 # the oracle lacks, the apt-sources diff and the count of version
 # differences. Equivalence of Ansible and telepatch on a VM is
 # a separate check, scripts/test-vm-oracle.sh (`just test-vm-oracle`). The VM
-# lifecycle (create, onboard, wait, apt-get update, delete) is scripts/lib/vm.sh.
+# lifecycle (create, commission, onboard, wait, apt-get update, delete) is scripts/lib/vm.sh.
 #
 # Outputs (gitignored): build/test-vm/<container>-<distro>/
 #   create.log, onboard.log, wait.log, prep.log, vm-pre.state, vm-post.state, vm-post.versions,
@@ -295,13 +295,13 @@ desktop_secret_vars() {
 }
 
 # tpb_ssh_args <key> <known_hosts> : fills TPB_SSH_ARGS, the ssh arguments of
-# `tp-basic run --host`. A remote VM host adds the jump (the telepatch ssh
-# master takes it as an ordinary option; only mux channels override
-# ProxyCommand).
+# `tp-basic run --host bot@<vm>`. The guest is reached through vmtool's tunnel:
+# VM_PROXY_COMMAND (scripts/lib/vm.sh) is passed as the ProxyCommand option,
+# which the telepatch ssh master takes as an ordinary option (only mux channels
+# override ProxyCommand, with their own, to reuse the master).
 tpb_ssh_args() {
     TPB_SSH_ARGS=(--ssh-key "$1" --ssh-option StrictHostKeyChecking=accept-new
-        --ssh-option UserKnownHostsFile="$2")
-    vm_is_local || TPB_SSH_ARGS+=(--ssh-option "ProxyJump=$TP_VM_HOST")
+        --ssh-option UserKnownHostsFile="$2" --ssh-option "ProxyCommand=$VM_PROXY_COMMAND")
 }
 
 # su_tpdev : ssh as bot and `su` to tpdev. The password is stdin of the
@@ -509,177 +509,192 @@ vm_lib_self_test() {
     rm -rf "$t"
     return $fails
 }
-# vm_host_self_test : scripts/lib/vm.sh on a remote VM host and on `local`, with
-# stub ssh, timeout and vmtool on PATH that record argv (no network, no VM). Each
-# call is written as its arguments joined by US (0x1f) and ended by RS (0x1e).
+# vm_host_self_test : scripts/lib/vm.sh's create, check, commission, onboard,
+# reach and delete, with a stub `vmtool` (at VMTOOL_DIR/vmtool), ssh and a fake
+# clock (no network, no daemon, no VM). Each ssh call is written as its
+# arguments joined by US (0x1f) and ended by RS (0x1e); each vmtool call is its
+# arguments on a line of $d/log.vmtool.
 vm_host_self_test() {
-    local d fails=0 rc n got want key mem1=1
+    local d fails=0 rc n got want pre H mem1=1
     d=$(mktemp -d)
-    mkdir -p "$d/bin" "$d/vt/.machines/tp-x" "$d/out" "$d/run"
-    : >"$d/vt/.machines/tp-x/id_ed25519"
-    cat >"$d/bin/ssh" <<'EOF'
+    mkdir -p "$d/bin" "$d/vt/.machines/veritech04/tp-x" "$d/out"
+    : >"$d/vt/.machines/veritech04/tp-x/id_ed25519"
+    cat >"$d/bin/ssh" <<'XEOF'
 #!/usr/bin/env bash
 { printf '%s\x1f' "$@"; printf '\x1e'; } >>"$STUB_LOG"
-last=${!#} script=$last
-if [[ $last == 'bash -c '* ]]; then eval "set -- $last"; script=$3; fi
-case $script in
-    *'./vmtool list'*) cat "$STUB_LIST"; exit "${STUB_LIST_RC:-0}" ;;
-    *'./vmtool delete'*) sed -i "/^${script##* } /d" "$STUB_LIST"; exit 0 ;;
-    'test -e'*) exit "${STUB_TEST_RC:-1}" ;;
-    *authorized_keys*) cat >"$STUB_LOG.stdin"; exit 0 ;;
-    *swapon*) echo '/tp-swap file 4G'; exit 0 ;;
-esac
+case ${!#} in *swapon*) echo '/tp-swap file 4G' ;; esac
 exit 0
-EOF
-    printf '#!/usr/bin/env bash\necho "timeout $*" >>"$STUB_LOG.local"\nexit 0\n' >"$d/bin/timeout"
-    cat >"$d/vt/vmtool" <<'EOF'
+XEOF
+    # the stub vmtool: `list` is vmtool's real format; `cmd` answers like the
+    # guest (uptime, kernel hostname), and the hostname becomes tp-x once the
+    # commission playbook has run; STUB_CMD_FAILS connection failures first
+    cat >"$d/vt/vmtool" <<'XEOF'
 #!/usr/bin/env bash
 echo "$*" >>"$STUB_LOG.vmtool"
 case $1 in
-    list) cat "$STUB_LIST" ;;
-    delete) sed -i "/^$2 /d" "$STUB_LIST" ;;
+    list)
+        cat "$STUB_LIST"
+        [[ -e $STUB_LOG.commissioned && -n ${STUB_POST_CLASH:-} ]] && echo "veritech04/vt-r9  running  8  8 GiB  off  192.168.122.50"
+        exit "${STUB_LIST_RC:-0}" ;;
+    delete) [[ ${STUB_DELETE_RC:-0} -ne 0 ]] && exit "$STUB_DELETE_RC"; sed -i "\\|^$2 |d" "$STUB_LIST"; echo "$2" >>"$STUB_LOG.deleted"; exit 0 ;;
+    create) exit "${STUB_CREATE_RC:-0}" ;;
+    playbook) [[ $3 == commission.yml ]] && : >"$STUB_LOG.commissioned"; exit "${STUB_PB_RC:-0}" ;;
+    cmd)
+        n=$(cat "$STUB_LOG.cmdn" 2>/dev/null || echo 0); echo $((n + 1)) >"$STUB_LOG.cmdn"
+        [[ $n -ge ${STUB_CMD_FAILS:-0} ]] || { echo "ssh: connect to host failed" >&2; exit 255; }
+        echo "${STUB_UP:-25.50} 40.20"
+        if [[ -e $STUB_LOG.commissioned ]]; then echo "${STUB_POST_HOST:-tp-x}"; else echo "${STUB_PRE_HOST:-ubuntu}"; fi
+        exit 0 ;;
 esac
 exit 0
-EOF
-    chmod +x "$d/bin/ssh" "$d/bin/timeout" "$d/vt/vmtool"
-    local list=$'NAME STATE IP\ntp-x running 192.168.122.50'
-    reset() { : >"$d/log"; rm -f "$d/log.stdin" "$d/log.local" "$d/log.vmtool"; printf '%s\n' "$list" >"$d/list"; rm -rf "$d/out"; mkdir -p "$d/out"; }
-    # decode <log> : one line per call. A remote call is `REMOTE <ssh options> | <script>`, the script as bash
-    # gets it after the login shell's word splitting (eval of the one argument); anything else is `RAW <args>`.
-    decode() {
-        local rec f last
+XEOF
+    chmod +x "$d/bin/ssh" "$d/vt/vmtool"
+    local hdr='NAME              STATE    VCPUS  MEMORY  AUTOSTART  IP'
+    local list="$hdr"$'\nveritech04/vt-r1  running  16     12 GiB  off        192.168.122.126\nveritech04/tp-x  running  1  1 GiB  off  192.168.122.50\nveritech04/vt-r4  running  8      8 GiB   off        -'
+    reset() { : >"$d/log"; rm -f "$d/log.vmtool" "$d/log.commissioned" "$d/log.deleted" "$d/log.cmdn" "$d/log.clock"; printf '%s\n' "$list" >"$d/list"; rm -rf "$d/out"; mkdir -p "$d/out"; }
+    decode() { # <log> : one line per ssh call, `RAW <args>`
+        local rec f
         while IFS= read -r -d $'\x1e' rec; do
             mapfile -d $'\x1f' -t f < <(printf '%s' "$rec")
-            last=${f[-1]}
-            if [[ $last == 'bash -c '* ]]; then
-                (eval "set -- $last"; if [[ $# -eq 3 && $1 == bash && $2 == -c ]]; then printf 'REMOTE %s | %s\n' "${f[*]:0:${#f[@]}-1}" "$3"; else printf 'BADQUOTE %s\n' "$last"; fi)
-            else printf 'RAW %s\n' "${f[*]}"; fi
+            printf 'RAW %s\n' "${f[*]}"
         done <"$1"
     }
     chk() { # name rc detail...
         local name=$1 ok=$2; shift 2
         if [[ $ok -eq 0 ]]; then echo "ok   $name"; else echo "FAIL $name"; printf '     | %s\n' "$@"; fails=1; fi
     }
-    # run <host> <pool> <keep> : record, vm_up, tunnel, cleanup, in a subshell; facts into $d/facts
+    # run <keep> : record, vm_up, sshv, tunnel, then the cleanup an EXIT trap does in the
+    # real scripts, in a subshell; facts into $d/facts, ending with `exit=<status>` (vm_up's
+    # die exits the subshell, as it exits a script).
+    # The clock: the first vm_epoch is 1000, every later one 1000 + STUB_ELAPSED (default 120).
     run() {
+        local keep=$1
         reset
         : >"$d/facts"
         (
-            export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list XDG_RUNTIME_DIR=$d/run VMTOOL_DIR=$d/vt
-            TP_VM_HOST=$1 TP_VM_POOL=$2 TP_VM_HOST_DIR=tp-vmtool
+            export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt VM_RETRY_SLEEP=0 VM_RETRY_SECS=${VM_RETRY_SECS:-2}
+            vm_epoch() { local c; c=$(cat "$d/log.clock" 2>/dev/null || echo 0); echo $((c + 1)) >"$d/log.clock"; echo $((c == 0 ? 1000 : 1000 + ${STUB_ELAPSED:-120})); }
             vm_record tp-x
+            trap 'echo "exit=$?" >>"$d/facts"; vm_cleanup "$keep" >"$d/cleanup.out" 2>&1 || echo "cleanup-rc=$?" >>"$d/facts"' EXIT
             vm_up tp-x "$d/out" "" >"$d/up.out" 2>&1
-            { echo "key=$VM_KEY"; echo "mode=$(stat -c %a "$VM_KEY" 2>/dev/null)"; echo "scratch=$VM_SCRATCH"
-              if [[ -n $VM_SCRATCH ]]; then if cmp -s "$VM_KEY.pub" "$d/log.stdin"; then echo stdin=pub; else echo stdin=other; fi; fi
-              printf 'opts=%s\n' "${VM_SSH_OPTS[*]}"; } >>"$d/facts"
+            { echo "key=$VM_KEY"; echo "dest=$VM_DEST"; echo "ip=$VM_IP"; echo "proxy=$VM_PROXY_COMMAND"; printf 'opts=%s\n' "${VM_SSH_OPTS[*]}"; } >>"$d/facts"
             sshv 'echo hi' >/dev/null
             vm_tunnel_argv "$d/s.sock"; echo "tunnel=${VM_TUNNEL_ARGV[*]}" >>"$d/facts"
-            vm_cleanup "$3" >"$d/cleanup.out" 2>&1 || echo "cleanup-rc=$?" >>"$d/facts"
-        ) 2>"$d/up.err" || echo "run-rc=$?" >>"$d/facts"
+        ) 2>"$d/up.err" || true
         decode "$d/log" >"$d/dec"
     }
+    vlog() { cat "$d/log.vmtool"; }
 
-    # ---- remote ----
-    run veritech04.labtwo tp 0
-    key=$(sed -n 's/^key=//p' "$d/facts")
-    local O='-o BatchMode=yes veritech04.labtwo | '
-    local H='cd "$HOME/tp-vmtool" && ./vmtool'
-    want="REMOTE ${O}$H create tp-x ubuntu2404.qcow2 --memory $mem1 --disk-size 14 --pool tp"
-    grep -qxF "$want" "$d/dec"; chk "remote create: 1 GiB, --disk-size 14, --pool tp, one bash -c argument" $? "$(cat "$d/dec" "$d/up.err" "$d/up.out" 2>&1 | head -20)"
-    ! grep -q '^BADQUOTE' "$d/dec"; chk "remote: every command decodes (eval of the word list) to bash -c <script>" $?
-    grep -qxF "REMOTE ${O}timeout 5 bash -c 'exec 3<>/dev/tcp/192.168.122.50/22'" "$d/dec"; chk "remote: tcp/22 probed from the VM host" $? "$(cat "$d/dec")"
-    [[ ! -e $d/log.local ]]; chk "remote: no probe from this machine" $?
-    grep -qxF "REMOTE ${O}$H playbook tp-x setup_bot.yml" "$d/dec"; chk "remote: vmtool playbook tp-x setup_bot.yml on the host" $?
-    want="REMOTE ${O}ssh -i \"\$HOME/tp-vmtool/.machines/tp-x/id_ed25519\" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR bot@192.168.122.50 'umask 077; mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys'"
-    grep -qxF "$want" "$d/dec"; chk "remote: key install runs on the host with vmtool's key in place" $? "$(cat "$d/dec")"
-    grep -q '^stdin=pub$' "$d/facts"; chk "remote: the install's stdin is the run key's .pub" $? "$(cat "$d/facts")"
-    grep -qxF "REMOTE ${O}$H list" "$d/dec"; chk "remote: vmtool list on the host" $?
-    grep -qxF "REMOTE ${O}$H delete tp-x" "$d/dec"; chk "remote: vmtool delete tp-x on the host" $?
-    grep -qxF "REMOTE ${O}test -e \"\$HOME/tp-vmtool/.machines/tp-x\"" "$d/dec"; chk "remote: .machines/tp-x checked gone with test -e" $?
-    ! grep -q '^cleanup-rc' "$d/facts"; chk "remote: cleanup ok after the delete is verified" $? "$(cat "$d/facts" "$d/cleanup.out")"
-    [[ $key == "$d"/run/tp-vm.*/id_tp-x ]]; chk "remote: run key under XDG_RUNTIME_DIR scratch ($key)" $?
-    grep -q '^mode=600$' "$d/facts"; chk "remote: run key mode 0600" $?
-    [[ -n $key && ! -e $key && ! -e $(sed -n 's/^scratch=//p' "$d/facts") ]]; chk "remote: scratch dir and run key removed by vm_cleanup" $?
-    local pre="RAW -T -i $key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ProxyJump=veritech04.labtwo bot@192.168.122.50 "
+    # ---- the happy path: one VM, create, check, commission, check, onboard, delete ----
+    run 0
+    got=$(vlog)
+    want="create veritech04/tp-x ubuntu2404.qcow2 --memory $mem1 --disk-size 14"$'\ncmd veritech04/tp-x cat /proc/uptime /proc/sys/kernel/hostname\nlist veritech04\nplaybook veritech04/tp-x commission.yml\ncmd veritech04/tp-x cat /proc/uptime /proc/sys/kernel/hostname\nlist veritech04\nplaybook veritech04/tp-x setup_bot.yml --extra-var ansible_ssh_extra_args=\'-o ProxyCommand="'"$d/vt/vmtool tunnel veritech04/tp-x"$'"\'\nlist veritech04\ndelete veritech04/tp-x\nlist veritech04'
+    [[ $got == "$want" ]]; chk "vmtool argv in order: create (no --pool, no --playbook), packer check, commission.yml, packer check, setup_bot.yml (ProxyCommand as ssh extra args), delete" $? "$got" "$(head -10 "$d/up.out" "$d/up.err")"
+    ! grep -q -- '--pool\|--playbook' "$d/log.vmtool"; chk "create has neither --pool nor --playbook" $?
+    grep -qxF 'pre-commission check: ok (hostname ubuntu, uptime 25.50s < 120s since create, IP 192.168.122.50 on no other row)' "$d/up.out"
+    chk "step 2 prints its ok line" $? "$(grep -a 'commission check' "$d/up.out")"
+    grep -qxF 'post-commission check: ok (hostname tp-x, IP 192.168.122.50 on no other row)' "$d/up.out"
+    chk "step 4 prints its ok line" $? "$(grep -a 'commission check' "$d/up.out")"
+    grep -qx 'exit=0' "$d/facts" && ! grep -q '^cleanup-rc' "$d/facts"; chk "vm_up and cleanup succeed" $? "$(cat "$d/facts" "$d/cleanup.out")"
+    [[ $(sed -n 's/^key=//p' "$d/facts") == "$d/vt/.machines/veritech04/tp-x/id_ed25519" && $(sed -n 's/^dest=//p' "$d/facts") == bot@tp-x ]]
+    chk "the bot key is used in place by path; destination bot@tp-x" $? "$(cat "$d/facts")"
+    want="sh -c 'cd $d/vt && exec ./vmtool tunnel veritech04/tp-x'"
+    [[ $(sed -n 's/^proxy=//p' "$d/facts") == "$want" ]]; chk "ProxyCommand is vmtool's tunnel form" $? "$(grep '^proxy' "$d/facts")"
+    pre="RAW -T -i $d/vt/.machines/veritech04/tp-x/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ProxyCommand=$want bot@tp-x "
     got=$(grep -c '^RAW ' "$d/dec")
-    [[ $got -ge 4 && $(grep '^RAW ' "$d/dec" | grep -cF "$pre") -eq $got ]]; chk "remote sshv: -T, the run key, ProxyJump=veritech04.labtwo, bot@IP ($got calls)" $? "$(grep '^RAW ' "$d/dec" | cut -c1-200)"
-    want="tunnel=ssh -i $key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ProxyJump=veritech04.labtwo -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o StreamLocalBindUnlink=yes -N -L $d/s.sock:/var/run/docker.sock bot@192.168.122.50"
-    grep -qxF "$want" "$d/facts"; chk "remote tunnel argv: same options as sshv plus the forward" $? "$(grep '^tunnel' "$d/facts")"
-    ! grep -F '.machines' "$d/facts" | grep -q .; chk "remote: no .machines path in VM_SSH_OPTS or the tunnel" $?
-    ! grep '^RAW ' "$d/dec" | grep -q '\.machines'; chk "remote: no .machines path in any sshv argv" $?
-    head -1 "$d/out/create.log" | grep -q 'veritech04.labtwo'; chk "remote: create.log's first line names the host" $? "$(head -2 "$d/out/create.log")"
-    ! grep -qE 'PRIVATE KEY|ssh-ed25519' "$d/log" "$d/dec" "$d/up.out" "$d/cleanup.out"; chk "remote: no key material in any argv or output" $?
-    run veritech04.labtwo tp 1
-    grep -qxF -- "--keep: VM tp-x left running on veritech04.labtwo (delete with: ssh veritech04.labtwo 'cd ~/tp-vmtool && ./vmtool delete tp-x')" "$d/cleanup.out"
-    chk "remote --keep hint names the host and the delete command" $? "$(cat "$d/cleanup.out")"
-    ! grep -q 'delete tp-x' "$d/dec"; chk "remote --keep: nothing deleted" $?
+    [[ $got -ge 4 && $(grep -cF "$pre" "$d/dec") -eq $got ]]; chk "sshv: -T, the key, IdentitiesOnly, per-run known_hosts, ProxyCommand, bot@tp-x, no ProxyJump ($got calls)" $? "$(cut -c1-300 "$d/dec" | head -3)"
+    want="tunnel=ssh -i $d/vt/.machines/veritech04/tp-x/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ProxyCommand=sh -c 'cd $d/vt && exec ./vmtool tunnel veritech04/tp-x' -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o StreamLocalBindUnlink=yes -N -L $d/s.sock:/var/run/docker.sock bot@tp-x"
+    grep -qxF "$want" "$d/facts"; chk "docker tunnel argv: the same options plus the forward" $? "$(grep '^tunnel' "$d/facts")"
+    ! grep -hE 'PRIVATE KEY|ssh-ed25519|packer/packer|--ssh-pass|sshpass' "$d/dec" "$d/facts" "$d/up.out" "$d/cleanup.out" | grep -q .; chk "no key material and no password in any argv or output" $?
+    grep -qxF "VM tp-x deleted (not in 'vmtool list veritech04')" "$d/cleanup.out"; chk "cleanup deletes and checks the list" $? "$(cat "$d/cleanup.out")"
+    ! grep -q 'labtwo\|ProxyJump' "$d/dec"; chk "no ssh to the VM host, no ProxyJump" $?
 
-    # ---- delete: unreachable host, leftover .machines ----
-    reset
-    rc=0; got=$( (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list STUB_LIST_RC=255 TP_VM_HOST=veritech04.labtwo TP_VM_HOST_DIR=tp-vmtool; vm_delete tp-x) 2>&1 ) || rc=$?
-    [[ $rc -eq 1 && $got == *"delete tp-x by hand: ssh veritech04.labtwo 'cd ~/tp-vmtool && ./vmtool delete tp-x'"* ]] && ! decode "$d/log" | grep -q 'vmtool delete'
-    chk "vm_delete: host unreachable (255) -> exit 1 and the exact command to run by hand" $? "rc=$rc $got"
-    reset
-    rc=0; got=$( (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list STUB_TEST_RC=0 TP_VM_HOST=veritech04.labtwo TP_VM_HOST_DIR=tp-vmtool; vm_delete tp-x) 2>&1 ) || rc=$?
-    [[ $rc -eq 1 && $got == *".machines/tp-x still exists on veritech04.labtwo"* ]]; chk "vm_delete: .machines/tp-x left behind -> exit 1" $? "rc=$rc $got"
+    # ---- --keep ----
+    run 1
+    grep -qxF -- "--keep: VM tp-x left running (delete with: cd $d/vt && ./vmtool delete veritech04/tp-x)" "$d/cleanup.out"
+    chk "--keep hint names the exact delete command" $? "$(cat "$d/cleanup.out")"
+    ! grep -q '^delete' "$d/log.vmtool"; chk "--keep: nothing deleted" $?
 
-    # ---- names: vm_record and vm_delete refuse, both modes, before any vmtool call ----
-    for h in veritech04.labtwo local; do
-        for n in vt-r1 default 'tp-x;rm' tp- TP-x 'tp-x y' ''; do
-            reset
-            rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt TP_VM_HOST=$h; vm_record "$n") >/dev/null 2>&1 || rc=$?
-            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]]; chk "vm_record '$n' ($h): exit 2, no call" $? "rc=$rc"
-            rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt TP_VM_HOST=$h; vm_delete "$n") >/dev/null 2>&1 || rc=$?
-            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]]; chk "vm_delete '$n' ($h): exit 2, no call" $? "rc=$rc"
-        done
+    # ---- a connection failure is retried; a check failure is final ----
+    STUB_CMD_FAILS=2 run 0
+    [[ $(grep -c '^cmd ' "$d/log.vmtool") -eq 4 ]] && grep -qx 'exit=0' "$d/facts"; chk "step 2: two connection failures are retried, then it passes" $? "$(vlog)"
+    VM_RETRY_SECS=0 STUB_CMD_FAILS=99 run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q 'pre-commission check: FAIL' "$d/up.out" && ! grep -q 'commission.yml' "$d/log.vmtool" && grep -q '^delete veritech04/tp-x' "$d/log.vmtool"
+    chk "step 2: no answer within the deadline: FAIL, no commission, VM deleted" $? "$(cat "$d/up.out"; vlog)"
+
+    # ---- the refusals: each deletes our VM and never runs commission ----
+    STUB_PRE_HOST=vt-r1 run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q 'pre-commission check: FAIL.*hostname vt-r1 is a vt-\* name' "$d/up.out" && ! grep -q 'commission.yml' "$d/log.vmtool" && [[ $(cat "$d/log.deleted") == veritech04/tp-x ]]
+    chk "pre-check: a vt-* hostname -> FAIL, commission never run, our VM deleted" $? "$(cat "$d/up.out"; vlog)"
+    STUB_UP=9999.10 run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q 'pre-commission check: FAIL.*uptime 9999.10s is not less than the 120s' "$d/up.out" && ! grep -q 'commission.yml' "$d/log.vmtool" && [[ $(cat "$d/log.deleted") == veritech04/tp-x ]]
+    chk "pre-check: a stale uptime -> FAIL, commission never run, our VM deleted" $? "$(cat "$d/up.out"; vlog)"
+    local list_keep=$list
+    list=$list$'\nveritech04/vt-r2  running  16  12 GiB  off  192.168.122.50'
+    run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q 'pre-commission check: FAIL.*IP 192.168.122.50 is also listed for: veritech04/vt-r2' "$d/up.out" && ! grep -q 'commission.yml' "$d/log.vmtool" && [[ $(cat "$d/log.deleted") == veritech04/tp-x ]]
+    chk "pre-check: an IP on another row -> FAIL, commission never run, only our VM deleted" $? "$(cat "$d/up.out"; vlog)"
+    list=$hdr$'\nveritech04/tp-x  running  1  1 GiB  off  -'
+    run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q 'pre-commission check: FAIL.*no IP' "$d/up.out" && ! grep -q 'commission.yml' "$d/log.vmtool"
+    chk "pre-check: no IP in the list -> FAIL, commission never run" $? "$(cat "$d/up.out")"
+    list=$list_keep
+    STUB_POST_HOST=ubuntu run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q 'post-commission check: FAIL.*hostname ubuntu, wanted tp-x' "$d/up.out" && grep -q 'commission.yml' "$d/log.vmtool" && ! grep -q 'setup_bot' "$d/log.vmtool" && [[ $(cat "$d/log.deleted") == veritech04/tp-x ]]
+    chk "post-check: wrong hostname -> FAIL, setup_bot never run, our VM deleted" $? "$(cat "$d/up.out"; vlog)"
+    STUB_POST_CLASH=1 run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q 'post-commission check: FAIL.*IP 192.168.122.50 is also listed for: veritech04/vt-r9' "$d/up.out" && ! grep -q 'setup_bot' "$d/log.vmtool" && [[ $(cat "$d/log.deleted") == veritech04/tp-x ]]
+    chk "post-check: a shared IP -> FAIL, setup_bot never run, our VM deleted" $? "$(cat "$d/up.out"; vlog)"
+    STUB_PB_RC=1 run 0
+    grep -q '^exit=2$' "$d/facts" && grep -q '^delete veritech04/tp-x' "$d/log.vmtool" && ! grep -q 'setup_bot' "$d/log.vmtool"
+    chk "a failing playbook stops the run and the VM is deleted" $? "$(cat "$d/up.out"; vlog)"
+    # no vt-* VM is ever named in a vmtool command
+    ! grep -hE '^(create|cmd|playbook|delete) veritech04/vt-' "$d/log.vmtool" | grep -q .; chk "no command names a vt-* VM" $?
+
+    # ---- delete: list failure, a failing delete ----
+    reset
+    rc=0; got=$( (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list STUB_LIST_RC=1 VMTOOL_DIR=$d/vt; vm_delete tp-x) 2>&1 ) || rc=$?
+    [[ $rc -eq 1 && $got == *"delete tp-x by hand: cd $d/vt && ./vmtool delete veritech04/tp-x"* ]] && ! grep -q '^delete' "$d/log.vmtool"
+    chk "vm_delete: 'vmtool list' fails -> exit 1 and the exact command to run by hand" $? "rc=$rc $got"
+    reset
+    rc=0; got=$( (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list STUB_DELETE_RC=1 VMTOOL_DIR=$d/vt; vm_delete tp-x) 2>&1 ) || rc=$?
+    [[ $rc -eq 1 && $got == *"vmtool delete veritech04/tp-x failed"* ]]; chk "vm_delete: a failing delete -> exit 1 with a warning" $? "rc=$rc $got"
+
+    # ---- names: vm_record and vm_delete refuse before any vmtool call ----
+    for n in vt-r1 default 'tp-x;rm' tp- TP-x 'tp-x y' ''; do
+        reset
+        rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt; vm_record "$n") >/dev/null 2>&1 || rc=$?
+        [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]]; chk "vm_record '$n': exit 2, no call" $? "rc=$rc"
+        rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt; vm_delete "$n") >/dev/null 2>&1 || rc=$?
+        [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]]; chk "vm_delete '$n': exit 2, no call" $? "rc=$rc"
     done
-    rc=0; (export TP_VM_HOST=local; VM_RECORDED=(); vm_record tp-ok-1; [[ ${VM_RECORDED[*]} == tp-ok-1 ]]) || rc=$?
+    rc=0; (VM_RECORDED=(); vm_record tp-ok-1; [[ ${VM_RECORDED[*]} == tp-ok-1 ]]) || rc=$?
     chk "vm_record tp-ok-1 is recorded" $rc
+    # a VMTOOL_DIR the ProxyCommand text could not carry is refused
+    rc=0; (VMTOOL_DIR="/x y/vt"; vm_proxy_command tp-x) >/dev/null 2>&1 || rc=$?
+    [[ $rc -eq 2 ]]; chk "a VMTOOL_DIR with a space is refused (it would break the ProxyCommand quoting)" $? "rc=$rc"
 
-    # ---- local: argv identical to the code before T97i ----
-    run local "" 0
-    got=$(cat "$d/log.vmtool")
-    want="create tp-x ubuntu2404.qcow2 --memory $mem1 --disk-size 14"$'\nlist\nplaybook tp-x setup_bot.yml\nlist\ndelete tp-x\nlist'
-    [[ $got == "$want" ]]; chk "local vmtool argv (create without --pool, playbook, delete)" $? "$got"
-    [[ $(cat "$d/log.local") == "timeout 5 bash -c exec 3<>/dev/tcp/192.168.122.50/22" ]]; chk "local tcp/22 probe from this machine, as before" $? "$(cat "$d/log.local")"
-    pre="RAW -T -i $d/vt/.machines/tp-x/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts bot@192.168.122.50 "
-    got=$(grep -c '^RAW ' "$d/dec")
-    [[ $got -ge 4 && $(grep -cF "$pre" "$d/dec") -eq $got && $(grep -c '^REMOTE' "$d/dec") -eq 0 ]]; chk "local sshv argv: vmtool's key in place, no ProxyJump, no host ($got calls)" $? "$(cut -c1-200 "$d/dec")"
-    want="tunnel=ssh -i $d/vt/.machines/tp-x/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$d/out/known_hosts -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o StreamLocalBindUnlink=yes -N -L $d/s.sock:/var/run/docker.sock bot@192.168.122.50"
-    grep -qxF "$want" "$d/facts"; chk "local tunnel argv unchanged" $? "$(grep '^tunnel' "$d/facts")"
-    [[ -z $(sed -n 's/^scratch=//p' "$d/facts") ]]; chk "local: no run key, no scratch dir" $?
-    [[ $(head -c1 "$d/out/create.log") != '#' ]]; chk "local: create.log has no host header" $?
-    rc=0; (export TP_VM_HOST=local VMTOOL_DIR=/v; VM_RECORDED=(tp-x); vm_cleanup 1) >"$d/o" 2>&1 || rc=$?
-    [[ $(cat "$d/o") == "--keep: VM tp-x left running (delete with: cd /v && ./vmtool delete tp-x)" ]]; chk "local --keep hint unchanged" $? "$(cat "$d/o")"
-
-    # ---- the 1 GiB refusal stays: before any call, on the remote host too ----
+    # ---- the 1 GiB refusal stays: before any call ----
     reset
-    rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list TP_VM_HOST=veritech04.labtwo; vm_up tp-x "$d/out" "" 4) >"$d/o" 2>&1 || rc=$?
-    [[ $rc -eq 2 && ! -s $d/log ]] && grep -q 'every tp-\* VM gets 1 GiB' "$d/o"; chk "remote vm_up 4 GiB refused before any ssh" $? "rc=$rc"
+    rc=0; (export PATH="$d/bin:$PATH" STUB_LOG=$d/log STUB_LIST=$d/list VMTOOL_DIR=$d/vt; vm_up tp-x "$d/out" "" 4) >"$d/o" 2>&1 || rc=$?
+    [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]] && grep -q 'every tp-\* VM gets 1 GiB' "$d/o"; chk "vm_up 4 GiB refused before any vmtool or ssh call" $? "rc=$rc"
 
-    # ---- test-vm.sh and test-vm-oracle.sh accept a remote host: bad args reach their own check ----
-    local s h
+    # ---- test-vm.sh and test-vm-oracle.sh: bad args reach their own check, no call ----
+    local s
     for s in test-vm test-vm-oracle; do
-        for h in veritech04.labtwo unset local; do
-            reset
-            rc=0
-            if [[ $h == unset ]]; then
-                env -u TP_VM_HOST PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" nosuchdistro x >"$d/o" 2>&1 || rc=$?
-            else
-                TP_VM_HOST=$h PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" nosuchdistro x >"$d/o" 2>&1 || rc=$?
-            fi
-            [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]] && ! grep -qF 'T97j' "$d/o" && grep -q 'only the ubuntu2404 image' "$d/o"
-            chk "$s.sh with TP_VM_HOST=$h is not refused (reaches its own argument check, no ssh or vmtool call)" $? "rc=$rc $(cat "$d/o")"
-        done
+        reset
+        rc=0
+        PATH="$d/bin:$PATH" STUB_LOG="$d/log" STUB_LIST="$d/list" VMTOOL_DIR="$d/vt" bash "$ROOT/scripts/$s.sh" nosuchdistro x >"$d/o" 2>&1 || rc=$?
+        [[ $rc -eq 2 && ! -s $d/log && ! -e $d/log.vmtool ]] && grep -q 'only the ubuntu2404 image' "$d/o"
+        chk "$s.sh reaches its own argument check with no ssh or vmtool call" $? "rc=$rc $(cat "$d/o")"
     done
 
-    # ---- the tp-basic ssh argv: local unchanged, remote adds the jump ----
-    local -a loc=(--ssh-key /k/id --ssh-option StrictHostKeyChecking=accept-new --ssh-option UserKnownHostsFile=/o/known_hosts)
-    local -a rem=("${loc[@]}" --ssh-option ProxyJump=veritech04.labtwo)
-    (export TP_VM_HOST=local; tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${loc[@]}")" ]])
-    chk "local tp-basic ssh argv unchanged" $?
-    (export TP_VM_HOST=veritech04.labtwo; tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${rem[@]}")" ]])
-    chk "remote tp-basic ssh argv adds --ssh-option ProxyJump=<host>" $?
+    # ---- the tp-basic ssh argv: the key, accept-new, the known_hosts, the ProxyCommand ----
+    local -a want_a=(--ssh-key /k/id --ssh-option StrictHostKeyChecking=accept-new --ssh-option UserKnownHostsFile=/o/known_hosts
+        --ssh-option "ProxyCommand=sh -c 'cd /v && exec ./vmtool tunnel veritech04/tp-x'")
+    if (VMTOOL_DIR=/v; VM_PROXY_COMMAND=$(vm_proxy_command tp-x); tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${want_a[@]}")" ]])
+    then chk "tp-basic ssh argv: --ssh-key, accept-new, known_hosts, --ssh-option ProxyCommand=<vmtool tunnel>, no ProxyJump" 0
+    else chk "tp-basic ssh argv" 1; fi
     rm -rf "$d"
     return $fails
 }
@@ -1623,9 +1638,7 @@ playbook_config "$container" || die "playbook '$container' is not one of: dev_ba
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
 [[ -f $ROOT/$PB_VARS ]] || die "$PB_VARS not found"
-# vmtool lives on the VM host when it is remote; there the first vmtool call
-# (vm_listed, below) is the check
-if vm_is_local; then [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"; fi
+[[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"
 
 name=$(vm_name_for "$container" "$(date -u +%Y%m%dt%H%M%Sz)")
 vm_listed "$name" && die "a VM named $name already exists; not touching it"

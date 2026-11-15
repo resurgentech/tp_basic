@@ -41,10 +41,10 @@
 # tp-<container>-telepatch-<UTC stamp> (each `_` of the container as `-`:
 # dev_desktop_kept -> tp-dev-desktop-kept-...); each is deleted after its side, and a
 # trap deletes whichever still exists on every exit, unless --keep. The SSH key
-# is vmtool's, used in place from .machines/<vm>/ when the VM host is local, or
-# a per-run key made here (scripts/lib/vm.sh) when TP_VM_HOST names a remote
-# host; the inventory names its path. A remote host adds ProxyJump to the
-# inventory's ansible_ssh_common_args and to tp-basic's --ssh-option.
+# is vmtool's, used in place from .machines/veritech04/<vm>/; the inventory
+# names its path. The guest is reached through vmtool's tunnel: a ProxyCommand
+# in the inventory's ansible_ssh_common_args and in tp-basic's --ssh-option
+# (scripts/lib/vm.sh). Each VM is created, commissioned and checked first.
 #
 # Outputs (gitignored): build/test-vm-oracle/<container>-<distro>/
 #   ansible-src/ (with inventories/vm.yml), ansible-version.txt, ansible{,2}.log,
@@ -125,34 +125,37 @@ telepatch_changed() {
          END { if (!done) print "?" }' "$1"
 }
 
-# write_inventory <file> <host> <ip> <key path> <known_hosts> : the Ansible
-# inventory for one VM. It names the key's path, never its contents.
+# write_inventory <file> <vm name> <key path> <known_hosts> : the Ansible
+# inventory for one VM. It names the key's path, never its contents. The host
+# is reached by its VM name (ansible_host: <vm name>, never resolved: the
+# ProxyCommand, vmtool's tunnel, is VM_PROXY_COMMAND). ansible_ssh_common_args
+# is shlex-split by Ansible, so the ProxyCommand is one double-quoted word
+# (its inner single quotes are literal there; the quotes around it are \" in
+# the YAML string). vm_proxy_command admits no character that breaks this.
 write_inventory() {
-    local file=$1 host=$2 ip=$3 key=$4 kh=$5 jump=""
-    # a remote VM host: the guest is reached only through it (one value, one key)
-    vm_is_local || jump=" -o ProxyJump=$TP_VM_HOST"
+    local file=$1 host=$2 key=$3 kh=$4
     {
         echo "# Written by scripts/test-vm-oracle.sh for one VM of one run."
         echo "all:"
         echo "  hosts:"
         echo "    $host:"
-        echo "      ansible_host: $ip"
+        echo "      ansible_host: $host"
         echo "      ansible_user: bot"
         echo "      ansible_become: true"
         echo "      ansible_ssh_private_key_file: $key"
         echo "      ansible_python_interpreter: /usr/bin/python3"
-        echo "      ansible_ssh_common_args: \"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$kh$jump\""
+        echo "      ansible_ssh_common_args: \"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$kh -o \\\"ProxyCommand=$VM_PROXY_COMMAND\\\"\""
     } >"$file"
 }
 
 # tpb_ssh_args <key> <known_hosts> : fills TPB_SSH_ARGS, the ssh arguments of
-# `tp-basic run --host`. A remote VM host adds the jump (the telepatch ssh
-# master takes it as an ordinary option; only mux channels override
-# ProxyCommand).
+# `tp-basic run --host bot@<vm>`. The guest is reached through vmtool's tunnel:
+# VM_PROXY_COMMAND (scripts/lib/vm.sh) is the ProxyCommand option, which the
+# telepatch ssh master takes as an ordinary option (only mux channels override
+# ProxyCommand, with their own, to reuse the master).
 tpb_ssh_args() {
     TPB_SSH_ARGS=(--ssh-key "$1" --ssh-option StrictHostKeyChecking=accept-new
-        --ssh-option UserKnownHostsFile="$2")
-    vm_is_local || TPB_SSH_ARGS+=(--ssh-option "ProxyJump=$TP_VM_HOST")
+        --ssh-option UserKnownHostsFile="$2" --ssh-option "ProxyCommand=$VM_PROXY_COMMAND")
 }
 
 # oracle_config <container> : the allowlist. Sets OC_PLAYBOOK (the Ansible
@@ -409,48 +412,52 @@ self_test() {
     selftest_intended oracle_compare "$t" || fails=1
     selftest_no_local_copy "${BASH_SOURCE[0]}" || fails=1
 
-    # the inventory writer: host vars present, the key's path only
-    local key=$t/machines/tp-x/id_ed25519
+    # the inventory writer: host vars present, the key's path only, the guest
+    # reached by its VM name through vmtool's tunnel (one ProxyCommand value)
+    local key=$t/machines/veritech04/tp-x/id_ed25519
     mkdir -p "$(dirname "$key")"
     printf '%s\n' '-----BEGIN OPENSSH PRIVATE KEY-----' 'c2VjcmV0LWZpeHR1cmU=' '-----END OPENSSH PRIVATE KEY-----' >"$key"
     mkdir -p "$t/src/inventories"
-    (TP_VM_HOST=local; write_inventory "$t/src/inventories/vm.yml" tp-x 192.0.2.7 "$key" "$t/known_hosts")
+    local pc="sh -c 'cd /v && exec ./vmtool tunnel veritech04/tp-x'"
+    (VM_PROXY_COMMAND=$pc; write_inventory "$t/src/inventories/vm.yml" tp-x "$key" "$t/known_hosts")
     local inv=$t/src/inventories/vm.yml want ok=1
-    for want in 'ansible_host: 192.0.2.7' 'ansible_user: bot' 'ansible_become: true' \
+    for want in 'ansible_host: tp-x' 'ansible_user: bot' 'ansible_become: true' \
         "ansible_ssh_private_key_file: $key" 'ansible_python_interpreter: /usr/bin/python3' \
         'IdentitiesOnly=yes' 'StrictHostKeyChecking=accept-new' "UserKnownHostsFile=$t/known_hosts"; do
         grep -qF -- "$want" "$inv" || { echo "FAIL inventory lacks '$want'"; ok=0; }
     done
-    if grep -qE 'PRIVATE KEY|c2VjcmV0LWZpeHR1cmU=' "$inv"; then echo "FAIL inventory holds key material"; ok=0; fi
-    if [[ $ok -eq 1 ]]; then echo "ok   inventory writer (host vars, key path only)"; else fails=1; fi
+    if grep -qE 'PRIVATE KEY|c2VjcmV0LWZpeHR1cmU=|ProxyJump' "$inv"; then echo "FAIL inventory holds key material or a ProxyJump"; ok=0; fi
+    if [[ $ok -eq 1 ]]; then echo "ok   inventory writer (host vars, key path only, no ProxyJump)"; else fails=1; fi
     sed 's/^/     | /' "$inv"
-    # local: no jump, and the file is exactly the pre-T97j one
-    local loc_want
-    loc_want=$(printf '%s\n' '# Written by scripts/test-vm-oracle.sh for one VM of one run.' 'all:' '  hosts:' '    tp-x:' \
-        '      ansible_host: 192.0.2.7' '      ansible_user: bot' '      ansible_become: true' \
+    local inv_want
+    inv_want=$(printf '%s\n' '# Written by scripts/test-vm-oracle.sh for one VM of one run.' 'all:' '  hosts:' '    tp-x:' \
+        '      ansible_host: tp-x' '      ansible_user: bot' '      ansible_become: true' \
         "      ansible_ssh_private_key_file: $key" '      ansible_python_interpreter: /usr/bin/python3' \
-        "      ansible_ssh_common_args: \"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$t/known_hosts\"")
-    if [[ $(TP_VM_HOST=local; write_inventory "$t/loc.yml" tp-x 192.0.2.7 "$key" "$t/known_hosts"; cat "$t/loc.yml") == "$loc_want" ]] \
-        && ! grep -q ProxyJump "$inv"
-    then echo "ok   inventory writer, local: unchanged, no ProxyJump"; else echo "FAIL inventory local differs"; fails=1; fi
-    # remote: ProxyJump inside the one ansible_ssh_common_args value, still only the key's path
-    (TP_VM_HOST=veritech04.labtwo; write_inventory "$t/rem.yml" tp-x 192.0.2.7 "$key" "$t/known_hosts")
-    if [[ $(grep -c 'ansible_ssh_common_args' "$t/rem.yml") -eq 1 ]] \
-        && grep -qxF "      ansible_ssh_common_args: \"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$t/known_hosts -o ProxyJump=veritech04.labtwo\"" "$t/rem.yml" \
-        && grep -qF "ansible_ssh_private_key_file: $key" "$t/rem.yml" \
-        && ! grep -qE 'PRIVATE KEY|c2VjcmV0LWZpeHR1cmU=' "$t/rem.yml" \
-        && diff <(sed 's/ -o ProxyJump=veritech04.labtwo//' "$t/rem.yml") "$t/loc.yml" >/dev/null; then
-        echo "ok   inventory writer, remote: ProxyJump in the one common_args value, key path only"
-    else echo "FAIL inventory remote:"; sed 's/^/     | /' "$t/rem.yml"; fails=1; fi
+        "      ansible_ssh_common_args: \"-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$t/known_hosts -o \\\"ProxyCommand=$pc\\\"\"")
+    if [[ $(cat "$inv") == "$inv_want" ]] && [[ $(grep -c 'ansible_ssh_common_args' "$inv") -eq 1 ]]
+    then echo "ok   inventory text: the exact lines, the ProxyCommand inside the one common_args value"
+    else echo "FAIL inventory text:"; diff <(echo "$inv_want") "$inv" | sed 's/^/     | /'; fails=1; fi
+    # what ansible sees: the YAML value, shlex-split, is -o options with the ProxyCommand as ONE word
+    if python3 -c 'import yaml' 2>/dev/null; then
+        got=$(python3 -I - "$inv" <<'PYEOF'
+import shlex, sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+v = d["all"]["hosts"]["tp-x"]
+for w in shlex.split(v["ansible_ssh_common_args"]):
+    print(w)
+PYEOF
+        ) || got=
+        if [[ $got == "$(printf '%s\n' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$t/known_hosts" -o "ProxyCommand=$pc")" ]]
+        then echo "ok   inventory: YAML then shlex gives -o ... -o ProxyCommand=<one word>"
+        else echo "FAIL inventory shlex split: '$got'"; fails=1; fi
+    else echo "skip inventory YAML+shlex check (python3 yaml not installed here)"; fi
 
-    # the tp-basic ssh argv: local unchanged, remote adds the jump
-    local -a a_loc=(--ssh-key /k/id --ssh-option StrictHostKeyChecking=accept-new --ssh-option UserKnownHostsFile=/o/known_hosts)
-    local -a a_rem=("${a_loc[@]}" --ssh-option ProxyJump=veritech04.labtwo)
+    # the tp-basic ssh argv: the key, accept-new, the known_hosts, the ProxyCommand; no ProxyJump
+    local -a a_want=(--ssh-key /k/id --ssh-option StrictHostKeyChecking=accept-new --ssh-option UserKnownHostsFile=/o/known_hosts
+        --ssh-option "ProxyCommand=$pc")
     # (in an `if`: a bare failing subshell would end the self-test under set -e without its FAIL line)
-    if (TP_VM_HOST=local; tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${a_loc[@]}")" ]])
-    then echo "ok   local tp-basic ssh argv unchanged"; else echo "FAIL local tp-basic ssh argv"; fails=1; fi
-    if (TP_VM_HOST=veritech04.labtwo; tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${a_rem[@]}")" ]])
-    then echo "ok   remote tp-basic ssh argv adds ProxyJump"; else echo "FAIL remote tp-basic ssh argv"; fails=1; fi
+    if (VM_PROXY_COMMAND=$pc; tpb_ssh_args /k/id /o/known_hosts; [[ $(printf '%s\x1f' "${TPB_SSH_ARGS[@]}") == "$(printf '%s\x1f' "${a_want[@]}")" ]])
+    then echo "ok   tp-basic ssh argv: ProxyCommand=<vmtool tunnel>, no ProxyJump"; else echo "FAIL tp-basic ssh argv"; fails=1; fi
 
     # timings: the formatter, the changed-count readers, the table
     local got
@@ -517,9 +524,7 @@ state_args=()
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
 [[ -f $ROOT/$OC_VARS ]] || die "$OC_VARS not found"
-# vmtool lives on the VM host when it is remote; there the first vmtool call
-# (vm_listed, below) is the check
-if vm_is_local; then [[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"; fi
+[[ -x $VMTOOL_DIR/vmtool ]] || die "$VMTOOL_DIR/vmtool not found"
 command -v ansible-playbook >/dev/null || die "ansible-playbook not found on this machine"
 
 sha=${ANSIBLE_SHA:-$(sed -n 's/^commit: //p' "$ROOT/conversion/SOURCE" | head -1)}
@@ -637,7 +642,7 @@ run_telepatch() {
 # ---- ansible VM ---------------------------------------------------------------
 side_up ansible "$name_ansible"
 inv=$out/ansible-src/inventories/vm.yml
-write_inventory "$inv" "$name_ansible" "$VM_IP" "$VM_KEY" "$VM_KNOWN_HOSTS"
+write_inventory "$inv" "$name_ansible" "$VM_KEY" "$VM_KNOWN_HOSTS"
 run_ansible "$out/ansible.log"; a1=$RUN_SECS
 run_ansible "$out/ansible2.log"; a2=$RUN_SECS
 ac=$(ansible_changed "$out/ansible2.log")

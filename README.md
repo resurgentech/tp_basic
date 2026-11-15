@@ -133,23 +133,41 @@ hand: `just docker-vm test-edge-cell rockylinux10`.
 just test-edge-matrix
 ```
 
-**Where the VMs run.** `tp-*` VMs are created on the host named by
-`TP_VM_HOST` (default `veritech04.labtwo`, set once in `scripts/lib/vm.sh`;
-`TP_VM_HOST=local` uses this workstation's vmtool as before). vmtool runs
-there from `~/tp-vmtool`, clones into the libvirt pool `tp`, and the guest is
-reached from here through `ProxyJump` with a key made per run; the docker
-socket is still forwarded to a unix socket here. Prepare or verify the host
-with:
+**Where the VMs run.** Every `tp-*` VM is made on veritech04 through this
+workstation's `~/repos/jaredeh/vmtool` (run from its own directory, so its
+`config.yml` and token are used in place) as `veritech04/tp-<name>`; the one
+driver is `scripts/lib/vm.sh`. Nothing of ours is installed, built or kept on
+veritech04, and nothing ssh-es to it. The base image is vmtool's
+`ubuntu2404.qcow2`, uploaded by `vmtool create` on a miss; every VM gets 1 GiB.
+One VM at a time is created, then commissioned, then onboarded:
+
+1. `vmtool create veritech04/tp-<name> ubuntu2404.qcow2 --memory 1 --disk-size N`
+2. pre-commission check, one ssh call as `packer` through vmtool's tunnel: the
+   hostname is not a `vt-*` name, `/proc/uptime` is less than the seconds since
+   step 1 began, and the IP `vmtool list veritech04` shows is on no other row
+   (`pre-commission check: ok (...)` in the log; a failure deletes the VM and
+   stops, and commission is never run)
+3. `vmtool playbook ... commission.yml` (its own hostname, machine-id and host
+   keys, then a reboot)
+4. post-commission check: the hostname is `tp-<name>` and the IP is on no other
+   row (`post-commission check: ok (...)`)
+5. `vmtool playbook ... setup_bot.yml` (bot, key auth; its key stays under
+   vmtool's `.machines/veritech04/tp-<name>/` and is used in place, by path)
+
+The guest is reached through vmtool's tunnel, not `ProxyJump`: the ssh option
+is `ProxyCommand=sh -c 'cd <vmtool dir> && exec ./vmtool tunnel
+veritech04/tp-<name>'` (the form `./vmtool ssh-config` prints) and the
+destination is `bot@tp-<name>`, for `tp-basic run`, the oracle's Ansible
+inventory and the docker socket forward alike. The VM is deleted on every exit
+unless `--keep`. Verify that vmtool reaches veritech04 with:
 
 ```
-bash scripts/vm-host.sh setup    # idempotent; its one sudo installs golang-1.24-go and libvirt-dev
-bash scripts/vm-host.sh check    # read-only; docker-vm.sh runs it before every VM
+bash scripts/vm-host.sh check    # read-only: `vmtool hosts` shows veritech04 reachable; docker-vm.sh runs it before every VM
 ```
 
-The `vt-*` VMs on veritech04 (vt-r1..vt-r6, vt-a1) are not ours: nothing here
-names, stops or deletes a VM whose name does not start with `tp-`.
-`scripts/test-vm.sh` and `scripts/test-vm-oracle.sh` still need
-`TP_VM_HOST=local` until they move to the VM host.
+The `vt-*` VMs on veritech04 are not ours: nothing here names, stops or deletes
+a VM whose name does not start with `tp-`, and `vmtool list veritech04` is read
+only to check that our VM's address is on no other row.
 
 `scripts/image-state.sh` still captures a machine (packages by name and
 architecture, pip distributions, rustup state, apt sources, `/usr/local/bin`,
