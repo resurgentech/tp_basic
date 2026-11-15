@@ -1407,8 +1407,9 @@ labtwo_gpu_vars3() {
     } >"$1"
 }
 
-# docker_restarts <run output> : how many `svc docker.service restart` ops changed
-docker_restarts() { changed_ops "$1" | grep -cxF 'svc docker.service restart' || true; }
+# docker_restarts <run output> : how many `svc docker restart` ops changed (the run prints the
+# op as cuda.rs names the unit, `docker`; `docker.service` is accepted too)
+docker_restarts() { changed_ops "$1" | grep -cxE 'svc docker(\.service)? restart' || true; }
 
 # labtwo_gpu_self_test : the labtwo_gpu helpers on synthetic input.
 labtwo_gpu_self_test() {
@@ -1420,10 +1421,10 @@ labtwo_gpu_self_test() {
         && grep -qxF 'cuda_packages = ["nvtop"]' "$t/v3" && ! grep -qE 'bao[[:space:]]*=' "$t/v3" "$ROOT/vars/labtwo_gpu_vm.toml" \
         && ! grep -q '^default_password' "$t/v3"; then echo "ok   labtwo_gpu_vars3: the driver list changed, the rest kept, no bao, no password"
     else echo "FAIL labtwo_gpu_vars3:"; sed 's/^/     | /' "$t/v3"; fails=1; fi
-    printf '%s\n' '== bot@h [cuda] #71 svc docker.service restart ==' '-> changed' '== bot@h [cuda] #66 pkg apt install nvtop ==' '-> changed' >"$t/r1"
+    printf '%s\n' '== bot@h [cuda] #71 svc docker restart ==' '-> changed' '== bot@h [cuda] #66 pkg apt install nvtop ==' '-> changed' >"$t/r1"
     got=$(docker_restarts "$t/r1")
     if [[ $got == 1 ]]; then echo "ok   docker_restarts: one changed restart"; else echo "FAIL docker_restarts -> '$got', wanted 1"; fails=1; fi
-    printf '%s\n' '== bot@h [cuda] #71 svc docker.service restart ==' '-> skipped (when changed(#68))' '== bot@h [cuda] #66 pkg apt install nvtop ==' '-> ok' >"$t/r2"
+    printf '%s\n' '== bot@h [cuda] #71 svc docker restart ==' '-> skipped (when changed(#68))' '== bot@h [cuda] #66 pkg apt install nvtop ==' '-> ok' >"$t/r2"
     got=$(docker_restarts "$t/r2")
     if [[ $got == 0 ]]; then echo "ok   docker_restarts: none"; else echo "FAIL docker_restarts (none) -> '$got'"; fails=1; fi
     rm -f "$t/v3" "$t/r1" "$t/r2"
