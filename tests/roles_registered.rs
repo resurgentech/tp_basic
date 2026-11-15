@@ -31,3 +31,28 @@ fn roles_holds_cuda() {
     let _ = tp_basic::roles::cuda::cuda;
     assert!(telepatch::roles().contains(&"cuda"));
 }
+
+/// Every role the `labtwo` playbook calls (`run --only` names them).
+#[test]
+fn roles_holds_every_labtwo_role() {
+    let _ = tp_basic::playbooks::labtwo::labtwo_entry;
+    for r in [
+        "maasfix",
+        "h11ssl_reboot_fix",
+        "admin_users",
+        "root_user",
+        "dev_common",
+        "src_repos",
+        "kernel_build",
+        "docker",
+        "vm_server",
+        "hashicorp_packer",
+        "rust_build",
+        "tmux",
+        "systemd_time",
+        "cuda",
+    ] {
+        assert!(telepatch::roles().contains(&r), "{r}");
+    }
+    assert!(!telepatch::roles().contains(&"zsh"));
+}

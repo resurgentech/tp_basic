@@ -1,0 +1,18 @@
+# An example inventory for the labtwo playbook, placeholder hosts only. The
+# real one is kept as `inventories/labtwo.local.toml` (gitignored).
+# Hosts log in as `ubuntu` (ssh user@host form).
+
+[groups.servers]
+hosts = ["ubuntu@server-01.example", "ubuntu@server-02.example"]
+
+[groups.storage_servers]
+hosts = ["ubuntu@storage-01.example"]
+
+[groups.maas_installs]
+hosts = ["ubuntu@server-01.example"]
+
+[groups.H11SSL_motherboards]
+hosts = ["ubuntu@server-02.example"]
+
+[groups.gpu_servers]
+hosts = ["ubuntu@server-02.example"]

@@ -1,0 +1,952 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host rockylinux10 (os: RedHat/Rocky 10.2)
+blocking reads: 0
+shell helpers: undo fe76955f
+
+window 1 (final)
+role admin_users
+  #1 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='@includedir /etc/sudoers.d'
+      |   tp_n=$(grep -nE -- '^[#@]includedir\s+/etc/sudoers\.d' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #2 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='Defaults    secure_path = /usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin'
+      |   tp_n=$(grep -nE -- '^Defaults\s+secure_path' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #3 user as shell:root reads [group:wheel] writes [user:ubuntu] post [user:ubuntu=Exists(true)]
+      | created=0
+      | tp_u='ubuntu'
+      | for tp_g in 'wheel'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -s '/bin/bash' -G 'wheel' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     printf '%s:%s\n' "$tp_u" '<secret>' | chpasswd -e
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_w=$(printf %s '<secret>' | sha256sum | cut -d' ' -f1)
+      |       tp_shadow=$(getent shadow "$tp_u" | cut -d: -f2)
+      |       tp_g=$(printf %s "$tp_shadow" | sha256sum | cut -d' ' -f1)
+      |       if [ "$tp_w" != "$tp_g" ]; then
+      |         echo "telepatch: user $tp_u: password checksum mismatch" >&2
+      |         rc=1
+      |       fi
+      |     fi
+      |   fi
+      | else
+      |   :
+      |   tp_cur=$(getent passwd "$tp_u" | cut -d: -f7)
+      |   if [ "$tp_cur" != '/bin/bash' ]; then
+      |     usermod -s '/bin/bash' -- "$tp_u"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; tp_wsj="\"$(__tp_esc "$tp_cur")\""; fi
+      |   fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     tp_new=()
+      |     for tp_g in 'wheel'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g"; tp_new+=("$tp_g");; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; tp_gaa=("${tp_new[@]}"); fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+  #4 file as shell:root reads [] writes [file:~ubuntu/.ssh] post [file:~ubuntu/.ssh=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p=~ubuntu/'.ssh'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then :
+      | elif [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   echo "telepatch: $tp_p exists and is not a directory" >&2; rc=1
+      | else
+      |   tp_mk "$tp_p"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; tp_ct=$tp_cx; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '700' ]; then
+      |   if chmod 700 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'ubuntu:ubuntu' ]; then
+      |   if chown 'ubuntu:ubuntu' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #5 file as shell:root reads [] writes [file:/etc/sudoers.d/ubuntu] post [file:/etc/sudoers.d/ubuntu=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers.d/ubuntu'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_b='dWJ1bnR1IEFMTD0oQUxMKSAgICAgICBOT1BBU1NXRDogQUxMCkRlZmF1bHRzOnVidW50dSAhcmVxdWlyZXR0eQpEZWZhdWx0czp1YnVudHUgIWVudl9yZXNldAo='
+      |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     chmod 440 "$tp_c" || rc=$?
+      |     if [ "$rc" -eq 0 ]; then chown 'root:root' "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '440' ]; then
+      |   if chmod 440 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'root:root' ]; then
+      |   if chown 'root:root' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+role root_user
+  #8 file as shell:root reads [] writes [file:/root/.ssh] post [file:/root/.ssh=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/root/.ssh'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then :
+      | elif [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   echo "telepatch: $tp_p exists and is not a directory" >&2; rc=1
+      | else
+      |   tp_mk "$tp_p"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; tp_ct=$tp_cx; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '700' ]; then
+      |   if chmod 700 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U:%G' "$tp_p")" != 'root:root' ]; then
+      |   if chown 'root:root' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #9 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='@includedir /etc/sudoers.d'
+      |   tp_n=$(grep -nE -- '^[#@]includedir' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='/usr/sbin/visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+  #10 file as shell:root reads [] writes [file:/etc/sudoers] post [file:/etc/sudoers=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/sudoers'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ -f "$tp_p" ]; then cat "$tp_p" > "$tp_c" || rc=$?; fi
+      | tp_append() {
+      |   if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >> "$1"; fi
+      |   printf '%s\n' "$2" >> "$1"
+      | }
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
+      |   tp_l='Defaults    secure_path = /usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin'
+      |   tp_n=$(grep -nE -- '^Defaults\s*secure_path' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   if [ "$rc" -ne 0 ]; then :
+      |   elif [ -z "$tp_n" ]; then
+      |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
+      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |     rc=$?
+      |     rm -f "$tp_t"
+      |     if [ "$rc" -eq 0 ]; then changed=1; fi
+      |   fi
+      | fi
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='/usr/sbin/visudo -cf "$tp_c"'
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi
+role dev_common
+  #13 pkg as shell:root reads [] writes [pkg:@Development Tools, pkg:bc, pkg:bison, pkg:clang, pkg:cmake, pkg:dpkg, pkg:dpkg-dev, pkg:dpkg-devel, pkg:flex, pkg:gcc, pkg:git, pkg:gnupg, pkg:lld, pkg:llvm, pkg:net-tools, pkg:newt, pkg:python3, pkg:python3-devel, pkg:python3-docutils, pkg:python3-pip, pkg:rpm-build, pkg:rsync, pkg:slang, pkg:xmlto, pkg:zlib-devel, pkg:zstd] post [pkg:@Development Tools=Installed, pkg:bc=Installed, pkg:bison=Installed, pkg:clang=Installed, pkg:cmake=Installed, pkg:dpkg=Installed, pkg:dpkg-dev=Installed, pkg:dpkg-devel=Installed, pkg:flex=Installed, pkg:gcc=Installed, pkg:git=Installed, pkg:gnupg=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:net-tools=Installed, pkg:newt=Installed, pkg:python3=Installed, pkg:python3-devel=Installed, pkg:python3-docutils=Installed, pkg:python3-pip=Installed, pkg:rpm-build=Installed, pkg:rsync=Installed, pkg:slang=Installed, pkg:xmlto=Installed, pkg:zlib-devel=Installed, pkg:zstd=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('@Development Tools' 'cmake' 'clang' 'llvm' 'lld' 'bison' 'flex' 'git' 'rsync' 'gcc' 'zlib-devel' 'gnupg' 'bc' 'newt' 'slang' 'xmlto' 'net-tools' 'rpm-build' 'dpkg-devel' 'dpkg' 'dpkg-dev' 'zstd' 'python3' 'python3-devel' 'python3-docutils' 'python3-pip')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+  #14 pkg as shell:root reads [] writes [pkg:pip:GitPython, pkg:pip:PyYAML, pkg:pip:jinja2] post [pkg:pip:GitPython=Installed, pkg:pip:PyYAML=Installed, pkg:pip:jinja2=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('jinja2' 'GitPython' 'PyYAML')
+      | tp_missing=()
+      | if python3 -m pip --version >/dev/null 2>&1; then tp_pip=(python3 -m pip)
+      | elif command -v pip3 >/dev/null 2>&1; then tp_pip=(pip3)
+      | else echo 'telepatch: pip not found' >&2; rc=127; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   for tp_n in "${tp_want[@]}"; do
+      |     "${tp_pip[@]}" show "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n")
+      |   done
+      |   if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |     "${tp_pip[@]}" install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi
+  #15 pkg[script] as shell:root reads [] writes [*] post [pkg:script:root:uv=Installed, file:/usr/local/bin/uv=Exists(true)]
+      | rc=0; changed=0; installed=()
+      | tp_name='uv'
+      | tp_tok() { grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
+      | tp_probe() {
+      |   tp_have=0; tp_v=
+      |   if [ -x '/usr/local/bin/uv' ]; then
+      |     tp_have=1
+      |     tp_v=$( (
+      | uv self version --short
+      | ) 2>/dev/null | tp_tok)
+      |   fi
+      | }
+      | tp_want_v=
+      | tp_probe
+      | tp_had=$tp_have; tp_before=$tp_v; tp_act=
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ "$tp_have" -eq 0 ]; then tp_act=install
+      |   elif [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; then tp_act=update
+      |   fi
+      | fi
+      | if [ "$tp_act" = install ]; then
+      |   ( export TP_WANT="$tp_want_v"
+      | (set -o pipefail && curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 UV_INSTALL_DIR=/usr/local/bin sh)
+      |   )
+      |   rc=$?
+      | elif [ "$tp_act" = update ]; then
+      |   ( export TP_WANT="$tp_want_v"
+      | uv self update
+      |   )
+      |   rc=$?
+      | fi
+      | if [ -n "$tp_act" ]; then
+      |   tp_probe
+      |   if [ "$tp_have" -ne "$tp_had" ] || [ "$tp_v" != "$tp_before" ]; then changed=1; installed=("$tp_name"); fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ "$tp_have" -eq 0 ]; then tp_got=absent; else tp_got=${tp_v:-unknown}; fi
+      |     if [ "$tp_have" -eq 0 ] || { [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; }; then
+      |       echo "telepatch: script $tp_name: installed $tp_got, wanted ${tp_want_v:-present}" >&2; rc=1
+      |     fi
+      |   fi
+      | fi
+  #16 pkg[script] as shell:root reads [] writes [*] post [pkg:script:root:mise=Installed, file:/usr/local/bin/mise=Exists(true)]
+      | rc=0; changed=0; installed=()
+      | tp_name='mise'
+      | tp_tok() { grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
+      | tp_probe() {
+      |   tp_have=0; tp_v=
+      |   if [ -x '/usr/local/bin/mise' ]; then
+      |     tp_have=1
+      |     tp_v=$( (
+      | mise version
+      | ) 2>/dev/null | tp_tok)
+      |   fi
+      | }
+      | tp_want_v=
+      | tp_probe
+      | tp_had=$tp_have; tp_before=$tp_v; tp_act=
+      | if [ "$rc" -eq 0 ]; then
+      |   if [ "$tp_have" -eq 0 ]; then tp_act=install
+      |   elif [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; then tp_act=update
+      |   fi
+      | fi
+      | if [ "$tp_act" = install ]; then
+      |   ( export TP_WANT="$tp_want_v"
+      | (set -o pipefail && curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh)
+      |   )
+      |   rc=$?
+      | elif [ "$tp_act" = update ]; then
+      |   ( export TP_WANT="$tp_want_v"
+      | mise self-update -y
+      |   )
+      |   rc=$?
+      | fi
+      | if [ -n "$tp_act" ]; then
+      |   tp_probe
+      |   if [ "$tp_have" -ne "$tp_had" ] || [ "$tp_v" != "$tp_before" ]; then changed=1; installed=("$tp_name"); fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ "$tp_have" -eq 0 ]; then tp_got=absent; else tp_got=${tp_v:-unknown}; fi
+      |     if [ "$tp_have" -eq 0 ] || { [ -n "$tp_want_v" ] && [ "$tp_v" != "$tp_want_v" ]; }; then
+      |       echo "telepatch: script $tp_name: installed $tp_got, wanted ${tp_want_v:-present}" >&2; rc=1
+      |     fi
+      |   fi
+      | fi
+  #17 file as shell:root reads [] writes [file:/etc/profile.d/mise.sh] post [file:/etc/profile.d/mise.sh=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/profile.d/mise.sh'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | tp_b='IyBtaXNlIHN5c3RlbSBzaGltcyBmb3IgbG9naW4gc2hlbGxzICh0ZWxlcGF0Y2ggZGV2X2NvbW1vbikKZXhwb3J0IFBBVEg9Ii91c3IvbG9jYWwvc2hhcmUvbWlzZS9zaGltczokUEFUSCIK'
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |   if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then tp_save "$tp_p" || rc=1; fi
+      |   if [ "$rc" -eq 0 ]; then tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
+      |       if [ -e "$tp_p" ]; then
+      |         chmod --reference="$tp_p" "$tp_t"; chown --reference="$tp_p" "$tp_t" 2>/dev/null
+      |       else
+      |         chmod 644 "$tp_t"
+      |       fi
+      |       mv -f "$tp_t" "$tp_p"; rc=$?
+      |     else
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '644' ]; then
+      |   if chmod 644 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #18 pkg[mise] as shell:root reads [] writes [*] post [pkg:mise:root:just=Installed, file:/etc/mise/config.toml=Exists(true)]
+      | rc=0; changed=0; installed=()
+      | tp_want=('just')
+      | declare -A tp_have=() tp_before=() tp_spec=() tp_wantv=()
+      | tp_todo=(); tp_args=()
+      | tp_cfgdir=${MISE_SYSTEM_CONFIG_DIR:-/etc/mise}; tp_data=${MISE_SYSTEM_DATA_DIR:-/usr/local/share/mise}
+      | tp_mise=$(command -v mise 2>/dev/null) || tp_mise=
+      | [ -n "$tp_mise" ] || { [ -x /usr/local/bin/mise ] && tp_mise=/usr/local/bin/mise; }
+      | tp_list() { awk -v pre="$tp_data/installs/" '/^  "[^"]+": \[/ { t=$0; sub(/^  "/, "", t); sub(/": \[.*/, "", t); next }
+      | /"version":/ { v=$0; sub(/.*"version": "/, "", v); sub(/".*/, "", v) }
+      | /"install_path":/ { p=$0; sub(/.*"install_path": "/, "", p); sub(/".*/, "", p); if (index(p, pre) == 1) print t, v }'; }
+      | tp_read() { local n v; tp_have=(); while read -r n v; do tp_have[$n]+=" $v"; done < <("$tp_mise" ls --json --installed 2>/dev/null | tp_list); }
+      | tp_has() { case "${tp_have[$1]-} " in *" $2 "*) return 0;; esac; return 1; }
+      | if [ -z "$tp_mise" ]; then echo 'telepatch: mise not found' >&2; rc=127; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_read
+      |   for tp_k in "${!tp_have[@]}"; do tp_before[$tp_k]=${tp_have[$tp_k]}; done
+      |   for tp_n in "${tp_want[@]}"; do
+      |     tp_spec[$tp_n]=latest
+      |     [ -n "${tp_have[$tp_n]-}" ] || { tp_todo+=("$tp_n"); tp_args+=("$tp_n"); }
+      |   done
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   mkdir -p "$tp_cfgdir" && { [ -e "$tp_cfgdir/config.toml" ] || : > "$tp_cfgdir/config.toml"; } || rc=1
+      |   for tp_n in "${tp_want[@]}"; do
+      |     [ "$rc" -eq 0 ] || break
+      |     tp_cur=$("$tp_mise" config get --system "tools.$tp_n" 2>/dev/null) || tp_cur=
+      |     if [ "$tp_cur" != "${tp_spec[$tp_n]}" ]; then
+      |       if "$tp_mise" config set --system "tools.$tp_n" "${tp_spec[$tp_n]}"; then changed=1; else rc=1; fi
+      |     fi
+      |   done
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "${#tp_todo[@]}" -gt 0 ]; then
+      |   "$tp_mise" install --system "${tp_args[@]}"
+      |   rc=$?
+      |   tp_read
+      |   for tp_n in "${tp_want[@]}"; do
+      |     if [ "${tp_have[$tp_n]-}" != "${tp_before[$tp_n]-}" ]; then changed=1; installed+=("$tp_n"); fi
+      |   done
+      |   if [ "$rc" -eq 0 ]; then
+      |     for tp_n in "${tp_todo[@]}"; do
+      |       tp_wv=${tp_wantv[$tp_n]-}
+      |       if [ -n "$tp_wv" ]; then tp_has "$tp_n" "$tp_wv" && continue; else [ -n "${tp_have[$tp_n]-}" ] && continue; fi
+      |       tp_got=${tp_have[$tp_n]-}; tp_got=${tp_got# }
+      |       echo "telepatch: mise $tp_n: installed ${tp_got:-absent}, wanted ${tp_wv:-present}" >&2; rc=1
+      |     done
+      |   fi
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_noshim=0
+      |   for tp_n in "${tp_want[@]}"; do
+      |     for tp_b in "$tp_data/installs/$tp_n"/*/bin/*; do
+      |       [ -e "$tp_b" ] || continue
+      |       [ -e "$tp_data/shims/${tp_b##*/}" ] || { tp_noshim=1; break 2; }
+      |     done
+      |   done
+      |   if [ "$tp_noshim" -eq 1 ]; then
+      |     if "$tp_mise" reshim --system; then changed=1; else rc=$?; fi
+      |   fi
+      | fi
+role kernel_build
+  #23 pkg as shell:root reads [] writes [pkg:pip:pip] post [pkg:pip:pip=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('pip')
+      | tp_missing=()
+      | if python3 -m pip --version >/dev/null 2>&1; then tp_pip=(python3 -m pip)
+      | elif command -v pip3 >/dev/null 2>&1; then tp_pip=(pip3)
+      | else echo 'telepatch: pip not found' >&2; rc=127; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_ver() { "${tp_pip[@]}" show "$1" 2>/dev/null | sed -n 's/^Version: //p'; }
+      |   declare -A tp_before
+      |   for tp_n in "${tp_want[@]}"; do tp_before[$tp_n]=$(tp_ver "$tp_n"); done
+      |   "${tp_pip[@]}" install -U "${tp_want[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then
+      |     for tp_n in "${tp_want[@]}"; do
+      |       if [ "$(tp_ver "$tp_n")" != "${tp_before[$tp_n]}" ]; then installed+=("$tp_n"); changed=1; fi
+      |     done
+      |   fi
+      | fi
+  #24 pkg as shell:root reads [] writes [pkg:audit-libs-devel, pkg:binutils-devel, pkg:bpftool, pkg:clang, pkg:dwarves, pkg:elfutils-devel, pkg:elfutils-libelf-devel, pkg:java-devel, pkg:kabi-dw, pkg:libbabeltrace-devel, pkg:libbpf-devel, pkg:libcap-devel, pkg:libcap-ng-devel, pkg:libmnl-devel, pkg:libnl3-devel, pkg:lld, pkg:llvm, pkg:ncurses-devel, pkg:newt-devel, pkg:numactl-devel, pkg:openssl-devel, pkg:pciutils-devel, pkg:perl(ExtUtils::Embed), pkg:perl-Carp, pkg:perl-devel, pkg:perl-generators, pkg:perl-interpreter, pkg:python3-sphinx, pkg:redhat-rpm-config, pkg:rpm-build, pkg:rpmdevtools, pkg:xz-devel, pkg:zlib-devel] post [pkg:audit-libs-devel=Installed, pkg:binutils-devel=Installed, pkg:bpftool=Installed, pkg:clang=Installed, pkg:dwarves=Installed, pkg:elfutils-devel=Installed, pkg:elfutils-libelf-devel=Installed, pkg:java-devel=Installed, pkg:kabi-dw=Installed, pkg:libbabeltrace-devel=Installed, pkg:libbpf-devel=Installed, pkg:libcap-devel=Installed, pkg:libcap-ng-devel=Installed, pkg:libmnl-devel=Installed, pkg:libnl3-devel=Installed, pkg:lld=Installed, pkg:llvm=Installed, pkg:ncurses-devel=Installed, pkg:newt-devel=Installed, pkg:numactl-devel=Installed, pkg:openssl-devel=Installed, pkg:pciutils-devel=Installed, pkg:perl(ExtUtils::Embed)=Installed, pkg:perl-Carp=Installed, pkg:perl-devel=Installed, pkg:perl-generators=Installed, pkg:perl-interpreter=Installed, pkg:python3-sphinx=Installed, pkg:redhat-rpm-config=Installed, pkg:rpm-build=Installed, pkg:rpmdevtools=Installed, pkg:xz-devel=Installed, pkg:zlib-devel=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('rpmdevtools' 'rpm-build' 'redhat-rpm-config' 'audit-libs-devel' 'binutils-devel' 'elfutils-devel' 'elfutils-libelf-devel' 'java-devel' 'libcap-devel' 'ncurses-devel' 'newt-devel' 'numactl-devel' 'openssl-devel' 'pciutils-devel' 'libnl3-devel' 'xz-devel' 'zlib-devel' 'perl-interpreter' 'perl-devel' 'perl-generators' 'perl-Carp' 'perl(ExtUtils::Embed)' 'python3-sphinx' 'dwarves' 'kabi-dw' 'libbabeltrace-devel' 'libbpf-devel' 'libcap-ng-devel' 'libmnl-devel' 'bpftool' 'clang' 'llvm' 'lld')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+role docker
+  #27 repo as shell:root reads [] writes [file:/etc/yum.repos.d/docker.repo, repo:docker] post [file:/etc/yum.repos.d/docker.repo=Exists(true), repo:docker=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | tp_n='docker'
+      | tp_fetch() {
+      |   if ! command -v curl >/dev/null 2>&1; then
+      |     echo "telepatch: repo $tp_n: curl not found" >&2
+      |     return 1
+      |   fi
+      |   (umask 022; mkdir -p -- "$(dirname -- "$2")") || return 1
+      |   tp_t=$(mktemp "$2.XXXXXX") || return 1
+      |   if curl -fsSL -o "$tp_t" --url "$1" && chmod 0644 "$tp_t" && mv -f -- "$tp_t" "$2"; then
+      |     return 0
+      |   fi
+      |   rm -f -- "$tp_t"
+      |   return 1
+      | }
+      | tp_f='/etc/yum.repos.d/docker.repo'
+      | if [ ! -e "$tp_f" ]; then
+      |   if tp_fetch 'https://download.docker.com/linux/rhel/docker-ce.repo' "$tp_f"; then changed=1; tp_fc=1; else rc=1; fi
+      | fi
+  #28 pkg as shell:root reads [] writes [pkg:clang, pkg:containerd.io, pkg:docker-buildx-plugin, pkg:docker-ce, pkg:docker-ce-cli, pkg:docker-compose-plugin, pkg:gcc-c++, pkg:libvirt, pkg:libvirt-client, pkg:musl-gcc, pkg:openssl-devel, pkg:pkgconf-pkg-config, pkg:qemu-kvm, pkg:virt-install] post [pkg:clang=Installed, pkg:containerd.io=Installed, pkg:docker-buildx-plugin=Installed, pkg:docker-ce=Installed, pkg:docker-ce-cli=Installed, pkg:docker-compose-plugin=Installed, pkg:gcc-c++=Installed, pkg:libvirt=Installed, pkg:libvirt-client=Installed, pkg:musl-gcc=Installed, pkg:openssl-devel=Installed, pkg:pkgconf-pkg-config=Installed, pkg:qemu-kvm=Installed, pkg:virt-install=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('docker-ce' 'docker-ce-cli' 'containerd.io' 'docker-buildx-plugin' 'docker-compose-plugin' 'qemu-kvm' 'libvirt' 'libvirt-client' 'virt-install' 'gcc-c++' 'openssl-devel' 'pkgconf-pkg-config' 'clang' 'musl-gcc')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+      merged from docker #28, vm_server #34, rust_build #41, rust_build #42
+  #29 svc as shell:root reads [] writes [svc:docker.service] post [svc:docker.service=Exists(true)]
+      | tp_u='docker'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
+      |   esac
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if ! systemctl is-active --quiet -- "$tp_u"; then
+      |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           __tp_drn="${__tp_drn:+$__tp_drn,}need"
+      |           systemctl daemon-reload
+      |           rc=$?
+      |         fi
+      |         if [ "$rc" -eq 0 ]; then
+      |           systemctl start -- "$tp_u"
+      |           rc=$?
+      |           if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
+      | fi
+  #30 group as shell:root reads [] writes [group:docker] post [group:docker=Exists(true)]
+      | created=0
+      | tp_g='docker'
+      | if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |   groupadd -- "$tp_g"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | fi
+  #31 user as shell:root reads [group:docker] writes [user:ubuntu] post [user:ubuntu=Exists(true)]
+      | created=0
+      | tp_u='ubuntu'
+      | for tp_g in 'docker'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -G 'docker' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     tp_new=()
+      |     for tp_g in 'docker'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g"; tp_new+=("$tp_g");; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; tp_gaa=("${tp_new[@]}"); fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+role vm_server
+  #35 svc as shell:root reads [] writes [svc:virtqemud.socket] post [svc:virtqemud.socket=Exists(true)]
+      | tp_u='virtqemud.socket'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
+      |   esac
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -d "$tp_run" ]; then
+      |       if ! systemctl is-active --quiet -- "$tp_u"; then
+      |         if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |           __tp_drn="${__tp_drn:+$__tp_drn,}need"
+      |           systemctl daemon-reload
+      |           rc=$?
+      |         fi
+      |         if [ "$rc" -eq 0 ]; then
+      |           systemctl start -- "$tp_u"
+      |           rc=$?
+      |           if [ "$rc" -eq 0 ]; then changed=1; fi
+      |         fi
+      |       fi
+      |     else
+      |       tp_skip=1
+      |     fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "$changed" -eq 0 ] && [ "$tp_skip" -eq 1 ]; then skipped=1; fi
+      | fi
+  #36 user as shell:root reads [group:libvirt] writes [user:ubuntu] post [user:ubuntu=Exists(true)]
+      | created=0
+      | tp_u='ubuntu'
+      | for tp_g in 'libvirt'; do
+      |   if ! getent group "$tp_g" >/dev/null 2>&1; then
+      |     echo "telepatch: user $tp_u: group $tp_g does not exist" >&2
+      |     rc=1
+      |   fi
+      | done
+      | if [ "$rc" -eq 0 ]; then
+      | if ! getent passwd "$tp_u" >/dev/null 2>&1; then
+      |   useradd -m -G 'libvirt' -- "$tp_u"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; created=1; fi
+      | else
+      |   :
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_have=" $(id -nG "$tp_u") "
+      |     tp_add=
+      |     tp_new=()
+      |     for tp_g in 'libvirt'; do
+      |       case "$tp_have" in *" $tp_g "*) ;; *) tp_add="$tp_add,$tp_g"; tp_new+=("$tp_g");; esac
+      |     done
+      |     if [ -n "$tp_add" ]; then
+      |       usermod -aG "${tp_add#,}" -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; tp_gaa=("${tp_new[@]}"); fi
+      |     fi
+      |   fi
+      | fi
+      | fi
+
+window 2 (final)
+role rust_build
+  #43 pkg[rustup] as login:ubuntu reads [] writes [*] post [pkg:rustup:ubuntu:stable=Installed, pkg:rustup:ubuntu:stable/target/x86_64-unknown-linux-musl=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_tc='stable'
+      | tp_prof='default'
+      | tp_path() {
+      |   tp_cb=${CARGO_HOME:-$HOME/.cargo}/bin
+      |   if [ -d "$tp_cb" ]; then case ":$PATH:" in *":$tp_cb:"*) ;; *) PATH=$tp_cb:$PATH;; esac; fi
+      | }
+      | tp_match() { awk -v t="$1" 'function tcm(f, t) { return f == t || (index(f, t "-") == 1 && substr(f, length(t) + 2) ~ /^(x86_64|i[3-6]86|aarch64|arm[0-9a-z_]*|riscv[0-9a-z]*|powerpc[0-9a-z_]*|s390x|loongarch64|mips[0-9a-z_]*|sparc[0-9a-z_]*|thumb[0-9a-z_]*|wasm[0-9]+)-[a-z0-9_]+-[a-z]/) } { if (tcm($1, t)) m=1 } END { exit m ? 0 : 1 }'; }
+      | tp_ver() { rustup run "$tp_tc" rustc --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
+      | tp_has_tc() { rustup toolchain list 2>/dev/null | tp_match "$tp_tc"; }
+      | tp_updates() { awk -v t="$tp_tc" 'function tcm(f, t) { return f == t || (index(f, t "-") == 1 && substr(f, length(t) + 2) ~ /^(x86_64|i[3-6]86|aarch64|arm[0-9a-z_]*|riscv[0-9a-z]*|powerpc[0-9a-z_]*|s390x|loongarch64|mips[0-9a-z_]*|sparc[0-9a-z_]*|thumb[0-9a-z_]*|wasm[0-9]+)-[a-z0-9_]+-[a-z]/) } /[Uu]pdate available/ { if ($1 == "rustup") print "self"; else if (tcm($1, t)) { v=$0; sub(/.*-> */, "", v); split(v, a, " "); print "tc " a[1] } }'; }
+      | tp_check() { tp_chk=$(rustup check 2>&1); tp_crc=$?; [ "$tp_crc" -eq 0 ] || [ "$tp_crc" -eq 100 ]; }
+      | tp_path
+      | tp_fresh=0
+      | if ! command -v rustup >/dev/null 2>&1; then
+      |   ( set -o pipefail; curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$tp_tc" --profile "$tp_prof" )
+      |   rc=$?
+      |   tp_path
+      |   if [ "$rc" -eq 0 ] && ! command -v rustup >/dev/null 2>&1; then echo 'telepatch: rustup not found after the installer' >&2; rc=1; fi
+      |   if [ "$rc" -eq 0 ]; then tp_fresh=1; fi
+      | elif ! tp_has_tc; then
+      |   rustup toolchain install "$tp_tc" --profile "$tp_prof"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then tp_fresh=1; fi
+      | fi
+      | if [ "$tp_fresh" -eq 1 ]; then
+      |   if tp_has_tc; then changed=1; installed+=("$tp_tc"); else echo "telepatch: rustup toolchain $tp_tc: not installed afterwards" >&2; rc=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$tp_fresh" -eq 0 ]; then
+      |   tp_v0=$(tp_ver)
+      |   if ! tp_check; then
+      |     echo "telepatch: rustup check failed (rc $tp_crc): $tp_chk" >&2; rc=1
+      |   elif [ -n "$(printf '%s\n' "$tp_chk" | tp_updates)" ]; then
+      |     rustup update "$tp_tc"
+      |     rc=$?
+      |     if [ "$(tp_ver)" != "$tp_v0" ]; then changed=1; installed+=("$tp_tc"); fi
+      |   fi
+      | fi
+      | if [ "$rc" -eq 0 ] && ! rustup default 2>/dev/null | tp_match "$tp_tc"; then
+      |   rustup default "$tp_tc"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_have=$(rustup target list --installed --toolchain "$tp_tc" 2>/dev/null)
+      |   tp_miss=()
+      |   for tp_x in 'x86_64-unknown-linux-musl'; do
+      |     printf '%s\n' "$tp_have" | grep -qxF -- "$tp_x" || tp_miss+=("$tp_x")
+      |   done
+      |   if [ "${#tp_miss[@]}" -gt 0 ]; then
+      |     rustup target add --toolchain "$tp_tc" "${tp_miss[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then
+      |       changed=1
+      |       for tp_x in "${tp_miss[@]}"; do installed+=("$tp_tc/target/$tp_x"); done
+      |     fi
+      |   fi
+      | fi
+  #44 pkg[cargo] as login:ubuntu reads [] writes [pkg:cargo:ubuntu:cargo-deb, pkg:cargo:ubuntu:cargo-generate-rpm, home:ubuntu] post [pkg:cargo:ubuntu:cargo-deb=Installed, pkg:cargo:ubuntu:cargo-generate-rpm=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('cargo-deb' 'cargo-generate-rpm')
+      | declare -A tp_before=() tp_after=() tp_wantv=()
+      | tp_todo=()
+      | tp_list() { cargo install --list 2>/dev/null | sed -n 's/^\([^ ][^ ]*\) v\([^ :][^ :]*\)[^:]*:$/\1 \2/p'; }
+      | if ! command -v cargo >/dev/null 2>&1; then echo 'telepatch: cargo not found' >&2; rc=127; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   while read -r tp_n tp_v; do tp_before[$tp_n]=$tp_v; done < <(tp_list)
+      |   for tp_n in "${tp_want[@]}"; do
+      |     [ -n "${tp_before[$tp_n]+x}" ] || tp_todo+=("$tp_n")
+      |   done
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "${#tp_todo[@]}" -gt 0 ]; then
+      |   cargo install "${tp_todo[@]}"
+      |   rc=$?
+      |   while read -r tp_n tp_v; do tp_after[$tp_n]=$tp_v; done < <(tp_list)
+      |   for tp_n in "${tp_want[@]}"; do
+      |     if [ "${tp_after[$tp_n]-}" != "${tp_before[$tp_n]-}" ]; then changed=1; installed+=("$tp_n"); fi
+      |   done
+      |   if [ "$rc" -eq 0 ]; then
+      |     for tp_n in "${tp_todo[@]}"; do
+      |       tp_got=${tp_after[$tp_n]-}; tp_wv=${tp_wantv[$tp_n]-}
+      |       if [ -z "$tp_got" ] || { [ -n "$tp_wv" ] && [ "$tp_got" != "$tp_wv" ]; }; then
+      |         echo "telepatch: cargo $tp_n: installed ${tp_got:-absent}, wanted ${tp_wv:-present}" >&2; rc=1
+      |       fi
+      |     done
+      |   fi
+      | fi
+  #45 pkg[rustup] as login:root reads [] writes [*] post [pkg:rustup:root:stable=Installed, pkg:rustup:root:stable/target/x86_64-unknown-linux-musl=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_tc='stable'
+      | tp_prof='default'
+      | tp_path() {
+      |   tp_cb=${CARGO_HOME:-$HOME/.cargo}/bin
+      |   if [ -d "$tp_cb" ]; then case ":$PATH:" in *":$tp_cb:"*) ;; *) PATH=$tp_cb:$PATH;; esac; fi
+      | }
+      | tp_match() { awk -v t="$1" 'function tcm(f, t) { return f == t || (index(f, t "-") == 1 && substr(f, length(t) + 2) ~ /^(x86_64|i[3-6]86|aarch64|arm[0-9a-z_]*|riscv[0-9a-z]*|powerpc[0-9a-z_]*|s390x|loongarch64|mips[0-9a-z_]*|sparc[0-9a-z_]*|thumb[0-9a-z_]*|wasm[0-9]+)-[a-z0-9_]+-[a-z]/) } { if (tcm($1, t)) m=1 } END { exit m ? 0 : 1 }'; }
+      | tp_ver() { rustup run "$tp_tc" rustc --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9A-Za-z+~-]+)*' | head -n1; }
+      | tp_has_tc() { rustup toolchain list 2>/dev/null | tp_match "$tp_tc"; }
+      | tp_updates() { awk -v t="$tp_tc" 'function tcm(f, t) { return f == t || (index(f, t "-") == 1 && substr(f, length(t) + 2) ~ /^(x86_64|i[3-6]86|aarch64|arm[0-9a-z_]*|riscv[0-9a-z]*|powerpc[0-9a-z_]*|s390x|loongarch64|mips[0-9a-z_]*|sparc[0-9a-z_]*|thumb[0-9a-z_]*|wasm[0-9]+)-[a-z0-9_]+-[a-z]/) } /[Uu]pdate available/ { if ($1 == "rustup") print "self"; else if (tcm($1, t)) { v=$0; sub(/.*-> */, "", v); split(v, a, " "); print "tc " a[1] } }'; }
+      | tp_check() { tp_chk=$(rustup check 2>&1); tp_crc=$?; [ "$tp_crc" -eq 0 ] || [ "$tp_crc" -eq 100 ]; }
+      | tp_path
+      | tp_fresh=0
+      | if ! command -v rustup >/dev/null 2>&1; then
+      |   ( set -o pipefail; curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain "$tp_tc" --profile "$tp_prof" )
+      |   rc=$?
+      |   tp_path
+      |   if [ "$rc" -eq 0 ] && ! command -v rustup >/dev/null 2>&1; then echo 'telepatch: rustup not found after the installer' >&2; rc=1; fi
+      |   if [ "$rc" -eq 0 ]; then tp_fresh=1; fi
+      | elif ! tp_has_tc; then
+      |   rustup toolchain install "$tp_tc" --profile "$tp_prof"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then tp_fresh=1; fi
+      | fi
+      | if [ "$tp_fresh" -eq 1 ]; then
+      |   if tp_has_tc; then changed=1; installed+=("$tp_tc"); else echo "telepatch: rustup toolchain $tp_tc: not installed afterwards" >&2; rc=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$tp_fresh" -eq 0 ]; then
+      |   tp_v0=$(tp_ver)
+      |   if ! tp_check; then
+      |     echo "telepatch: rustup check failed (rc $tp_crc): $tp_chk" >&2; rc=1
+      |   elif [ -n "$(printf '%s\n' "$tp_chk" | tp_updates)" ]; then
+      |     rustup update "$tp_tc"
+      |     rc=$?
+      |     if [ "$(tp_ver)" != "$tp_v0" ]; then changed=1; installed+=("$tp_tc"); fi
+      |   fi
+      | fi
+      | if [ "$rc" -eq 0 ] && ! rustup default 2>/dev/null | tp_match "$tp_tc"; then
+      |   rustup default "$tp_tc"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_have=$(rustup target list --installed --toolchain "$tp_tc" 2>/dev/null)
+      |   tp_miss=()
+      |   for tp_x in 'x86_64-unknown-linux-musl'; do
+      |     printf '%s\n' "$tp_have" | grep -qxF -- "$tp_x" || tp_miss+=("$tp_x")
+      |   done
+      |   if [ "${#tp_miss[@]}" -gt 0 ]; then
+      |     rustup target add --toolchain "$tp_tc" "${tp_miss[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then
+      |       changed=1
+      |       for tp_x in "${tp_miss[@]}"; do installed+=("$tp_tc/target/$tp_x"); done
+      |     fi
+      |   fi
+      | fi
+  #46 pkg[cargo] as login:root reads [] writes [pkg:cargo:root:cargo-deb, pkg:cargo:root:cargo-generate-rpm, home:root] post [pkg:cargo:root:cargo-deb=Installed, pkg:cargo:root:cargo-generate-rpm=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('cargo-deb' 'cargo-generate-rpm')
+      | declare -A tp_before=() tp_after=() tp_wantv=()
+      | tp_todo=()
+      | tp_list() { cargo install --list 2>/dev/null | sed -n 's/^\([^ ][^ ]*\) v\([^ :][^ :]*\)[^:]*:$/\1 \2/p'; }
+      | if ! command -v cargo >/dev/null 2>&1; then echo 'telepatch: cargo not found' >&2; rc=127; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   while read -r tp_n tp_v; do tp_before[$tp_n]=$tp_v; done < <(tp_list)
+      |   for tp_n in "${tp_want[@]}"; do
+      |     [ -n "${tp_before[$tp_n]+x}" ] || tp_todo+=("$tp_n")
+      |   done
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "${#tp_todo[@]}" -gt 0 ]; then
+      |   cargo install "${tp_todo[@]}"
+      |   rc=$?
+      |   while read -r tp_n tp_v; do tp_after[$tp_n]=$tp_v; done < <(tp_list)
+      |   for tp_n in "${tp_want[@]}"; do
+      |     if [ "${tp_after[$tp_n]-}" != "${tp_before[$tp_n]-}" ]; then changed=1; installed+=("$tp_n"); fi
+      |   done
+      |   if [ "$rc" -eq 0 ]; then
+      |     for tp_n in "${tp_todo[@]}"; do
+      |       tp_got=${tp_after[$tp_n]-}; tp_wv=${tp_wantv[$tp_n]-}
+      |       if [ -z "$tp_got" ] || { [ -n "$tp_wv" ] && [ "$tp_got" != "$tp_wv" ]; }; then
+      |         echo "telepatch: cargo $tp_n: installed ${tp_got:-absent}, wanted ${tp_wv:-present}" >&2; rc=1
+      |       fi
+      |     done
+      |   fi
+      | fi
+role tmux
+  #49 pkg as shell:root reads [] writes [pkg:tmux, pkg:tzdata] post [pkg:tmux=Installed, pkg:tzdata=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('tmux' 'tzdata')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+      merged from tmux #49, systemd_time #52
+role systemd_time
+  #53 timezone as shell:root reads [pkg:tzdata] writes [file:/etc/localtime, timezone] post [file:/etc/localtime=Exists(true), timezone="America/Los_Angeles"]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | tp_r="${TP_TZ_ROOT-}"
+      | tp_cur() { local l; l=$(readlink -- "$tp_r/etc/localtime" 2>/dev/null) || return 0; case $l in */zoneinfo/*) printf '%s' "${l#*/zoneinfo/}";; esac; }
+      | tp_z='America/Los_Angeles'
+      | tp_deb=0
+      | tp_set() {
+      |   tp_sbx "$tp_r/etc/localtime" "$tp_r/etc/timezone" "$tp_r/usr/share/zoneinfo" || return 1
+      |   if [ ! -f "$tp_r/usr/share/zoneinfo/$tp_z" ]; then
+      |     echo "telepatch: timezone $tp_z: no zoneinfo (install tzdata)" >&2
+      |     return 1
+      |   fi
+      |   tp_wz=$(tp_cur)
+      |   [ "$tp_wz" != "$tp_z" ] || return 0
+      |   if [ -d "${TP_SVC_RUNDIR:-/run/systemd/system}" ] && command -v timedatectl >/dev/null 2>&1; then
+      |     timedatectl set-timezone "$tp_z" || return 1
+      |   else
+      |     ln -sf -- "/usr/share/zoneinfo/$tp_z" "$tp_r/etc/localtime" || return 1
+      |   fi
+      |   if [ "$tp_deb" = 1 ]; then printf '%s\n' "$tp_z" > "$tp_r/etc/timezone" || return 1; fi
+      |   changed=1
+      | }
+      | tp_set || rc=1
+
+-- reboot if pending --

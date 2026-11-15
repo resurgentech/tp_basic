@@ -1,0 +1,6 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host ubuntu2404 (os: Debian/Ubuntu 24.04)
+blocking reads: 0

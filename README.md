@@ -45,6 +45,32 @@ build/tp-basic run container/dev_base --local --vars vars/container.toml
 build/tp-basic run container/dev_base --host bot@10.0.0.7 --ssh-key ~/.ssh/id_ed25519 --vars vars/container.toml --log run.jsonl
 ```
 
+### The labtwo playbook
+
+`labtwo` is `ansible_labtwo_2/playbooks/labtwo.yml` as one playbook, chosen per
+host by inventory group: `maas_installs` runs `maasfix`; `H11SSL_motherboards`
+runs `H11SSL_reboot_fix`; `servers` and `storage_servers` run `admin_users`,
+`root_user`, `dev_common`, `src_repos`, `kernel_build`, `docker`, `vm_server`,
+`hashicorp_packer`, `rust_build`, `tmux`, `systemd_time` (the YAML's `zsh` is
+not ported); `gpu_servers` runs `cuda`. One reboot barrier follows them all
+(`h.reboot().if_pending()`). A host in none of these groups gets nothing.
+
+```
+build/tp-basic run labtwo --inventory inventories/labtwo.local.toml --vars vars/labtwo.toml
+```
+
+`inventories/labtwo.example.toml` has placeholder hosts in the five groups; the
+real inventory is `inventories/labtwo.local.toml` (gitignored). `vars/labtwo.toml`
+holds the non-secret values the roles read and `default_password` as a
+reference into OpenBao (`kv/infra/labtwo/default_password`, field `hash`),
+resolved only by a real run; `plan` and the tests never read it. (`tp-basic
+plan labtwo` has no inventory, so no groups and an empty plan; the group sets
+are traced by `tests/plans.rs`.)
+`vars/labtwo_vm.toml` has the same values with no `default_password`, for VM
+runs that must not contact OpenBao. The plan snapshots
+(`tests/plans/snapshots/labtwo__*`) cover four group sets on ubuntu2404 and
+ubuntu2604 and the `servers` set on the other eleven distros.
+
 The same binary builds images (bind-mounted into a `docker build`, see
 `../docker_images/Dockerfiles/telepatch.*`), provisions a machine it is copied to, or provisions hosts
 over SSH from wherever it runs.

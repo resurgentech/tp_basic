@@ -1594,3 +1594,169 @@ fn cuda_does_nothing_off_ubuntu_24_and_later() {
         assert!(!text.contains("nvidia"), "{d}: {text}");
     }
 }
+
+// ---- T157: the labtwo playbook ---------------------------------------------
+
+mod labtwo_pb {
+    use super::DISTROS;
+    use telepatch::{Host, Playbook, PlaybookFuture};
+    use tp_basic::playbooks::labtwo::labtwo_entry;
+    use tp_basic::vars::Vars;
+
+    fn grouped(h: Host<Vars>, groups: &[&str]) -> PlaybookFuture {
+        labtwo_entry(h.with_groups(groups.iter().map(|g| g.to_string()).collect()))
+    }
+    fn servers(h: Host<Vars>) -> PlaybookFuture {
+        grouped(h, &["servers"])
+    }
+    fn storage(h: Host<Vars>) -> PlaybookFuture {
+        grouped(h, &["storage_servers"])
+    }
+    fn all_three(h: Host<Vars>) -> PlaybookFuture {
+        grouped(h, &["servers", "maas_installs", "H11SSL_motherboards"])
+    }
+    fn gpu(h: Host<Vars>) -> PlaybookFuture {
+        grouped(h, &["servers", "gpu_servers"])
+    }
+    fn gpu_only(h: Host<Vars>) -> PlaybookFuture {
+        grouped(h, &["gpu_servers"])
+    }
+    fn nothing(h: Host<Vars>) -> PlaybookFuture {
+        grouped(h, &[])
+    }
+
+    fn plan_with_groups(set: &str, distro: &str, vars: &str) -> String {
+        let run: fn(Host<Vars>) -> PlaybookFuture = match set {
+            "servers" => servers,
+            "storage" => storage,
+            "maas_h11ssl" => all_three,
+            "gpu" => gpu,
+            "gpu_only" => gpu_only,
+            "none" => nothing,
+            _ => panic!("unknown set {set}"),
+        };
+        let pb = Playbook::new("labtwo", run);
+        telepatch::testing::plan_for_playbook(
+            distro,
+            &pb,
+            Some(std::path::Path::new(&format!("vars/{vars}.toml"))),
+        )
+    }
+
+    fn snap(name: &str, text: &str) {
+        insta::with_settings!({snapshot_path => "plans/snapshots", prepend_module_to_snapshot => false}, {
+            insta::assert_snapshot!(name.to_string(), text);
+        });
+    }
+
+    #[test]
+    fn labtwo_is_registered() {
+        assert!(tp_basic::playbooks().iter().any(|p| p.name == "labtwo"));
+    }
+
+    #[test]
+    fn labtwo_plans() {
+        for d in ["ubuntu2404", "ubuntu2604"] {
+            for (set, tag) in [
+                ("servers", "servers"),
+                ("maas_h11ssl", "servers_maas_h11ssl"),
+                ("gpu", "servers_gpu"),
+                ("none", "none"),
+            ] {
+                snap(
+                    &format!("labtwo__{tag}__{d}"),
+                    &plan_with_groups(set, d, "labtwo"),
+                );
+            }
+        }
+        for d in DISTROS {
+            if d.starts_with("ubuntu") {
+                continue;
+            }
+            snap(
+                &format!("labtwo__servers__{d}"),
+                &plan_with_groups("servers", d, "labtwo"),
+            );
+        }
+    }
+
+    /// A host in no group gets nothing, not even the barrier.
+    #[test]
+    fn host_in_no_group_gets_nothing() {
+        let text = plan_with_groups("none", "ubuntu2404", "labtwo");
+        assert!(!text.contains("role "), "{text}");
+        assert!(!text.contains("reboot"), "{text}");
+    }
+
+    /// Either group of the third play runs the same roles.
+    #[test]
+    fn storage_servers_match_servers() {
+        assert_eq!(
+            plan_with_groups("servers", "ubuntu2404", "labtwo").replace("servers", "x"),
+            plan_with_groups("storage", "ubuntu2404", "labtwo")
+                .replace("storage_servers", "x")
+                .replace("servers", "x"),
+        );
+    }
+
+    /// With the real vars the plan sets the accounts' password from the
+    /// reference (the plan shows only `<secret>`); the VM vars leave
+    /// accounts locked, so their plan has no password step.
+    #[test]
+    fn vm_vars_have_no_password_step() {
+        let real = plan_with_groups("gpu", "ubuntu2404", "labtwo");
+        let vm = plan_with_groups("gpu", "ubuntu2404", "labtwo_vm");
+        assert!(real.contains("chpasswd -e"), "{real}");
+        assert!(real.contains("<secret>"), "{real}");
+        assert!(!vm.contains("chpasswd"), "{vm}");
+        assert!(!vm.contains("<secret>"), "{vm}");
+    }
+
+    #[test]
+    fn play_roles_in_yaml_order_with_one_final_barrier() {
+        let text = plan_with_groups("gpu", "ubuntu2404", "labtwo");
+        let order = [
+            "role admin_users",
+            "role root_user",
+            "role dev_common",
+            "role src_repos",
+            "role kernel_build",
+            "role docker",
+            "role vm_server",
+            "role hashicorp_packer",
+            "role rust_build",
+            "role tmux",
+            "role systemd_time",
+            "role cuda",
+        ];
+        let mut at = 0;
+        for r in order {
+            let i = text[at..]
+                .find(r)
+                .unwrap_or_else(|| panic!("{r} missing or out of order:\n{text}"));
+            at += i + r.len();
+        }
+        assert!(!text.contains("zsh"), "{text}");
+        assert_eq!(text.matches("reboot if pending").count(), 1, "{text}");
+        let barrier = text.find("reboot if pending").unwrap();
+        assert!(text[barrier..].find("role ").is_none(), "{text}");
+        assert!(!text.contains("sshd"), "{text}");
+    }
+
+    #[test]
+    fn maas_and_h11ssl_come_first() {
+        let text = plan_with_groups("maas_h11ssl", "ubuntu2404", "labtwo");
+        let m = text.find("role maasfix").expect("maasfix");
+        let h = text.find("role h11ssl_reboot_fix").expect("h11ssl");
+        let a = text.find("role admin_users").expect("admin_users");
+        assert!(m < h && h < a, "{text}");
+        assert!(!text.contains("role cuda"), "{text}");
+    }
+
+    #[test]
+    fn cuda_only_for_gpu_servers() {
+        let text = plan_with_groups("gpu_only", "ubuntu2404", "labtwo");
+        assert!(text.contains("role cuda"), "{text}");
+        assert!(!text.contains("role admin_users"), "{text}");
+    }
+}

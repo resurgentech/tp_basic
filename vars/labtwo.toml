@@ -1,0 +1,15 @@
+# The labtwo playbook: `tp-basic run labtwo --inventory inventories/<file>.toml
+# --vars vars/labtwo.toml`. The non-secret values the labtwo roles read, from
+# `inventories/group_vars/all` of the Ansible repo.
+#
+# The Ansible inventory logs in as `ubuntu` (`admin_users` there is
+# `["{{ ansible_user }}"]`).
+admin_users = ["ubuntu"]
+iana_tz = "America/Los_Angeles"
+# `rustup_version` 1.29.0 and `cargo_version` 1.94.0 of group_vars/all pinned
+# nothing and no longer exist as vars; `rustc_version` is the one kept.
+rustc_version = "1.94.0"
+
+# The accounts' crypt(3) hash is a reference into OpenBao, resolved by the
+# run (never by a test or by `plan`), never a value in this file.
+default_password = { bao = "kv/infra/labtwo/default_password", field = "hash" }
