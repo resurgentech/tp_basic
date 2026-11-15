@@ -98,13 +98,10 @@
 //! for both sources, where the YAML's `update_cache: true` ran on each task.
 //!
 //! The driver op has its own timeout (an hour, for the DKMS build; the
-//! default for a package op is 30 minutes). That is also what keeps the
-//! optimizer from folding the driver and CUDA ops into one: it folds adjacent
-//! package ops of one shape, and a folded op carries the reboot mark of
-//! either (`optimize.rs`, `merge`: `needs_reboot |=`; the merge key does not
-//! name `needs_reboot`), so without a difference a CUDA package that changed
-//! alone would mark a reboot. Engine gap, reported with the step: the fold
-//! should not cross a differing `needs_reboot`. A test pins the split.
+//! default for a package op is 30 minutes), so it stays a separate op from
+//! the CUDA one. Were they folded, only the marked members would mark the
+//! reboot: a folded op's plan line names them (`needs_reboot [..]`) and the
+//! executor marks per member, so a CUDA package that changed alone would not.
 //!
 //! Bugs of the YAML the port does not carry:
 //!
@@ -215,8 +212,7 @@ pub async fn cuda(h: &Host<Vars>) -> Result<(), TraceError> {
     });
     // main.yml:6-12. An empty list is no op and no reboot mark.
     if !v.nvidia_driver_packages.is_empty() {
-        // The longer timeout is for the DKMS build. It also keeps the optimizer
-        // from folding this op into the CUDA one (module comment).
+        // The longer timeout is for the DKMS build (module comment).
         h.pkg(&v.nvidia_driver_packages)
             .timeout(Duration::from_secs(3600))
             .needs_reboot();

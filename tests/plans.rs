@@ -1542,7 +1542,7 @@ fn cuda_marks_only_the_driver_and_checks_the_keyring_sum() {
         .find(|l| l.contains("needs_reboot"))
         .expect("a reboot mark");
     assert!(line.contains("pkg:nvidia-driver-580"), "{line}");
-    // the CUDA packages are a separate op: not folded into the marked one
+    // the CUDA packages are a separate op (the driver op's own timeout splits it), not folded into the marked one
     assert!(!line.contains("cuda-toolkit-13-2"), "{line}");
     assert!(!line.contains("nvtop"), "{line}");
     assert!(
