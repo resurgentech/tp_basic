@@ -1,0 +1,46 @@
+#####################################################################################################
+#
+#   These versions should be updated as needed.
+#
+#####################################################################################################
+
+cuda_keyring_version: "1.2-1"
+cuda_keyring_repo: >-
+  {% if ubuntu2404_based %}
+  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+  {% elif ubuntu2204_based %}
+  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+  {% endif %}
+
+cuda_repo_list: >-
+  {% if ubuntu2404_based %}
+  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/
+  {% elif ubuntu2204_based %}
+  https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/
+  {% endif %}
+
+
+nvidia_driver_packages:
+  - nvidia-driver-580
+  - nvidia-dkms-580
+  - cuda-drivers-580
+
+cuda_packages:
+  - cuda-toolkit-13-2
+  - cuda-tools-13-2
+  - cuda-compiler-13-2
+  - cuda-libraries-13-2
+  - cuda-libraries-dev-13-2
+  - libcudnn9-cuda-13
+  - libcudnn9-dev-cuda-13
+  - libcudnn9-headers-cuda-13
+  - nvidia-gds-13-2
+  - nvtop
+
+cuda_install_path: /usr/local/cuda-13.2
+
+nvidia_container_toolkit_packages:
+  - nvidia-container-toolkit=1.19.0-1
+  - nvidia-container-toolkit-base=1.19.0-1
+  - libnvidia-container-tools=1.19.0-1
+  - libnvidia-container1=1.19.0-1

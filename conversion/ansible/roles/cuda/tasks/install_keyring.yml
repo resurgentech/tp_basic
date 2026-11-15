@@ -1,0 +1,25 @@
+---
+- name: Check if CUDA keyring package is installed
+  command: dpkg-query -W -f='${Version}' cuda-keyring
+  register: cuda_keyring_register
+  changed_when: false
+  failed_when: false
+
+- name: Download CUDA keyring package
+  get_url:
+    url: "{{ cuda_keyring_repo }}"
+    dest: /tmp/cuda_keyring.deb
+    mode: '0644'
+  when: cuda_keyring_register.stdout != cuda_keyring_version
+
+- name: Install CUDA keyring package
+  apt:
+    deb: /tmp/cuda_keyring.deb
+    state: present
+  when: cuda_keyring_register.stdout != cuda_keyring_version
+
+- name: Remove CUDA keyring package file
+  file:
+    path: /tmp/cuda_keyring.deb
+    state: absent
+  when: cuda_keyring_register.stdout != cuda_keyring_version

@@ -27,7 +27,10 @@ Each role carries its understanding as comments: what the playbook is for,
 which branches were kept, dropped or fixed, and why. The YAML it replaced is
 gone; `conversion/SOURCE` records the ansible commit the ports were made
 from, and `just check-conversion` verifies the directory against it (with
-no port in progress it holds only that header).
+no port in progress it holds only that header). A second source,
+`ansible_labtwo_2` (`playbooks/labtwo.yml`, a working tree of 67988b9, by
+sha256), is recorded below it, with the role dirs' tree hashes that tie its
+copies to the 79d1ca1 mirror.
 
 ## Build and run
 
@@ -171,7 +174,35 @@ compare on a fresh host and on a converged one.
 ```
 just test-vm-oracle ubuntu2404 dev_base
 just test-vm-oracle ubuntu2404 dev_desktop_kept
+just test-vm-oracle ubuntu2404 labtwo_<role>
 ```
+
+`labtwo_<role>` is one role of the labtwo playbook: `maasfix`, `systemd_time`,
+`root_user`, `hashicorp_packer`, `h11ssl_reboot_fix` (the Ansible role dir is
+`H11SSL_reboot_fix`; the case name is lowercase because VM names allow only
+`tp-[a-z0-9-]+`) and `cuda`. The script writes a wrapper playbook into its
+export (hosts `all`, the role; `vm_server` first for `hashicorp_packer`), and
+the tp side runs the test playbook of the same name (added with each port).
+A case may have a pre-seed, `scripts/oracle-preseed/<case>.sh`, run as root on
+both VMs before the pre-state capture: `labtwo_maasfix` writes a MAAS-style
+`/etc/apt/sources.list` with live entries, `labtwo_cuda` installs `docker.io`
+(the Ansible handler restarts docker). `labtwo_src_repos.sh` (an
+`ubuntu-src.sources`) is ready for the src_repos case, which is not accepted
+yet. `labtwo_cuda` overrides the package lists to a small one on the Ansible
+side.
+
+`image-state.sh` captures, besides the packages, seven single-file sections
+for every run: `timezone` (the `/etc/localtime` target), `sshd` (`sshd -T`
+permitrootlogin and passwordauthentication), `sudoers` (the includedir and
+secure_path lines; it used to appear only with `--users`), `units` (sha256 of
+each drop-in under `/etc/systemd/system/*.d/`), `grub` (the kernel arguments
+on the `linux` lines of `grub.cfg`, without the image path and `root=`),
+`groups` (members of kvm, libvirt, docker) and `profile.d` (sha256 of
+`cuda.sh`). A missing file gives the header and `(none)`. The self-tests run
+them on a fake root (`IMAGE_STATE_ROOT`) with a stub `sshd`. None of the new
+sections differs between the two sides of the existing cases (dev_base and
+the container cases touch none of those files; `admin_users` touches only
+sudoers, already declared), so their intended files are unchanged.
 
 `dev_desktop_kept` is the two roles of `dev_desktop` that were ported rather
 than rewritten (`admin_users`, `tmux`). The script writes that two-role
@@ -224,6 +255,9 @@ adds. Any user's login shell then runs `just` from
 The harnesses read, and never write, three sibling checkouts:
 
 - `../ansible`: the originals, at the commit in `conversion/SOURCE`.
+- `../ansible_labtwo_2`: only `playbooks/labtwo.yml` is taken from it (copied
+  into `conversion/`); `check-conversion` also compares its role dirs' tree
+  hashes when the checkout is there.
 - `../docker_images`: the pinned base images; the Ansible-side Dockerfiles
   (from the pinned commit) and the telepatch Dockerfiles (its working
   tree, run with `build/dist`), which the docker oracle reuses unmodified.

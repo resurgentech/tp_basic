@@ -1,0 +1,19 @@
+---
+
+- name: Check if ubuntu.sources exists
+  stat:
+    path: /etc/apt/sources.list.d/ubuntu.sources
+  register: ubuntu_sources
+
+- name: Check if sources.list contains the correct comment
+  lineinfile:
+    path: /etc/apt/sources.list
+    line: '# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources'
+  register: sources_list
+  become: true
+  when: ubuntu_sources.stat.exists
+
+- name: Ensure sources.list contains only the correct comment if we're doing new style
+  shell: echo '# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources' > /etc/apt/sources.list
+  become: true
+  when: sources_list.changed

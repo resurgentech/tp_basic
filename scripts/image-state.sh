@@ -6,16 +6,27 @@
 #   image-state.sh --users a,b also the account sections for those users
 #                              (names mode only; never a hash: `passwd -S`
 #                              gives the status letter alone)
+#   image-state.sh --only      just the single-file sections (timezone, sshd,
+#                              sudoers, units, grub, groups, profile.d); the
+#                              self-tests of scripts/test-vm-oracle.sh use it
 # Env: ADMIN_USERS  space-separated users checked besides root (default none)
+#      IMAGE_STATE_ROOT  prefix for the files the single-file sections read
+#                        (default none = the real /etc, /boot); the self-tests'
+#                        fake root. The link target of /etc/localtime is
+#                        printed as it is, unprefixed.
+#      SSHD  the sshd binary (default: sshd on PATH, else /usr/sbin/sshd)
 # Every section is sorted with LC_ALL=C so two runs diff cleanly.
 set -u
 export LC_ALL=C
 mode=names
 users=
+only=0
+R=${IMAGE_STATE_ROOT:-}
 while [ $# -gt 0 ]; do
     case $1 in
         --versions) mode=versions ;;
         --users) users=$(printf '%s' "${2:-}" | tr ',' ' '); shift ;;
+        --only) only=1 ;;
     esac
     shift
 done
@@ -103,8 +114,8 @@ mise_state() {
 # The admin-user sections (--users), names mode only. Per user: the passwd
 # entry minus the secret fields (name, home, shell), `id -nG` sorted, the
 # `passwd -S` status letter (never the hash), the drop-in's mode, owner and
-# lines, and ~/.ssh's mode and owner. /etc/sudoers: the include and
-# secure_path lines.
+# lines, and ~/.ssh's mode and owner. (/etc/sudoers is the `sudoers` section
+# of single_file_sections, for every capture.)
 user_sections() {
     section "users"
     for u in $users; do
@@ -121,8 +132,6 @@ user_sections() {
         getent passwd "$u" >/dev/null || continue
         passwd -S "$u" 2>/dev/null | awk '{ print $1, $2 }'
     done | sort
-    section "sudoers"
-    [ -f /etc/sudoers ] && grep -E 'includedir|secure_path' /etc/sudoers | sort
     section "sudoers.d"
     for u in $users; do
         f=/etc/sudoers.d/$u
@@ -137,6 +146,56 @@ user_sections() {
     done | sort
 }
 
+# The single-file sections (names mode, every capture). A section whose file
+# is missing prints its header and "(none)"; bodies are sorted. Files are read
+# under $R (IMAGE_STATE_ROOT) so the self-tests need no real /etc.
+#   timezone    the link target of /etc/localtime
+#   sshd        `sshd -T` values of permitrootlogin and passwordauthentication
+#   sudoers     the includedir and secure_path lines of /etc/sudoers
+#   units       "<path> <sha256>" of each file in /etc/systemd/system/*.d/
+#   grub        "arg <token>" for each kernel argument on the `linux` lines of
+#               /boot/grub/grub.cfg (the image path and root= left out: they
+#               name the disk, not the role), de-duplicated
+#   groups      members of kvm, libvirt, docker ("<group>: a b", or "(no group)")
+#   profile.d   "cuda.sh <sha256>" of /etc/profile.d/cuda.sh
+none_if_empty() { # reads stdin; prints it sorted, or "(none)"
+    out=$(sort -u)
+    if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "(none)"; fi
+}
+single_file_sections() {
+    section "timezone"
+    if [ -L "$R/etc/localtime" ]; then readlink "$R/etc/localtime"
+    elif [ -e "$R/etc/localtime" ]; then echo "(not a link)"
+    else echo "(none)"; fi
+    section "sshd"
+    sshd_bin=${SSHD:-}
+    [ -n "$sshd_bin" ] || sshd_bin=$(command -v sshd 2>/dev/null) || sshd_bin=/usr/sbin/sshd
+    { "$sshd_bin" -T 2>/dev/null | grep -E '^(permitrootlogin|passwordauthentication) '; true; } | none_if_empty
+    section "sudoers"
+    { [ -f "$R/etc/sudoers" ] && grep -E 'includedir|secure_path' "$R/etc/sudoers"; true; } | sort | none_if_empty
+    section "units"
+    for f in "$R"/etc/systemd/system/*.d/*; do
+        [ -f "$f" ] || continue
+        echo "${f#"$R"} $(sha256sum "$f" | cut -d' ' -f1)"
+    done | none_if_empty
+    section "grub"
+    { [ -f "$R/boot/grub/grub.cfg" ] && awk '
+        $1 == "linux" { for (i = 3; i <= NF; i++) if ($i !~ /^root=/) print "arg " $i }
+    ' "$R/boot/grub/grub.cfg"; true; } | none_if_empty
+    section "groups"
+    for g in kvm libvirt docker; do
+        if [ -f "$R/etc/group" ] && grep -q "^$g:" "$R/etc/group"; then
+            echo "$g: $(grep "^$g:" "$R/etc/group" | head -1 | cut -d: -f4 | tr ',' '\n' | sort | tr '\n' ' ' | sed 's/ $//')"
+        else
+            echo "$g (no group)"
+        fi
+    done | sort
+    section "profile.d"
+    if [ -f "$R/etc/profile.d/cuda.sh" ]; then echo "cuda.sh $(sha256sum "$R/etc/profile.d/cuda.sh" | cut -d' ' -f1)"
+    else echo "(none)"; fi
+}
+
+if [ $only = 1 ]; then single_file_sections; exit 0; fi
 section "packages"; packages
 if [ $mode = names ]; then
     section "pip"; pip_dists
@@ -152,6 +211,7 @@ if [ $mode = names ]; then
     section "apt sources"; sources
     section "/usr/local/bin"; ls -A /usr/local/bin 2>/dev/null | sort
     section "mise"; mise_state
+    single_file_sections
     [ -z "$users" ] || user_sections
 fi
 if [ $mode = versions ]; then

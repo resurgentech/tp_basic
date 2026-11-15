@@ -1,0 +1,52 @@
+---
+# DESCRIPTION=Configures servers for lab two
+
+- name: Fix up quirks of the MAAS installs
+  hosts: maas_installs
+  roles:
+    - maasfix
+
+- name: Bug with H11SSL motherboards not rebooting
+  hosts: H11SSL_motherboards
+  roles:
+    - H11SSL_reboot_fix
+
+- name: Configures development servers
+  hosts: servers, storage_servers
+  vars:
+    vault_addr: "{{ lookup('env', 'VAULT_ADDR') }}"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+  roles:
+    - admin_users
+    - root_user
+    - dev_common
+    - zsh
+    - src_repos
+    - kernel_build
+    - docker
+    - vm_server
+    - hashicorp_packer
+    #- golang
+    - rust_build
+    #- rust_tools
+    #- cockpit
+    - tmux
+    #- aptly_cli
+    - systemd_time
+    #- xterm_ghostty
+    #- networkd_wait_fix  #Is this fix redundant? Is it still an issue?
+
+# - name: Client tools
+#   hosts: servers
+#   vars:
+#     vault_addr: "{{ lookup('env', 'VAULT_ADDR') }}"
+#     vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+#   roles:
+#     #- minio_client
+#     #- mc_setup
+
+
+- name: Configures GPU on servers
+  hosts: gpu_servers
+  roles:
+    - cuda

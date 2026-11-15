@@ -1,0 +1,9 @@
+---
+
+# Clean up apt sources wierdness from default MAAS images for Ubuntu 24.04
+- include_tasks: apt_sources_ubuntu2404.yml
+  when: ubuntu2404_based|bool
+
+# This avoids a 2min wait on a secondary but unconfigured network adapter
+- include_tasks: networkd_wait_ubuntu2404.yml
+  when: ubuntu2404_based|bool

@@ -1,0 +1,37 @@
+---
+
+- include_tasks: install_keyring.yml
+  tags: cuda
+
+- name: Install the nvidia driver
+  become: true
+  apt:
+    update_cache: true
+    state: present
+    name: "{{ nvidia_driver_packages }}"
+  notify: restart host
+
+- name: Install the cuda packages
+  become: true
+  apt:
+    update_cache: true
+    state: present
+    name: "{{ cuda_packages }}"
+  notify: restart host
+
+- include_tasks: install_nvidia_container_toolkit.yml
+  tags: cuda
+
+- name: Adding cuda tools to PATH
+  template:
+    src: profile.j2
+    dest: /etc/profile.d/cuda.sh
+
+
+# uninstall all cuda packages
+#  sudo apt list --installed | grep cuda | grep -v auto | sed  's/\// /' | awk '{print $1}' | sed 's/^/apt remove -y /' | sudo bash
+#  sudo apt autoremove -y
+
+# uninstall all nvidia drivers and everything, don't do on your desktop
+#  sudo apt list --installed | grep nvidia | grep -v auto | sed  's/\// /' | awk '{print $1}' | sed 's/^/apt remove -y /' | sudo bash
+#  sudo apt autoremove -y

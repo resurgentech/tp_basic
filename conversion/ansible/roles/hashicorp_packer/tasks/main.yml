@@ -1,0 +1,53 @@
+---
+
+- name: Check if hashicorp.gpg exists
+  stat:
+    path: /etc/apt/trusted.gpg.d/hashicorp.gpg
+  register: hashicorp_gpg
+
+- name: Download HashiCorp GPG key
+  shell: curl --output /tmp/hashicorp.asc https://apt.releases.hashicorp.com/gpg
+  when: not hashicorp_gpg.stat.exists
+
+- name: Convert HashiCorp GPG key to binary format
+  shell: |
+    rm -f /tmp/hashicorp.asc.gpg;
+    gpg --dearmor /tmp/hashicorp.asc
+  when: not hashicorp_gpg.stat.exists|bool
+
+- name: Move the binary HashiCorp GPG key to /etc/apt/trusted.gpg.d/
+  copy:
+    remote_src: true
+    src: /tmp/hashicorp.asc.gpg
+    dest: /etc/apt/trusted.gpg.d/hashicorp.gpg
+    mode: '0644'
+  when: not hashicorp_gpg.stat.exists
+
+- name: Clean up temporary HashiCorp GPG files
+  file:
+    path:
+     - /tmp/hashicorp.asc
+     - /tmp/hashicorp.asc.gpg
+    state: absent
+
+- name: Add HashiCorp APT repository
+  lineinfile:
+    path: /etc/apt/sources.list.d/hashicorp.list
+    line: "deb [arch=amd64] https://apt.releases.hashicorp.com {{ ansible_lsb.codename }} main"
+    create: true
+    state: present
+  register: hashicorp_source_list
+
+- name: Update APT package cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 1
+  when: hashicorp_source_list.changed
+
+- name: Install Packer
+  apt:
+    name: packer
+    state: present
+
+- include_tasks: per_user.yml
+  loop: "{{ admin_users }}"

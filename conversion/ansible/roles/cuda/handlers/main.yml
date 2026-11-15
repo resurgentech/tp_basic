@@ -1,0 +1,8 @@
+---
+
+- name: restart docker daemon
+  shell: systemctl restart docker
+
+- name: restart host
+  reboot:
+    reboot_timeout: 3600

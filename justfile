@@ -41,6 +41,7 @@ dist:
 # network: a stub docker). The production acceptance runners were retired.
 test-oracle-selftest:
     bash scripts/lib/compare.sh --self-test
+    bash scripts/check-conversion.sh --self-test
     bash scripts/test-vm-oracle.sh --self-test
     bash scripts/test-vm.sh --self-test
     bash scripts/docker-vm.sh --self-test

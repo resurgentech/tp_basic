@@ -1,0 +1,16 @@
+---
+
+- name: Ensure networkd-wait-online override directory exists
+  file:
+    path: /etc/systemd/system/systemd-networkd-wait-online.service.d
+    state: directory
+    mode: '0755'
+
+- name: Add override configuration for systemd-networkd-wait-online
+  copy:
+    dest: /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/lib/systemd/systemd-networkd-wait-online --any --timeout=30
+  notify: Reload systemd daemon

@@ -1,0 +1,5 @@
+# Most of my H11SSLi motherboard aren't rebooting properly
+---
+
+- include_tasks: ubuntu2404.yml
+  when: ubuntu2404_based|bool

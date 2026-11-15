@@ -1,0 +1,16 @@
+---
+
+- name: Check for reboot=efi
+  shell: grep -c "reboot=efi" /etc/default/grub || true
+  register: reboot_efi_check
+  changed_when: false
+
+- name: Update GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub
+  replace:
+    path: /etc/default/grub
+    regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=(?:"([^"]*)"|([^"\n]*))'
+    replace: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ (["\1\2"] | join | regex_replace("reboot=\\S+\\s*", "") | trim + " reboot=efi") | trim | regex_replace("\\s+", " ") }}"'
+    backup: yes
+  notify:
+    - Update Grub
+  when: reboot_efi_check.stdout == "0"
