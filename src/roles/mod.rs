@@ -6,6 +6,7 @@ pub mod docker;
 pub mod edge;
 pub mod edge_extra;
 pub mod golang;
+pub mod h11ssl_reboot_fix;
 pub mod hashicorp_packer;
 pub mod kernel_build;
 pub mod maasfix;

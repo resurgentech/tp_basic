@@ -1,0 +1,11 @@
+# labtwo_h11ssl_reboot_fix (H11SSL_reboot_fix alone) on the Ubuntu 24.04 VM oracle, 2026-11-15.
+# The port is src/roles/h11ssl_reboot_fix.rs.
+#
+# No intended difference. The oracle's ubuntu2404.qcow2 is an autoinstall
+# build (its linux lines carry `autoinstall ds=nocloud-net`), not the cloud
+# image, so no /etc/default/grub.d/50-cloudimg-settings.cfg re-sets
+# GRUB_CMDLINE_LINUX_DEFAULT after the Ansible edit. Both sides' grub.cfg carry
+# reboot=efi (first run, T155: the `grub` sections were identical). Fault 3 of
+# the YAML (it edits /etc/default/grub only, which a cloud image's drop-in
+# overrides) is real on MAAS cloud-image hosts and is fixed by the port's
+# drop-in sorting last; this image cannot show it.

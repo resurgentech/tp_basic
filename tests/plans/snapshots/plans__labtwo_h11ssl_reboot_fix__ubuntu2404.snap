@@ -1,0 +1,69 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host ubuntu2404 (os: Debian/Ubuntu 24.04)
+blocking reads: 0
+shell helpers: undo fe76955f
+
+window 1 (final)
+role h11ssl_reboot_fix
+  #1 kernel_args as shell:root reads [pkg:grub-common] writes [file:/etc/default/grub.d/99-telepatch-kernel-args.cfg] needs_reboot post [file:/etc/default/grub.d/99-telepatch-kernel-args.cfg=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | tp_r="${TP_GRUB_ROOT-}"
+      | tp_f="$tp_r"'/etc/default/grub.d/99-telepatch-kernel-args.cfg'
+      | tp_c="$tp_r/proc/cmdline"
+      | tp_want='# Managed by telepatch (kernel_args); a run rewrites it. Sorted last, so it
+      | # applies after /etc/default/grub and 50-cloudimg-settings.cfg.
+      | case $- in *f*) tp_ka_f=1;; *) tp_ka_f=; set -f;; esac
+      | tp_ka_new=
+      | for tp_ka_t in $GRUB_CMDLINE_LINUX_DEFAULT; do
+      |   case $tp_ka_t in
+      |     reboot=*) ;;
+      |     *) tp_ka_new="${tp_ka_new:+$tp_ka_new }$tp_ka_t" ;;
+      |   esac
+      | done
+      | GRUB_CMDLINE_LINUX_DEFAULT="${tp_ka_new:+$tp_ka_new }reboot=efi"
+      | [ -n "$tp_ka_f" ] || set +f
+      | unset tp_ka_f tp_ka_new tp_ka_t
+      | '
+      | tp_eff() (
+      |   [ -r "$tp_c" ] || return 1
+      |   tp_h=" "
+      |   set -f
+      |   for tp_x in $(cat -- "$tp_c"); do tp_h="$tp_h$tp_x "; done
+      |   for tp_x in 'reboot=efi'; do case "$tp_h" in *" $tp_x "*) ;; *) return 1;; esac; done
+      |   for tp_x in $(cat -- "$tp_c"); do
+      |     case $tp_x in
+      |       'reboot'=*) case ' reboot=efi ' in *" $tp_x "*) ;; *) return 1;; esac;;
+      |     esac
+      |   done
+      |   return 0
+      | )
+      | tp_ka() {
+      |   tp_sbx "$tp_f" "$tp_c" || return 1
+      |   if [ -f "$tp_f" ] && [ "$(cat -- "$tp_f"; echo x)" = "${tp_want}x" ]; then return 0; fi
+      |   if ! command -v update-grub >/dev/null 2>&1; then
+      |     echo "telepatch: kernel_args: update-grub not found (install grub-common)" >&2
+      |     return 1
+      |   fi
+      |   tp_was "$tp_f"; tp_save "$tp_f" || return 1
+      |   [ -e "$tp_f" ] || tp_fc=1
+      |   # The previous text, put back if update-grub fails: left in place, the new
+      |   # file reads as settled next run and update-grub never runs again.
+      |   if [ -f "$tp_f" ]; then tp_old="$(cat -- "$tp_f"; echo x)"; else tp_old=; fi
+      |   (umask 022; mkdir -p -- "$(dirname -- "$tp_f")") || return 1
+      |   tp_t=$(mktemp "$tp_f.XXXXXX") || return 1
+      |   if ! { printf '%s' "$tp_want" > "$tp_t" && chmod 0644 -- "$tp_t" && mv -f -- "$tp_t" "$tp_f"; }; then
+      |     rm -f -- "$tp_t"
+      |     return 1
+      |   fi
+      |   changed=1
+      |   if tp_eff; then tp_rb=false; else tp_rb=true; fi
+      |   update-grub >/dev/null && return 0
+      |   echo "telepatch: kernel_args: update-grub failed; $tp_f put back" >&2
+      |   if [ -n "$tp_old" ]; then printf '%s' "${tp_old%x}" > "$tp_f"; else rm -f -- "$tp_f"; fi
+      |   changed=0; tp_fc=; tp_rb=false
+      |   return 1
+      | }
+      | tp_ka || rc=1

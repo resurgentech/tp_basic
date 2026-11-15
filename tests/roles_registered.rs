@@ -19,3 +19,9 @@ fn roles_holds_hashicorp_packer() {
     let _ = tp_basic::roles::hashicorp_packer::hashicorp_packer;
     assert!(telepatch::roles().contains(&"hashicorp_packer"));
 }
+
+#[test]
+fn roles_holds_h11ssl_reboot_fix() {
+    let _ = tp_basic::roles::h11ssl_reboot_fix::h11ssl_reboot_fix;
+    assert!(telepatch::roles().contains(&"h11ssl_reboot_fix"));
+}

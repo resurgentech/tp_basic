@@ -6,6 +6,7 @@
 
 use telepatch::{Host, Playbook, PlaybookFuture, TraceError};
 
+use crate::roles::h11ssl_reboot_fix::h11ssl_reboot_fix;
 use crate::roles::hashicorp_packer::hashicorp_packer;
 use crate::roles::maasfix::maasfix;
 use crate::roles::root_user::root_user;
@@ -20,6 +21,7 @@ pub fn all() -> Vec<Playbook<Vars>> {
         Playbook::new("labtwo_systemd_time", labtwo_systemd_time_entry),
         Playbook::new("labtwo_root_user", labtwo_root_user_entry),
         Playbook::new("labtwo_hashicorp_packer", labtwo_hashicorp_packer_entry),
+        Playbook::new("labtwo_h11ssl_reboot_fix", labtwo_h11ssl_reboot_fix_entry),
     ]
 }
 
@@ -62,4 +64,13 @@ fn labtwo_hashicorp_packer_entry(h: Host<Vars>) -> PlaybookFuture {
 async fn labtwo_hashicorp_packer(h: &Host<Vars>) -> Result<(), TraceError> {
     vm_server(h).await?;
     hashicorp_packer(h).await
+}
+
+fn labtwo_h11ssl_reboot_fix_entry(h: Host<Vars>) -> PlaybookFuture {
+    Box::pin(async move { labtwo_h11ssl_reboot_fix(&h).await })
+}
+
+/// `playbooks/labtwo.yml:9-12`, the `H11SSL_motherboards` play: its one role.
+async fn labtwo_h11ssl_reboot_fix(h: &Host<Vars>) -> Result<(), TraceError> {
+    h11ssl_reboot_fix(h).await
 }

@@ -1,0 +1,6 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host fedora43 (os: RedHat/Fedora 43)
+blocking reads: 0

@@ -2,9 +2,8 @@
 
 Scope: `playbooks/labtwo.yml` as a playbook: its plays, groups, play
 vars and role list. The six roles ported in Goal 10 (T151–T156) each
-get their own doc until their oracle passes; those ported, and the
-eight ported earlier, carry their understanding as code comments in
-`src/roles/`. All file:line citations are relative
+had their own doc until their oracle passed; they and the eight ported
+earlier now carry their understanding as code comments in `src/roles/`. All file:line citations are relative
 to `conversion/ansible/`. `playbooks/labtwo.yml` is a byte copy of the
 working tree of `ansible_labtwo_2` at 67988b9 (it modifies the
 committed file); the six role dirs are byte copies of the ansible repo
@@ -67,10 +66,10 @@ Role docs:
   `dev_common`, `src_repos`, `kernel_build`, `docker`, `vm_server`,
   `rust_build`, `tmux` (`src/roles/<role>.rs`).
 - Ported in Goal 10, understanding in code comments: `maasfix` (T151),
-  `systemd_time` (T152), `root_user` (T153), `hashicorp_packer` (T154).
-  Their mirrors stay, cited here.
-- To come, one per port step, `conversion/<role>.md`:
-  `H11SSL_reboot_fix` (T155), `cuda` (T156).
+  `systemd_time` (T152), `root_user` (T153), `hashicorp_packer` (T154),
+  `H11SSL_reboot_fix` (T155, `src/roles/h11ssl_reboot_fix.rs`). Their
+  mirrors stay, cited here.
+- To come, `conversion/cuda.md`: `cuda` (T156).
 
 ## Outcomes
 

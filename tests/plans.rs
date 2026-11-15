@@ -1375,3 +1375,68 @@ fn hashicorp_packer_does_nothing_off_the_debian_family() {
         assert!(!text.contains("packer"), "{d}: {text}");
     }
 }
+
+// ---- T155: H11SSL_reboot_fix (labtwo_h11ssl_reboot_fix) -------------------
+
+fn h11ssl_plan(distro: &str) -> String {
+    plan("labtwo_h11ssl_reboot_fix", distro)
+}
+
+#[test]
+fn labtwo_h11ssl_reboot_fix_plans() {
+    for d in DISTROS {
+        let text = h11ssl_plan(d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("labtwo_h11ssl_reboot_fix__{d}"), text);
+        });
+    }
+}
+
+/// Ubuntu 24.04 and later: one `kernel_args` op owning the grub.d drop-in,
+/// wanting `reboot=efi`. The role has no reboot op and no `sh`: the op marks
+/// the reboot itself (when `/proc/cmdline` lacks the token, a run-time fact
+/// the plan does not show, so the snapshot is the fresh-host case).
+#[test]
+fn h11ssl_sets_reboot_efi_through_kernel_args_on_ubuntu_24_and_later() {
+    for d in ["ubuntu2404", "ubuntu2604"] {
+        let text = h11ssl_plan(d);
+        assert_eq!(
+            text.matches("kernel_args as shell:root").count(),
+            1,
+            "{d}: {text}"
+        );
+        assert!(
+            text.contains("writes [file:/etc/default/grub.d/99-telepatch-kernel-args.cfg]"),
+            "{d}: {text}"
+        );
+        assert!(text.contains("reboot=*"), "{d}: {text}");
+        assert!(text.contains("reboot=efi"), "{d}: {text}");
+        assert!(!text.contains(" sh as "), "{d}: {text}");
+        assert!(!text.contains("reboot as"), "{d}: {text}");
+        // The Ansible token in /etc/default/grub is left alone: no op edits it.
+        assert!(!text.contains("file:/etc/default/grub]"), "{d}: {text}");
+    }
+}
+
+/// Every other distro, Debian included: no op. The fault being fixed is a
+/// quirk of one board under the Ubuntu 24.04+ gate (`ubuntu2404_based`).
+#[test]
+fn h11ssl_does_nothing_off_ubuntu_24_and_later() {
+    for d in [
+        "debian12",
+        "debian13",
+        "fedora43",
+        "fedora44",
+        "rockylinux9",
+        "rockylinux10",
+        "almalinux9",
+        "almalinux10",
+        "amazonlinux2023",
+        "arch",
+        "omarchy",
+    ] {
+        let text = h11ssl_plan(d);
+        assert!(!text.contains("kernel_args"), "{d}: {text}");
+        assert!(!text.contains("reboot=efi"), "{d}: {text}");
+    }
+}
