@@ -98,6 +98,14 @@ fn amazonlinux2023_based(os: &Os) -> bool {
     os.distro == Distro::Amazon && os.version.major() == Some(2023)
 }
 
+// LLVM: base Ansible commit 9f76efa ("dev_common: install the LLVM
+// toolchain (clang, llvm, lld) on every distro") moved clang and llvm out of
+// kernel_build into dev_common and added lld, which `LLVM=1` kernel builds
+// need. This role requests the set itself on the Debian family and RedHat,
+// so kernel_build applied without dev_common can still build with `LLVM=1`
+// (T145). Distro pkg ops merge across roles, so a playbook with dev_common
+// installs the same packages: the names are already present when this op
+// runs, and the op changes nothing.
 #[role]
 pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
     // main.yml:4-30. Dropped branches (debian10, amazonlinux2,
@@ -135,6 +143,10 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
             "systemtap-sdt-dev",
             "libbabeltrace-dev",
             "python3-lxml",
+            // The LLVM set (see LLVM below).
+            "clang",
+            "llvm",
+            "lld",
         ]);
     } else if debian_based(&h.os) {
         // debian.yml:1-19. The extras first, build-dep last: the reverse of
@@ -150,6 +162,10 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
             "equivs",
             "dwarves",
             "dkms",
+            // The LLVM set (see LLVM below).
+            "clang",
+            "llvm",
+            "lld",
         ]);
         h.pkg(["linux"]).build_dep();
     } else if redhat_based(&h.os) {
@@ -206,6 +222,10 @@ pub async fn kernel_build(h: &Host<Vars>) -> Result<(), TraceError> {
             "libcap-ng-devel",
             "libmnl-devel",
             "bpftool",
+            // The LLVM set (see LLVM below).
+            "clang",
+            "llvm",
+            "lld",
         ]);
         // redhat.yml:42-48: jinja2, GitPython, pyaml again; dev_common
         // already installed them (dropped).

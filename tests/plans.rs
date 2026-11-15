@@ -1010,3 +1010,25 @@ fn src_repos_is_the_distro_repos_op() {
         assert!(!text.contains("distro_repos"), "{d}: {text}");
     }
 }
+
+/// T145: kernel_build stands alone. Base Ansible moved clang and llvm into
+/// dev_common (9f76efa) and added lld; kernel_build requests the LLVM set
+/// itself on the Debian family and RedHat, so the role applied without
+/// dev_common can still build with `LLVM=1`.
+#[test]
+fn kernel_build_requests_the_llvm_set_itself() {
+    for d in [
+        "ubuntu2404",
+        "ubuntu2604",
+        "debian12",
+        "debian13",
+        "fedora43",
+        "rockylinux9",
+        "almalinux10",
+    ] {
+        let role = role_section(&plan("container/kernel_build", d), "kernel_build");
+        for n in ["'clang'", "'llvm'", "'lld'"] {
+            assert!(role.contains(n), "{d}: kernel_build lacks {n}: {role}");
+        }
+    }
+}

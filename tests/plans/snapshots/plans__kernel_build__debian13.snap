@@ -222,9 +222,9 @@ role src_repos
       | }
       | tp_enable || rc=1
 role kernel_build
-  #13 pkg as shell:root reads [] writes [pkg:dkms, pkg:dwarves, pkg:equivs, pkg:libelf-dev, pkg:libiberty-dev, pkg:libncurses-dev, pkg:libpci-dev, pkg:libssl-dev, pkg:libudev-dev] post [pkg:dkms=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:libelf-dev=Installed, pkg:libiberty-dev=Installed, pkg:libncurses-dev=Installed, pkg:libpci-dev=Installed, pkg:libssl-dev=Installed, pkg:libudev-dev=Installed]
+  #13 pkg as shell:root reads [] writes [pkg:clang, pkg:dkms, pkg:dwarves, pkg:equivs, pkg:libelf-dev, pkg:libiberty-dev, pkg:libncurses-dev, pkg:libpci-dev, pkg:libssl-dev, pkg:libudev-dev, pkg:lld, pkg:llvm] post [pkg:clang=Installed, pkg:dkms=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:libelf-dev=Installed, pkg:libiberty-dev=Installed, pkg:libncurses-dev=Installed, pkg:libpci-dev=Installed, pkg:libssl-dev=Installed, pkg:libudev-dev=Installed, pkg:lld=Installed, pkg:llvm=Installed]
       | rc=0; changed=0; installed=()
-      | tp_want=('libncurses-dev' 'libssl-dev' 'libelf-dev' 'libudev-dev' 'libpci-dev' 'libiberty-dev' 'equivs' 'dwarves' 'dkms')
+      | tp_want=('libncurses-dev' 'libssl-dev' 'libelf-dev' 'libudev-dev' 'libpci-dev' 'libiberty-dev' 'equivs' 'dwarves' 'dkms' 'clang' 'llvm' 'lld')
       | tp_missing=()
       | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | apt-get -q update || rc=$?
