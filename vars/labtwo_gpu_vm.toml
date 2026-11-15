@@ -1,0 +1,11 @@
+# The labtwo playbook's gpu VM case (`scripts/test-vm.sh ... labtwo_gpu`, T159):
+# vars/labtwo_vm.toml's values (no `default_password`, no `bao` reference, so
+# no VM run contacts OpenBao) and cuda's small lists, as the oracle's
+# vars/labtwo_cuda.toml: no driver (so no reboot mark) and one CUDA-list
+# package from the Ubuntu archive. The VM has no GPU. A top-level key reaches
+# the cuda role.
+admin_users = ["ubuntu"]
+iana_tz = "America/Los_Angeles"
+rustc_version = "1.94.0"
+nvidia_driver_packages = []
+cuda_packages = ["nvtop"]

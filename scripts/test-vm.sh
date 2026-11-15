@@ -122,7 +122,7 @@
 # refused on this machine (no sudo rights for tpnologin, or a login shell
 # that refuses, such as nologin)`. The VM is deleted at the end.
 #
-#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm, reboot_vm, undo_fs or local_user)
+#   scripts/test-vm.sh [--keep] <distro> <playbook>   (ubuntu2404; dev_base, dev_desktop, services_vm, reboot_vm, undo_fs, local_user, labtwo or labtwo_gpu)
 #   scripts/test-vm.sh --self-test
 #
 # Needs: build/tp-basic (`just musl`). This script does not read a container
@@ -273,6 +273,12 @@ playbook_config() {
         # test-only (src/playbooks/local_user.rs): as_user over --local, run
         # inside the VM by the copied musl tp-basic (T120).
         local_user) PB_NAME=local_user PB_VARS=vars/local_user.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK= ;;
+        # the labtwo playbook (src/playbooks/labtwo.rs, T158): kernel_build's
+        # toolchain, rust_build, docker and libvirt do not fit the image's disk.
+        labtwo) PB_NAME=labtwo PB_VARS=vars/labtwo_vm.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK=40 ;;
+        # the labtwo playbook in servers and gpu_servers (T159): cuda's small
+        # lists (vars/labtwo_gpu_vm.toml) on a VM without a GPU.
+        labtwo_gpu) PB_NAME=labtwo PB_VARS=vars/labtwo_gpu_vm.toml PB_ORACLE=0 PB_MEMORY=1 PB_DISK=40 ;;
         *) return 1 ;;
     esac
 }
@@ -1251,6 +1257,131 @@ local_user_self_test() {
     return $fails
 }
 
+# ---- labtwo (T158) ---------------------------------------------------------------
+# labtwo_inventory <file> <dest> <group>... : an inventory.toml with the VM in
+# each group, and the login user as its only admin user (host vars), as on the
+# labtwo hosts, where admin_users is the login user (Ansible's ansible_user).
+labtwo_inventory() {
+    local f=$1 dest=$2 g user=${2%%@*}
+    shift 2
+    {
+        echo "# Written by scripts/test-vm.sh: the labtwo VM case's inventory."
+        for g in "$@"; do printf '\n[groups.%s]\nhosts = ["%s"]\n' "$g" "$dest"; done
+        printf '\n[hosts."%s"]\nvars = { admin_users = ["%s"] }\n' "$dest" "$user"
+    } >"$f"
+}
+
+# The `[prepare]` subjects a --check before labtwo's run 1 must say will change
+# on the pre-seeded VM (maasfix, H11SSL_reboot_fix, src_repos, systemd_time).
+LABTWO_CHECK_SUBJECTS=(/etc/apt/sources.list: systemd-networkd-wait-online kernel_args
+    ubuntu-src.sources distro_repos timezone)
+
+# labtwo_check_problems <check output> <host> : one line per way the --check
+# fails: the header (some will change, none blocked), and each subject of
+# LABTWO_CHECK_SUBJECTS without a `[prepare] ...<subject>...: will` line.
+labtwo_check_problems() {
+    local f=$1 host=$2 s
+    check_header_problems "$f" "$host" some
+    for s in "${LABTWO_CHECK_SUBJECTS[@]}"; do
+        grep -F "== $host [prepare] " "$f" | grep -F -- "$s" | grep -qF ': will' \
+            || echo "no [prepare] line naming '$s' that will change"
+    done
+    return 0
+}
+
+# labtwo_cmdline_problems <cmdline> : empty when the kernel command line holds
+# exactly one reboot=efi token and no other reboot= token.
+labtwo_cmdline_problems() {
+    local n o
+    n=$(tr ' ' '\n' <<<"$1" | grep -cx 'reboot=efi' || true)
+    o=$(tr ' ' '\n' <<<"$1" | grep '^reboot=' | grep -cvx 'reboot=efi' || true)
+    [[ $n -eq 1 ]] || echo "$n reboot=efi token(s), wanted 1"
+    [[ $o -eq 0 ]] || echo "$o other reboot= token(s)"
+    return 0
+}
+
+# labtwo_self_test : the labtwo case's helpers on synthetic input.
+labtwo_self_test() {
+    local t fails=0 got want c h='bot@192.0.2.9'
+    t=$(mktemp -d)
+    labtwo_inventory "$t/inv.toml" "$h" servers maas_installs H11SSL_motherboards
+    want=$(printf '%s\n' "# Written by scripts/test-vm.sh: the labtwo VM case's inventory." '' '[groups.servers]' "hosts = [\"$h\"]" \
+        '' '[groups.maas_installs]' "hosts = [\"$h\"]" '' '[groups.H11SSL_motherboards]' "hosts = [\"$h\"]" \
+        '' "[hosts.\"$h\"]" 'vars = { admin_users = ["bot"] }')
+    if [[ $(cat "$t/inv.toml") == "$want" ]]; then echo "ok   labtwo_inventory: the VM in three groups, bot its admin user"
+    else echo "FAIL labtwo_inventory:"; diff <(echo "$want") "$t/inv.toml" | sed 's/^/     | /'; fails=1; fi
+    {
+        echo "== $h [prepare] file /etc/apt/sources.list: will change =="
+        echo "== $h [prepare] unit systemd-networkd-wait-online.service: will create drop-in override =="
+        echo "== $h [prepare] kernel_args reboot=efi: will write =="
+        echo "== $h [prepare] file /etc/apt/sources.list.d/ubuntu-src.sources: will remove =="
+        echo "== $h [prepare] distro_repos source packages: will change =="
+        echo "== $h [prepare] timezone America/Los_Angeles: will change =="
+        echo "== $h [prepare] 6 will change, 40 ok, 0 blocked =="
+    } >"$t/check"
+    got=$(labtwo_check_problems "$t/check" "$h")
+    if [[ -z $got ]]; then echo "ok   labtwo_check_problems: every subject will change"; else echo "FAIL labtwo_check_problems (good): $got"; fails=1; fi
+    grep -v timezone "$t/check" >"$t/check2"
+    got=$(labtwo_check_problems "$t/check2" "$h")
+    if [[ $got == "no [prepare] line naming 'timezone' that will change" ]]; then echo "ok   labtwo_check_problems: a missing subject is named"
+    else echo "FAIL labtwo_check_problems (missing timezone): '$got'"; fails=1; fi
+    sed 's/: will .*==$/: ok ==/' "$t/check" | grep -v 'blocked ==' >"$t/check3"
+    echo "== $h [prepare] 0 will change, 46 ok, 1 blocked ==" >>"$t/check3"
+    got=$(labtwo_check_problems "$t/check3" "$h" | wc -l)
+    if [[ $got -eq 8 ]]; then echo "ok   labtwo_check_problems: N=0, a blocked op and six ok subjects are named ($got lines)"
+    else echo "FAIL labtwo_check_problems (nothing will change): $got lines, wanted 8"; fails=1; fi
+    for c in 'BOOT_IMAGE=/vmlinuz root=/dev/vda1 ro console=ttyS0 reboot=efi|' \
+        'BOOT_IMAGE=/vmlinuz ro|0 reboot=efi token(s), wanted 1' \
+        'ro reboot=efi reboot=efi|2 reboot=efi token(s), wanted 1' \
+        'ro reboot=pci reboot=efi|1 other reboot= token(s)'; do
+        got=$(labtwo_cmdline_problems "${c%%|*}")
+        if [[ $got == "${c#*|}" ]]; then echo "ok   labtwo_cmdline_problems '${c%%|*}' -> '${got}'"
+        else echo "FAIL labtwo_cmdline_problems '${c%%|*}' -> '$got', wanted '${c#*|}'"; fails=1; fi
+    done
+    rm -f "$t"/inv.toml "$t"/check "$t"/check2 "$t"/check3
+    rmdir "$t"
+    return $fails
+}
+
+# The stand-in driver list of labtwo_gpu's run 3: one small package of
+# NVIDIA's 580 driver series that needs no GPU and builds no module. The mark
+# is the driver op's, whatever the list holds.
+LABTWO_GPU_DRIVER3=libnvidia-common-580
+
+# labtwo_gpu_vars3 <file> : run 3's vars, vars/labtwo_gpu_vm.toml with the
+# driver list changed to LABTWO_GPU_DRIVER3.
+labtwo_gpu_vars3() {
+    {
+        echo "# labtwo_gpu run 3 (scripts/test-vm.sh): vars/labtwo_gpu_vm.toml, the driver list changed"
+        grep -v '^nvidia_driver_packages[[:space:]]*=' "$ROOT/vars/labtwo_gpu_vm.toml" | grep -v '^#'
+        echo "nvidia_driver_packages = [\"$LABTWO_GPU_DRIVER3\"]"
+    } >"$1"
+}
+
+# docker_restarts <run output> : how many `svc docker.service restart` ops changed
+docker_restarts() { changed_ops "$1" | grep -cxF 'svc docker.service restart' || true; }
+
+# labtwo_gpu_self_test : the labtwo_gpu helpers on synthetic input.
+labtwo_gpu_self_test() {
+    local t fails=0 got
+    t=$(mktemp -d)
+    labtwo_gpu_vars3 "$t/v3"
+    if grep -qxF "nvidia_driver_packages = [\"$LABTWO_GPU_DRIVER3\"]" "$t/v3" && [[ $(grep -c '^nvidia_driver_packages' "$t/v3") -eq 1 ]] \
+        && grep -qxF 'nvidia_driver_packages = []' "$ROOT/vars/labtwo_gpu_vm.toml" \
+        && grep -qxF 'cuda_packages = ["nvtop"]' "$t/v3" && ! grep -qE 'bao[[:space:]]*=' "$t/v3" "$ROOT/vars/labtwo_gpu_vm.toml" \
+        && ! grep -q '^default_password' "$t/v3"; then echo "ok   labtwo_gpu_vars3: the driver list changed, the rest kept, no bao, no password"
+    else echo "FAIL labtwo_gpu_vars3:"; sed 's/^/     | /' "$t/v3"; fails=1; fi
+    printf '%s\n' '== bot@h [cuda] #71 svc docker.service restart ==' '-> changed' '== bot@h [cuda] #66 pkg apt install nvtop ==' '-> changed' >"$t/r1"
+    got=$(docker_restarts "$t/r1")
+    if [[ $got == 1 ]]; then echo "ok   docker_restarts: one changed restart"; else echo "FAIL docker_restarts -> '$got', wanted 1"; fails=1; fi
+    printf '%s\n' '== bot@h [cuda] #71 svc docker.service restart ==' '-> skipped (when changed(#68))' '== bot@h [cuda] #66 pkg apt install nvtop ==' '-> ok' >"$t/r2"
+    got=$(docker_restarts "$t/r2")
+    if [[ $got == 0 ]]; then echo "ok   docker_restarts: none"; else echo "FAIL docker_restarts (none) -> '$got'"; fails=1; fi
+    rm -f "$t/v3" "$t/r1" "$t/r2"
+    rmdir "$t"
+    return $fails
+}
+
 # reboot_vm_vars3 <file> : run 3's vars, a fresh mark (`marked` changed) and
 # a changed `after`, both different from vars/reboot_vm.toml's. Runs 4 and 5
 # use the same file.
@@ -1366,9 +1497,17 @@ self_test() {
     if [[ $got == "local_user|vars/local_user.toml|0|1|" ]]; then echo "ok   playbook local_user -> $got"
     else echo "FAIL playbook local_user -> '$got'"; fails=1; fi
     local_user_self_test || fails=1
+    got=$(playbook_config labtwo && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "labtwo|vars/labtwo_vm.toml|0|1|40" ]]; then echo "ok   playbook labtwo -> $got"
+    else echo "FAIL playbook labtwo -> '$got'"; fails=1; fi
+    labtwo_self_test || fails=1
+    got=$(playbook_config labtwo_gpu && echo "$PB_NAME|$PB_VARS|$PB_ORACLE|$PB_MEMORY|$PB_DISK")
+    if [[ $got == "labtwo|vars/labtwo_gpu_vm.toml|0|1|40" ]]; then echo "ok   playbook labtwo_gpu -> $got"
+    else echo "FAIL playbook labtwo_gpu -> '$got'"; fails=1; fi
+    labtwo_gpu_self_test || fails=1
     # every accepted playbook gives a VM name vm.sh's guard accepts (`_` is not in tp-[a-z0-9-]+)
     local pbn
-    for pbn in dev_base dev_desktop services_vm reboot_vm undo_fs local_user; do
+    for pbn in dev_base dev_desktop services_vm reboot_vm undo_fs local_user labtwo labtwo_gpu; do
         got=$(vm_name_for "$pbn" 20261112t000000z)
         if vm_name_ok "$got"; then echo "ok   vm name for $pbn -> $got"
         else echo "FAIL vm name for $pbn -> '$got' is refused by vm_name_ok"; fails=1; fi
@@ -1479,7 +1618,7 @@ if [[ ${1:-} == --keep ]]; then keep=1; shift; fi
 distro=${1:-}; container=${2:-}
 [[ -n $distro && -n $container ]] || die "usage: test-vm.sh [--keep] <distro> <playbook> | --self-test"
 [[ $distro == ubuntu2404 ]] || die "only the ubuntu2404 image is supported, not '$distro'"
-playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm, reboot_vm, undo_fs, local_user"
+playbook_config "$container" || die "playbook '$container' is not one of: dev_base, dev_desktop, services_vm, reboot_vm, undo_fs, local_user, labtwo, labtwo_gpu"
 
 # ---- preflight --------------------------------------------------------------
 [[ -x $ROOT/build/tp-basic ]] || die "build/tp-basic not found: run 'just musl' first"
@@ -1532,13 +1671,15 @@ status_of() { table_row "$1" status; }
 # extra tp-basic arguments for run(), empty unless a playbook's checks set
 # them (reboot_vm's run 3: --reboot never)
 RUN_EXTRA=()
+# the target of run(): the VM by --host, or (labtwo) an inventory naming it
+RUN_TARGET=(--host "$dest")
 
 run() { # n
-    echo "=== run $1: tp-basic run $PB_NAME --host $dest --vars ${RUN_VARS:+(changed copy) }$PB_VARS ==="
+    echo "=== run $1: tp-basic run $PB_NAME ${RUN_TARGET[*]} --vars ${RUN_VARS:+(changed copy) }$PB_VARS ${RUN_EXTRA[*]} ==="
     VM_STEP="run $1: tp-basic run $PB_NAME --host $dest"
     local rc=0 t0=$SECONDS
     tpb_ssh_args "$key" "$out/known_hosts"
-    "$ROOT/build/tp-basic" run "$PB_NAME" --host "$dest" "${TPB_SSH_ARGS[@]}" \
+    "$ROOT/build/tp-basic" run "$PB_NAME" "${RUN_TARGET[@]}" "${TPB_SSH_ARGS[@]}" \
         --vars "${RUN_VARS:-$ROOT/$PB_VARS}" --log "$out/run$1.jsonl" "${RUN_EXTRA[@]}" \
         >"$out/run$1.out" 2>&1 || rc=$?
     sed -n '/^HOST  *STATUS/,$p' "$out/run$1.out"
@@ -1657,6 +1798,172 @@ READ
     if [[ $wrc -ne 0 ]]; then echo "FAIL: a local_user check failed"; exit 1; fi
     echo "local_user checks: all passed"
     echo "PASS: local_user on a $distro VM (as_user over --local: as root and as the sudo login user the op ran as $LU_USER and wrote its files owned by $LU_USER; a nologin user was refused with the transport's text)"
+    exit 0
+fi
+
+# ---- labtwo: the labtwo playbook, --check, a run across the barrier, a rerun ------
+# T158. The VM is in servers, maas_installs and H11SSL_motherboards (an
+# inventory written here; its admin user is the login user, as on the real
+# hosts), with vars/labtwo_vm.toml (no OpenBao reference). Pre-seeds, as root:
+# a MAAS-style sources.list and the old labtwo ubuntu-src.sources (the oracle's
+# pre-seed scripts). Then --check (exit 2, the expected subjects will change),
+# run 1 with --reboot auto (one reboot, at the barrier), the checks, run 2 with
+# --reboot auto (CHANGED 0, no reboot). Every check prints ok or FAIL.
+if [[ $container == labtwo ]]; then
+    wrc=0
+    ok() { echo "ok   $1"; }
+    bad() { echo "FAIL $1"; wrc=1; }
+    vexpect() {
+        local o r=0
+        o=$(sshv "$3" 2>&1) || r=$?
+        if [[ $o == "$2" ]]; then ok "$1: $o"; else bad "$1 printed '$o' (exit $r), wanted '$2'"; fi
+    }
+    labtwo_inventory "$out/inventory.toml" "$dest" servers maas_installs H11SSL_motherboards
+    RUN_TARGET=(--inventory "$out/inventory.toml")
+    echo "=== labtwo pre-seeds (as root on the VM): MAAS-style sources.list, ubuntu-src.sources ==="
+    for p in labtwo_maasfix labtwo_src_repos; do
+        sshv 'sudo -n sh -s' <"$ROOT/scripts/oracle-preseed/$p.sh" || die "pre-seed $p failed"
+    done
+    sshv 'sudo -n apt-get -q update' >"$out/preseed-update.log" 2>&1 || die "apt-get update after the pre-seeds failed (log: $out/preseed-update.log)"
+    sshv_cmd='sudo -n sshd -T 2>/dev/null | grep -E "^(permitrootlogin|passwordauthentication) " | sort'
+    sshd0=$(sshv "$sshv_cmd" 2>&1) || true
+    echo "sshd -T before run 1: $(tr '\n' ';' <<<"$sshd0")"
+    [[ $sshd0 == *permitrootlogin* && $sshd0 == *passwordauthentication* ]] || { echo "FAIL: sshd -T before run 1 is unreadable ('$sshd0')"; exit 1; }
+    b0=$(sshv "$boot_cmd" 2>&1) || b0="(failed: $b0)"
+    [[ $b0 != '(failed'* && -n $b0 ]] || { echo "FAIL: the boot id before run 1 is unreadable ('$b0')"; exit 1; }
+    echo "boot id before run 1: $b0; /proc/cmdline: $(sshv 'cat /proc/cmdline' 2>&1)"
+    tz=$(sed -n 's/^iana_tz *= *"\(.*\)"/\1/p' "$ROOT/$PB_VARS")
+    [[ -n $tz ]] || die "no iana_tz in $PB_VARS"
+
+    echo "=== labtwo --check before run 1 ==="
+    crc=0
+    tpb_ssh_args "$key" "$out/known_hosts"
+    "$ROOT/build/tp-basic" run "$PB_NAME" "${RUN_TARGET[@]}" "${TPB_SSH_ARGS[@]}" --vars "$ROOT/$PB_VARS" \
+        --log "$out/check1.jsonl" --check >"$out/check1.out" 2>&1 || crc=$?
+    grep -E "^== .* \[prepare\] .*: will" "$out/check1.out" | sed 's/^/     | /' || true
+    if [[ $crc -eq 2 ]]; then ok "--check exited 2 (changes pending)"; else bad "--check exited $crc, wanted 2 (log: $out/check1.out)"; fi
+    probs=$(labtwo_check_problems "$out/check1.out" "$dest")
+    if [[ -z $probs ]]; then ok "--check: $(grep -E "\[prepare\] [0-9]+ will change" "$out/check1.out" | sed 's/^== [^ ]* \[prepare\] //; s/ ==$//'); every expected subject will change"
+    else while IFS= read -r l; do bad "--check: $l"; done <<<"$probs"; fi
+    [[ $wrc -eq 0 ]] || { echo "FAIL: the labtwo --check before run 1 failed"; exit 1; }
+
+    RUN_EXTRA=(--reboot auto)
+    rc1=0; run 1 || rc1=$?
+    if [[ $rc1 -ne 0 ]]; then tail -40 "$out/run1.out"; echo "FAIL: run 1 exited $rc1 (log: $out/run1.out)"; exit 1; fi
+    # the reboot dropped the swap file and the sampler (swapon only, no fstab):
+    # put both back, appending to the sampler's log so the peak covers run 1
+    sshv "sudo -n swapon /tp-swap; nohup vmstat -n -S M 5 >>/var/tmp/tp-vmstat.log 2>&1 </dev/null &" >/dev/null 2>&1 \
+        || echo "WARNING: could not restore swap and the sampler after the reboot"
+    changed_ops "$out/run1.out" >"$out/run1.changed"
+    echo "run 1 changed ops ($(wc -l <"$out/run1.changed")): $out/run1.changed"
+    grep -E '^== .* \[reboot\]' "$out/run1.out" || true
+
+    echo "=== labtwo after run 1 ==="
+    if [[ $(status_of "$out/run1.out") == changed ]]; then ok "run 1: exit 0, STATUS changed"
+    else bad "run 1: STATUS '$(status_of "$out/run1.out")', wanted changed"; fi
+    n=$(reboot_events "$out/run1.jsonl")
+    if [[ $n -eq 1 ]]; then ok "run 1: one reboot event"; else bad "run 1: $n reboot events, wanted 1"; fi
+    b1=$(sshv "$boot_cmd" 2>&1) || b1="(failed: $b1)"
+    if [[ $b1 != '(failed'* && -n $b1 && $b1 != "$b0" ]]; then ok "boot id changed ($b0 -> $b1)"; else bad "boot id $b0 -> $b1, wanted a new one"; fi
+    cl=$(sshv 'cat /proc/cmdline' 2>&1) || true
+    probs=$(labtwo_cmdline_problems "$cl")
+    if [[ -z $probs ]]; then ok "/proc/cmdline holds reboot=efi once: $cl"; else bad "/proc/cmdline '$cl': $probs"; fi
+    vexpect "pending mark" absent 'test -e /run/telepatch/reboot-pending && echo present || echo absent'
+    vexpect "time zone" "$tz" 'timedatectl show -p Timezone --value'
+    vexpect "/etc/apt/sources.list (maasfix)" '# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources' 'cat /etc/apt/sources.list'
+    vexpect "ubuntu-src.sources (src_repos)" absent 'test -e /etc/apt/sources.list.d/ubuntu-src.sources && echo present || echo absent'
+    vexpect "ubuntu.sources has deb-src (src_repos)" yes 'grep -Eq "^Types:.*[[:space:]]deb-src([[:space:]]|$)" /etc/apt/sources.list.d/ubuntu.sources && echo yes || echo no'
+    vexpect "networkd-wait-online drop-in (maasfix)" present 'test -s /etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf && echo present || echo absent'
+    vexpect "networkd-wait-online drop-in in effect" yes 'systemctl cat systemd-networkd-wait-online.service | grep -q -- "--timeout=30" && echo yes || echo no'
+    vexpect "kernel_args drop-in (H11SSL_reboot_fix)" present 'test -s /etc/default/grub.d/99-telepatch-kernel-args.cfg && echo present || echo absent'
+    sshd1=$(ssh -T -o ControlPath=none "${VM_SSH_OPTS[@]}" "$dest" "$sshv_cmd" 2>&1) || true
+    if [[ $sshd1 == "$sshd0" ]]; then ok "fresh ssh login works; sshd -T unchanged: $(tr '\n' ';' <<<"$sshd1")"
+    else bad "sshd -T after run 1 '$(tr '\n' ';' <<<"$sshd1")', before '$(tr '\n' ';' <<<"$sshd0")'"; fi
+    vexpect "the login user still has sudo" ok 'sudo -n true && echo ok'
+    sshv 'id; getent group docker kvm libvirt; systemctl is-active docker libvirtd 2>&1; timedatectl show -p Timezone --value' >"$out/after-run1.txt" 2>&1 || true
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a labtwo check after run 1 failed"; exit 1; }
+
+    echo "=== labtwo run 2: nothing changes, no reboot ==="
+    rc2=0; run 2 || rc2=$?
+    if [[ $rc2 -eq 0 && $(status_of "$out/run2.out") == ok && $(changed_of "$out/run2.out") == 0 ]]; then ok "run 2: STATUS ok, CHANGED 0"
+    else bad "run 2 exited $rc2, STATUS $(status_of "$out/run2.out"), CHANGED $(changed_of "$out/run2.out") (log: $out/run2.out)"
+        changed_ops "$out/run2.out" | sed 's/^/     changed: /'; fi
+    n=$(reboot_events "$out/run2.jsonl")
+    if [[ $n -eq 0 ]]; then ok "run 2: no reboot event"; else bad "run 2: $n reboot events"; fi
+    b2=$(sshv "$boot_cmd" 2>&1) || b2="(failed: $b2)"
+    if [[ $b2 == "$b1" ]]; then ok "boot id unchanged by run 2"; else bad "boot id $b1 -> $b2 in run 2"; fi
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: a labtwo check failed"; exit 1; fi
+    echo "labtwo checks: all passed"
+    echo "PASS: labtwo on a $distro VM over SSH (--check listed the changes; run 1 crossed one reboot with reboot=efi in effect; run 2 CHANGED 0, no reboot)"
+    exit 0
+fi
+
+# ---- labtwo_gpu: the labtwo playbook in servers and gpu_servers, small lists ------
+# T159, on a VM without a GPU, vars/labtwo_gpu_vm.toml (no OpenBao reference).
+# Run 1 (--reboot auto; nothing marks a reboot: the driver list is empty), the
+# checks (cuda-keyring 1.1-1, both NVIDIA repos, the small lists, cuda.sh,
+# docker restarted once); run 2 CHANGED 0 with no docker restart; run 3 with a
+# driver list of one package and --reboot never ends `reboot pending`.
+if [[ $container == labtwo_gpu ]]; then
+    wrc=0
+    ok() { echo "ok   $1"; }
+    bad() { echo "FAIL $1"; wrc=1; }
+    vexpect() {
+        local o r=0
+        o=$(sshv "$3" 2>&1) || r=$?
+        if [[ $o == "$2" ]]; then ok "$1: $o"; else bad "$1 printed '$o' (exit $r), wanted '$2'"; fi
+    }
+    labtwo_inventory "$out/inventory.toml" "$dest" servers gpu_servers
+    RUN_TARGET=(--inventory "$out/inventory.toml")
+    b0=$(sshv "$boot_cmd" 2>&1) || b0="(failed: $b0)"
+    [[ $b0 != '(failed'* && -n $b0 ]] || { echo "FAIL: the boot id before run 1 is unreadable ('$b0')"; exit 1; }
+    RUN_EXTRA=(--reboot auto)
+    rc1=0; run 1 || rc1=$?
+    if [[ $rc1 -ne 0 ]]; then tail -40 "$out/run1.out"; echo "FAIL: run 1 exited $rc1 (log: $out/run1.out)"; exit 1; fi
+    changed_ops "$out/run1.out" >"$out/run1.changed"
+    echo "=== labtwo_gpu after run 1 ==="
+    if [[ $(status_of "$out/run1.out") == changed ]]; then ok "run 1: exit 0, STATUS changed"; else bad "run 1: STATUS '$(status_of "$out/run1.out")'"; fi
+    n=$(reboot_events "$out/run1.jsonl")
+    if [[ $n -eq 0 ]]; then ok "run 1: no reboot (empty driver list, nothing marked)"; else bad "run 1: $n reboot events, wanted 0"; fi
+    vexpect "cuda-keyring" '1.1-1 install ok installed' "dpkg-query -W -f='\${Version} \${Status}' cuda-keyring"
+    vexpect "the CUDA repo (keyring package)" yes 'grep -rqs "developer.download.nvidia.com/compute/cuda/repos/ubuntu2404" /etc/apt/sources.list.d && echo yes || echo no'
+    vexpect "the container-toolkit repo" yes 'grep -rqs "nvidia.github.io/libnvidia-container" /etc/apt/sources.list.d && echo yes || echo no'
+    vexpect "apt sees both NVIDIA repos" 2 'apt-cache policy | grep -cE "developer.download.nvidia.com/compute/cuda|nvidia.github.io/libnvidia-container/stable" | awk "{print (\$1 >= 2 ? 2 : \$1)}"'
+    vexpect "nvtop (the CUDA small list)" 'install ok installed' "dpkg-query -W -f='\${Status}' nvtop"
+    vexpect "nvidia-container-toolkit" 'install ok installed' "dpkg-query -W -f='\${Status}' nvidia-container-toolkit"
+    vexpect "no driver package" none "dpkg-query -W -f='\${Package}\n' 'nvidia-driver-*' 2>/dev/null | head -1 | grep . || echo none"
+    vexpect "/etc/profile.d/cuda.sh" present 'test -s /etc/profile.d/cuda.sh && echo present || echo absent'
+    n=$(docker_restarts "$out/run1.out")
+    if [[ $n -eq 1 ]]; then ok "run 1: docker restarted once"; else bad "run 1: $n docker restarts, wanted 1"; fi
+    vexpect "docker active" active 'systemctl is-active docker'
+    [[ $wrc -eq 0 ]] || { echo "FAIL: a labtwo_gpu check after run 1 failed"; exit 1; }
+
+    echo "=== labtwo_gpu run 2: nothing changes ==="
+    rc2=0; run 2 || rc2=$?
+    if [[ $rc2 -eq 0 && $(status_of "$out/run2.out") == ok && $(changed_of "$out/run2.out") == 0 ]]; then ok "run 2: STATUS ok, CHANGED 0"
+    else bad "run 2 exited $rc2, STATUS $(status_of "$out/run2.out"), CHANGED $(changed_of "$out/run2.out") (log: $out/run2.out)"
+        changed_ops "$out/run2.out" | sed 's/^/     changed: /'; fi
+    n=$(docker_restarts "$out/run2.out")
+    if [[ $n -eq 0 ]]; then ok "run 2: docker not restarted"; else bad "run 2: $n docker restarts"; fi
+
+    echo "=== labtwo_gpu run 3: the driver list changed, --reboot never ==="
+    RUN_VARS=$out/vars-run3.toml
+    labtwo_gpu_vars3 "$RUN_VARS"
+    RUN_EXTRA=(--reboot never)
+    rc3=0; run 3 || rc3=$?
+    if [[ $rc3 -eq 1 ]]; then ok "run 3: exit 1"; else bad "run 3: exit $rc3, wanted 1 (log: $out/run3.out)"; fi
+    if [[ $(status_of "$out/run3.out") == 'reboot pending' ]]; then ok "run 3: STATUS reboot pending"
+    else bad "run 3: STATUS '$(status_of "$out/run3.out")', wanted 'reboot pending' (log: $out/run3.out)"; fi
+    if grep -qF 'reboot pending at barrier' "$out/run3.out"; then ok "run 3: 'reboot pending at barrier'"; else bad "run 3: no 'reboot pending at barrier'"; fi
+    vexpect "the stand-in driver package" 'install ok installed' "dpkg-query -W -f='\${Status}' $LABTWO_GPU_DRIVER3"
+    vexpect "the mark file names it" yes "sudo -n grep -q '$LABTWO_GPU_DRIVER3' /run/telepatch/reboot-pending && echo yes || echo no"
+    n=$(reboot_events "$out/run3.jsonl")
+    if [[ $n -eq 0 ]]; then ok "run 3: no reboot event"; else bad "run 3: $n reboot events"; fi
+    b3=$(sshv "$boot_cmd" 2>&1) || b3="(failed: $b3)"
+    if [[ $b3 == "$b0" ]]; then ok "boot id unchanged over runs 1-3"; else bad "boot id $b0 -> $b3"; fi
+    if [[ $wrc -ne 0 ]]; then echo "FAIL: a labtwo_gpu check failed"; exit 1; fi
+    echo "labtwo_gpu checks: all passed"
+    echo "PASS: labtwo_gpu on a $distro VM without a GPU (run 1: keyring, both NVIDIA repos, small lists, cuda.sh, one docker restart; run 2 CHANGED 0, no restart; run 3 driver-list change ends reboot pending with --reboot never)"
     exit 0
 fi
 
