@@ -1,0 +1,35 @@
+# labtwo_cuda (cuda alone, small lists, docker pre-seeded) on the Ubuntu 24.04 VM
+# oracle, T156, 2026-11-15.
+# Confirmed by the run of 2026-11-15 (PASS): these lines are the whole gating
+# diff. The port is src/roles/cuda.rs.
+#
+# Small lists on both sides: nvidia_driver_packages = [] and cuda_packages =
+# ["nvtop"] (-e overrides for Ansible, vars/labtwo_cuda.toml for telepatch).
+# Equal on both sides, so no line below:
+# - packages: cuda-keyring 1.1-1, nvtop (and what it pulls), the four toolkit
+#   packages at 1.19.0-1; curl and ca-certificates are in the cloud image;
+#   docker.io is the pre-seed's.
+# - the keyring package's own /etc/apt/sources.list.d/cuda-ubuntu2404-x86_64.list
+#   (same bytes: both sides install the same .deb).
+# - profile.d: the template's bytes are the Jinja template's with the path
+#   filled in, the "Ansible managed" comment kept, so the sha256 is equal.
+#
+# The one intended difference: the container toolkit's apt source. Ansible
+# writes the vendor's one-line nvidia-container-toolkit.list, run through a sed
+# that adds signed-by; the vendor's file has a second, commented line for the
+# experimental repository, which the sed rewrites too. Telepatch writes a flat
+# deb822 nvidia-container-toolkit.sources (suite "/", no Components, the
+# vendor's $(ARCH) kept literal, Architectures read on the host, the armored key
+# at /etc/apt/keyrings/nvidia-container-toolkit.asc in Signed-By).
+-apt sources|-- /etc/apt/sources.list.d/nvidia-container-toolkit.list
+-apt sources|deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH) /
+-apt sources|#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/experimental/deb/$(ARCH) /
++apt sources|-- /etc/apt/sources.list.d/nvidia-container-toolkit.sources
++apt sources|Types: deb
++apt sources|URIs: https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH)
++apt sources|Suites: /
++apt sources|Architectures: amd64
++apt sources|Signed-By: /etc/apt/keyrings/nvidia-container-toolkit.asc
+# Placement: compare.sh merges the added block at its header's place (T154).
+# The vendor list's content (the upstream file) could change between now and the
+# run; the two Ansible lines above are the file as fetched on 2026-11-15.

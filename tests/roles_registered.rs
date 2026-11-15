@@ -25,3 +25,9 @@ fn roles_holds_h11ssl_reboot_fix() {
     let _ = tp_basic::roles::h11ssl_reboot_fix::h11ssl_reboot_fix;
     assert!(telepatch::roles().contains(&"h11ssl_reboot_fix"));
 }
+
+#[test]
+fn roles_holds_cuda() {
+    let _ = tp_basic::roles::cuda::cuda;
+    assert!(telepatch::roles().contains(&"cuda"));
+}

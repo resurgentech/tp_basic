@@ -1,0 +1,244 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host ubuntu2604 (os: Debian/Ubuntu 26.04)
+blocking reads: 0
+shell helpers: undo fe76955f
+
+window 1 (final)
+role cuda
+  #1 pkg as shell:root reads [] writes [pkg:ca-certificates, pkg:curl] post [pkg:ca-certificates=Installed, pkg:curl=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('curl' 'ca-certificates')
+      | tp_missing=()
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
+      | tp_apt_present() {
+      |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
+      |   dpkg-query -W -f='${db:Status-Status} ${Provides}\n' 2>/dev/null | awk -v n="$1" '$1 != "installed" { next } { line=$0; sub(/^installed[[:space:]]+/, "", line); k=split(line, parts, /,/); for (i=1; i<=k; i++) { p=parts[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", p); sub(/[[:space:]].*/, "", p); if (p == n) found=1 } } END { exit (found ? 0 : 1) }'
+      | }
+      | for tp_n in "${tp_want[@]}"; do
+      |   tp_apt_present "$tp_n" || tp_missing+=("$tp_n")
+      | done
+      | if [ "$rc" -eq 0 ] && [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   if ! find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock 2>/dev/null | grep -q .; then apt-get -q update || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi
+  -- split after #1 (pkg curl) when the host has neither curl nor wget: #2 needs a download --
+  #2 pkg as shell:root reads [] writes [pkg:cuda-keyring] post [pkg:cuda-keyring=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('cuda-keyring')
+      | tp_missing=()
+      | tp_pin='1.1-1'
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
+      | tp_name='cuda-keyring'
+      | tp_sbx() { [ "${TP_SANDBOX_REQUIRED-}" = 1 ] || return 0; local p s=${TP_SANDBOX-}; s=${s%/}; for p; do case $p/ in */../*) ;; /*) [ -n "$s" ] && [ -d "$s" ] && case $p/ in "$s"/*) continue;; esac;; esac; echo "telepatch: sandbox: refusing $p (TP_SANDBOX_REQUIRED is set; tests must use telepatch::testing::sandbox)" >&2; return 1; done; }
+      | tp_cd="${TP_FETCH_CACHE:-/var/cache/telepatch/sha256}"
+      | tp_sd="${TP_FETCH_STAGE:-/var/tmp/telepatch}"
+      | tp_sbx "$tp_cd" "$tp_sd" || { tp_cd=/dev/null/refused; tp_sd=/dev/null/refused; }
+      | tp_s='d2a6b11c096396d868758b86dab1823b25e14d70333f1dfa74da5ddaf6a06dba'
+      | tp_f="$tp_cd/$tp_s"; if [ -L "$tp_sd/$__tp_run/f-$tp_s" ]; then tp_f="$tp_sd/$__tp_run/f-$tp_s"; fi
+      | if [ "$rc" -eq 0 ] && [ ! -f "$tp_f" ]; then echo 'telepatch: the cached download d2a6b11c0963 for https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb is gone (a cache purge during the run?); run again to download it' >&2; rc=1; fi
+      | tp_st=$(dpkg-query -W -f='${db:Status-Status}:${Version}' "$tp_name" 2>/dev/null || true)
+      | if [ "$rc" -eq 0 ] && [ "$tp_st" != "installed:$tp_pin" ]; then
+      |   tp_dir="$tp_sd/$__tp_run"
+      |   mkdir -p -- "$tp_dir" || rc=$?
+      |   if [ "$rc" -eq 0 ]; then ln -sfn -- "$tp_f" "$tp_dir/x.deb" || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then ( cd -- "$tp_dir" && apt-get -y --allow-downgrades -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install ./x.deb ); rc=$?; fi
+      |   rm -f -- "$tp_dir/x.deb"
+      |   if [ "$rc" -eq 0 ]; then
+      |     tp_st=$(dpkg-query -W -f='${db:Status-Status}:${Version}' "$tp_name" 2>/dev/null || true)
+      |     if [ "$tp_st" = "installed:$tp_pin" ]; then changed=1; installed=("$tp_name"); else echo "telepatch: $tp_name is '$tp_st' after installing ./x.deb, wanted installed:$tp_pin" >&2; rc=1; fi
+      |   fi
+      | fi
+  #3 file as shell:root reads [] writes [file:/etc/apt/sources.list.d/nvidia-container-toolkit.list] post [file:/etc/apt/sources.list.d/nvidia-container-toolkit.list=Exists(false)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/apt/sources.list.d/nvidia-container-toolkit.list'
+      | tp_was "$tp_p"
+      | if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   tp_gate "$tp_p" || rc=1
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -n "$tp_bd" ]; then tp_try "$tp_p" "$tp_bd/old" mv -- "$tp_p" "$tp_bd/old"; else rm -rf -- "$tp_p"; fi
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; else tp_bk=; fi
+      |   fi
+      | fi
+  #4 file as shell:root reads [] writes [file:/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] post [file:/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg=Exists(false)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg'
+      | tp_was "$tp_p"
+      | if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   tp_gate "$tp_p" || rc=1
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -n "$tp_bd" ]; then tp_try "$tp_p" "$tp_bd/old" mv -- "$tp_p" "$tp_bd/old"; else rm -rf -- "$tp_p"; fi
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; else tp_bk=; fi
+      |   fi
+      | fi
+  #5 repo as shell:root reads [] writes [file:/etc/apt/keyrings/nvidia-container-toolkit.asc, file:/etc/apt/sources.list.d/nvidia-container-toolkit.sources, repo:nvidia-container-toolkit] post [file:/etc/apt/keyrings/nvidia-container-toolkit.asc=Exists(true), file:/etc/apt/sources.list.d/nvidia-container-toolkit.sources=Exists(true), repo:nvidia-container-toolkit=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | tp_n='nvidia-container-toolkit'
+      | tp_fetch() {
+      |   if ! command -v curl >/dev/null 2>&1; then
+      |     echo "telepatch: repo $tp_n: curl not found" >&2
+      |     return 1
+      |   fi
+      |   (umask 022; mkdir -p -- "$(dirname -- "$2")") || return 1
+      |   tp_t=$(mktemp "$2.XXXXXX") || return 1
+      |   if curl -fsSL -o "$tp_t" --url "$1" && chmod 0644 "$tp_t" && mv -f -- "$tp_t" "$2"; then
+      |     return 0
+      |   fi
+      |   rm -f -- "$tp_t"
+      |   return 1
+      | }
+      | tp_put() {
+      |   if [ -f "$1" ] && [ "$(tp_render "$2" | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$1" | cut -d' ' -f1)" ]; then return 0; fi
+      |   tp_new=
+      |   if [ -e "$1" ] || [ -L "$1" ]; then tp_was "$1"; tp_save "$1" || return 1; else tp_new=1; fi
+      |   (umask 022; mkdir -p -- "$(dirname -- "$1")") || return 1
+      |   tp_t=$(mktemp "$1.XXXXXX") || return 1
+      |   if tp_render "$2" > "$tp_t" && chmod 0644 "$tp_t" && mv -f -- "$tp_t" "$1"; then
+      |     changed=1
+      |     [ -z "$tp_new" ] || tp_fc=1
+      |     return 0
+      |   fi
+      |   rm -f -- "$tp_t"
+      |   return 1
+      | }
+      | tp_render() { printf 'Types: deb\nURIs: %s\nSuites: %s\nArchitectures: %s\nSigned-By: %s\n' 'https://nvidia.github.io/libnvidia-container/stable/deb/$(ARCH)' '/' "$1" '/etc/apt/keyrings/nvidia-container-toolkit.asc'; }
+      | tp_key='/etc/apt/keyrings/nvidia-container-toolkit.asc'
+      | tp_src='/etc/apt/sources.list.d/nvidia-container-toolkit.sources'
+      | if [ ! -e "$tp_key" ]; then
+      |   if tp_fetch 'https://nvidia.github.io/libnvidia-container/gpgkey' "$tp_key"; then changed=1; tp_kc=1; else rc=1; fi
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_arch=$(dpkg --print-architecture)
+      |   if [ -z "$tp_arch" ]; then
+      |     echo "telepatch: repo $tp_n: cannot read the dpkg architecture" >&2
+      |     rc=1
+      |   elif ! tp_put "$tp_src" "$tp_arch"; then
+      |     rc=1
+      |   fi
+      | fi
+  #6 pkg as shell:root reads [] writes [pkg:cuda-drivers-580, pkg:nvidia-dkms-580, pkg:nvidia-driver-580] needs_reboot timeout 1h post [pkg:cuda-drivers-580=Installed, pkg:nvidia-dkms-580=Installed, pkg:nvidia-driver-580=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('nvidia-driver-580' 'nvidia-dkms-580' 'cuda-drivers-580')
+      | tp_missing=()
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
+      | apt-get -q update || rc=$?
+      | tp_apt_present() {
+      |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
+      |   dpkg-query -W -f='${db:Status-Status} ${Provides}\n' 2>/dev/null | awk -v n="$1" '$1 != "installed" { next } { line=$0; sub(/^installed[[:space:]]+/, "", line); k=split(line, parts, /,/); for (i=1; i<=k; i++) { p=parts[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", p); sub(/[[:space:]].*/, "", p); if (p == n) found=1 } } END { exit (found ? 0 : 1) }'
+      | }
+      | for tp_n in "${tp_want[@]}"; do
+      |   tp_apt_present "$tp_n" || tp_missing+=("$tp_n")
+      | done
+      | if [ "$rc" -eq 0 ] && [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   if [ "$rc" -eq 0 ]; then
+      |     apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi
+  #7 pkg as shell:root reads [] writes [pkg:cuda-compiler-13-2, pkg:cuda-libraries-13-2, pkg:cuda-libraries-dev-13-2, pkg:cuda-toolkit-13-2, pkg:cuda-tools-13-2, pkg:libcudnn9-cuda-13, pkg:libcudnn9-dev-cuda-13, pkg:libcudnn9-headers-cuda-13, pkg:nvidia-gds-13-2, pkg:nvtop] post [pkg:cuda-compiler-13-2=Installed, pkg:cuda-libraries-13-2=Installed, pkg:cuda-libraries-dev-13-2=Installed, pkg:cuda-toolkit-13-2=Installed, pkg:cuda-tools-13-2=Installed, pkg:libcudnn9-cuda-13=Installed, pkg:libcudnn9-dev-cuda-13=Installed, pkg:libcudnn9-headers-cuda-13=Installed, pkg:nvidia-gds-13-2=Installed, pkg:nvtop=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('cuda-toolkit-13-2' 'cuda-tools-13-2' 'cuda-compiler-13-2' 'cuda-libraries-13-2' 'cuda-libraries-dev-13-2' 'libcudnn9-cuda-13' 'libcudnn9-dev-cuda-13' 'libcudnn9-headers-cuda-13' 'nvidia-gds-13-2' 'nvtop')
+      | tp_missing=()
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
+      | tp_apt_present() {
+      |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
+      |   dpkg-query -W -f='${db:Status-Status} ${Provides}\n' 2>/dev/null | awk -v n="$1" '$1 != "installed" { next } { line=$0; sub(/^installed[[:space:]]+/, "", line); k=split(line, parts, /,/); for (i=1; i<=k; i++) { p=parts[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", p); sub(/[[:space:]].*/, "", p); if (p == n) found=1 } } END { exit (found ? 0 : 1) }'
+      | }
+      | for tp_n in "${tp_want[@]}"; do
+      |   tp_apt_present "$tp_n" || tp_missing+=("$tp_n")
+      | done
+      | if [ "$rc" -eq 0 ] && [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   if ! find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock 2>/dev/null | grep -q .; then apt-get -q update || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "${tp_missing[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      |   fi
+      | fi
+  #8 pkg as shell:root reads [] writes [pkg:libnvidia-container-tools, pkg:libnvidia-container1, pkg:nvidia-container-toolkit, pkg:nvidia-container-toolkit-base] post [pkg:libnvidia-container-tools=Installed, pkg:libnvidia-container1=Installed, pkg:nvidia-container-toolkit=Installed, pkg:nvidia-container-toolkit-base=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('nvidia-container-toolkit' 'nvidia-container-toolkit-base' 'libnvidia-container-tools' 'libnvidia-container1')
+      | tp_missing=()
+      | tp_pin='1.19.0-1'
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
+      | tp_up=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   [ "$(dpkg-query -W -f='${db:Status-Status}:${Version}' "$tp_n" 2>/dev/null)" = "installed:$tp_pin" ] || tp_missing+=("$tp_n")
+      | done
+      | if [ "$rc" -eq 0 ] && [ "$(( ${#tp_missing[@]} + ${#tp_up[@]} ))" -gt 0 ]; then
+      |   if ! find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock 2>/dev/null | grep -q .; then apt-get -q update || rc=$?; fi
+      |   if [ "$rc" -eq 0 ] && [ "${#tp_missing[@]}" -gt 0 ]; then
+      |     tp_args=(); for tp_n in "${tp_missing[@]}"; do tp_args+=("$tp_n=$tp_pin"); done
+      |     apt-get -y --allow-downgrades -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "${tp_args[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed+=("${tp_missing[@]}"); fi
+      |   fi
+      |   if [ "$rc" -eq 0 ] && [ "${#tp_up[@]}" -gt 0 ]; then
+      |     apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install --only-upgrade "${tp_up[@]}"
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; installed+=("${tp_up[@]}"); fi
+      |   fi
+      | fi
+  #9 svc as shell:root reads [] writes [svc:docker.service] when changed(#8) post [svc:docker.service=Exists(true)]
+      | tp_u='docker'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   if [ -d "$tp_run" ]; then
+      |     if [ "$(systemctl show -p NeedDaemonReload --value -- "$tp_u" 2>/dev/null)" = yes ]; then
+      |       __tp_drn="${__tp_drn:+$__tp_drn,}need"
+      |       systemctl daemon-reload
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       systemctl restart -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   else
+      |     skipped=1
+      |   fi
+      | fi
+  #10 file as shell:root reads [] writes [file:/etc/profile.d/cuda.sh] post [file:/etc/profile.d/cuda.sh=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/profile.d/cuda.sh'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | tp_b='IyEvYmluL3NoCgojCiMgQW5zaWJsZSBtYW5hZ2VkCiMKCmV4cG9ydCBDVURBX0hPTUU9L3Vzci9sb2NhbC9jdWRhLTEzLjIKZXhwb3J0IFBBVEg9L3Vzci9sb2NhbC9jdWRhLTEzLjIvYmluOiRQQVRICmV4cG9ydCBMRF9MSUJSQVJZX1BBVEg9L3Vzci9sb2NhbC9jdWRhLTEzLjIvbGliNjQ6JExEX0xJQlJBUllfUEFUSAo='
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |   if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then tp_save "$tp_p" || rc=1; fi
+      |   if [ "$rc" -eq 0 ]; then tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
+      |       if [ -e "$tp_p" ]; then
+      |         chmod --reference="$tp_p" "$tp_t"; chown --reference="$tp_p" "$tp_t" 2>/dev/null
+      |       else
+      |         chmod 644 "$tp_t"
+      |       fi
+      |       mv -f "$tp_t" "$tp_p"; rc=$?
+      |     else
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '644' ]; then
+      |   if chmod 644 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U' "$tp_p")" != 'root' ]; then
+      |   if chown 'root' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi

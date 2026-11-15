@@ -1,6 +1,7 @@
 //! Roles, one module each.
 
 pub mod admin_users;
+pub mod cuda;
 pub mod dev_common;
 pub mod docker;
 pub mod edge;

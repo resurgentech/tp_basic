@@ -1,0 +1,6 @@
+# Oracle case labtwo_cuda: the small lists, the same as the Ansible side's `-e`
+# overrides (scripts/test-vm-oracle.sh): no driver (so no reboot mark) and one
+# CUDA-list package from the Ubuntu archive. Everything else is the role's
+# default. A top-level key reaches the cuda role (it names the Ansible vars).
+nvidia_driver_packages = []
+cuda_packages = ["nvtop"]

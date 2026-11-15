@@ -67,9 +67,8 @@ Role docs:
   `rust_build`, `tmux` (`src/roles/<role>.rs`).
 - Ported in Goal 10, understanding in code comments: `maasfix` (T151),
   `systemd_time` (T152), `root_user` (T153), `hashicorp_packer` (T154),
-  `H11SSL_reboot_fix` (T155, `src/roles/h11ssl_reboot_fix.rs`). Their
-  mirrors stay, cited here.
-- To come, `conversion/cuda.md`: `cuda` (T156).
+  `H11SSL_reboot_fix` (T155, `src/roles/h11ssl_reboot_fix.rs`), `cuda`
+  (T156). Their mirrors stay, cited here.
 
 ## Outcomes
 

@@ -1440,3 +1440,157 @@ fn h11ssl_does_nothing_off_ubuntu_24_and_later() {
         assert!(!text.contains("reboot=efi"), "{d}: {text}");
     }
 }
+
+// ---- T156: cuda (labtwo_cuda) ---------------------------------------------
+
+fn cuda_plan(distro: &str) -> String {
+    plan("labtwo_cuda", distro)
+}
+
+/// The plan with the oracle case's vars file (the small lists).
+fn cuda_small_plan(distro: &str) -> String {
+    let pbs = playbooks();
+    let pb = pbs
+        .iter()
+        .find(|p| p.name == "labtwo_cuda")
+        .expect("labtwo_cuda");
+    telepatch::testing::plan_for_playbook(
+        distro,
+        pb,
+        Some(std::path::Path::new("vars/labtwo_cuda.toml")),
+    )
+}
+
+#[test]
+fn labtwo_cuda_plans() {
+    for d in DISTROS {
+        let text = cuda_plan(d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("labtwo_cuda__{d}"), text);
+        });
+    }
+}
+
+/// Ubuntu 24.04 and later: the keyring package from its checksummed fetch,
+/// both legacy toolkit files removed before the flat deb822 repo, the driver
+/// marked for reboot and the CUDA packages not, the four toolkit packages
+/// in one pinned op after the repo, one docker restart guarded on it, the
+/// profile. No `sh`.
+#[test]
+fn cuda_ubuntu_orders_keyring_legacy_repo_packages_restart_profile() {
+    for d in ["ubuntu2404", "ubuntu2604"] {
+        let text = cuda_plan(d);
+        assert!(!text.contains(" sh as "), "{d}: {text}");
+        let at = |needle: &str| {
+            text.find(needle)
+                .unwrap_or_else(|| panic!("{d}: no {needle:?}: {text}"))
+        };
+        let keyring = at("pkg:cuda-keyring");
+        let list = at("writes [file:/etc/apt/sources.list.d/nvidia-container-toolkit.list]");
+        let gpg = at("writes [file:/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg]");
+        let repo = at("repo as shell:root");
+        let driver = at("pkg:nvidia-driver-580");
+        let cuda = at("pkg:cuda-toolkit-13-2");
+        let tk = at("pkg:nvidia-container-toolkit,");
+        let docker = at("svc");
+        let profile = at("file:/etc/profile.d/cuda.sh");
+        assert!(keyring < repo, "{d}: {text}");
+        assert!(list < repo && gpg < repo, "{d}: {text}");
+        assert!(repo < driver && repo < cuda && repo < tk, "{d}: {text}");
+        assert!(tk < docker, "{d}: {text}");
+        let _ = profile;
+        assert!(
+            text.contains("nvidia.github.io/libnvidia-container/stable/deb/$(ARCH)"),
+            "{d}: {text}"
+        );
+        assert!(
+            text.contains("nvidia-container-toolkit.sources"),
+            "{d}: {text}"
+        );
+        for n in [
+            "pkg:nvidia-container-toolkit,",
+            "pkg:nvidia-container-toolkit-base",
+            "pkg:libnvidia-container-tools",
+            "pkg:libnvidia-container1",
+        ] {
+            assert!(text.contains(n), "{d}: {n}: {text}");
+        }
+        // one pinned op for the four (FOREMAN, T156): they depend on each
+        // other at `=` one version, so apt must install them in one call
+        assert!(
+            text.contains(
+                "tp_want=('nvidia-container-toolkit' 'nvidia-container-toolkit-base' 'libnvidia-container-tools' 'libnvidia-container1')"
+            ),
+            "{d}: {text}"
+        );
+        assert_eq!(text.matches("tp_pin='1.19.0-1'").count(), 1, "{d}: {text}");
+        // the package's own list and keyring are never touched
+        assert!(!text.contains("cuda-ubuntu2404-x86_64.list"), "{d}: {text}");
+        assert!(!text.contains("cuda-archive-keyring"), "{d}: {text}");
+    }
+}
+
+/// The driver op alone marks the reboot (the YAML's `restart host` notify on
+/// the CUDA and toolkit installs was over wide), the fetch carries the
+/// checksum, and the profile is 0644.
+#[test]
+fn cuda_marks_only_the_driver_and_checks_the_keyring_sum() {
+    let text = cuda_plan("ubuntu2404");
+    assert_eq!(text.matches("needs_reboot").count(), 1, "{text}");
+    let line = text
+        .lines()
+        .find(|l| l.contains("needs_reboot"))
+        .expect("a reboot mark");
+    assert!(line.contains("pkg:nvidia-driver-580"), "{line}");
+    // the CUDA packages are a separate op: not folded into the marked one
+    assert!(!line.contains("cuda-toolkit-13-2"), "{line}");
+    assert!(!line.contains("nvtop"), "{line}");
+    assert!(
+        text.contains("d2a6b11c096396d868758b86dab1823b25e14d70333f1dfa74da5ddaf6a06dba"),
+        "{text}"
+    );
+    assert!(text.contains("cuda-keyring_1.1-1_all.deb"), "{text}");
+    assert!(text.contains("1.1-1"), "{text}");
+    assert!(text.contains("1.19.0-1"), "{text}");
+    assert!(
+        text.contains("chmod 644") || text.contains("0644") || text.contains("644"),
+        "{text}"
+    );
+}
+
+/// The oracle case's vars file: an empty driver list is no op and no
+/// reboot mark; the CUDA list is `nvtop` alone.
+#[test]
+fn cuda_with_the_small_lists_has_no_driver_op_and_no_reboot() {
+    let text = cuda_small_plan("ubuntu2404");
+    assert!(!text.contains("nvidia-driver-580"), "{text}");
+    assert!(!text.contains("cuda-drivers-580"), "{text}");
+    assert!(!text.contains("reboot"), "{text}");
+    assert!(text.contains("pkg:nvtop"), "{text}");
+    assert!(!text.contains("cuda-toolkit-13-2"), "{text}");
+    assert!(text.contains("pkg:cuda-keyring"), "{text}");
+    assert!(text.contains("pkg:libnvidia-container1"), "{text}");
+}
+
+/// Everything but Ubuntu and Pop!_OS 24.04 and later: no op. The vendor
+/// repository is NVIDIA's ubuntu2404 one.
+#[test]
+fn cuda_does_nothing_off_ubuntu_24_and_later() {
+    for d in [
+        "debian12",
+        "debian13",
+        "fedora43",
+        "fedora44",
+        "rockylinux9",
+        "rockylinux10",
+        "almalinux9",
+        "almalinux10",
+        "amazonlinux2023",
+        "arch",
+        "omarchy",
+    ] {
+        let text = cuda_plan(d);
+        assert!(!text.contains("cuda"), "{d}: {text}");
+        assert!(!text.contains("nvidia"), "{d}: {text}");
+    }
+}

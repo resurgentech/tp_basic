@@ -6,6 +6,7 @@
 
 use telepatch::{Host, Playbook, PlaybookFuture, TraceError};
 
+use crate::roles::cuda::cuda;
 use crate::roles::h11ssl_reboot_fix::h11ssl_reboot_fix;
 use crate::roles::hashicorp_packer::hashicorp_packer;
 use crate::roles::maasfix::maasfix;
@@ -22,6 +23,7 @@ pub fn all() -> Vec<Playbook<Vars>> {
         Playbook::new("labtwo_root_user", labtwo_root_user_entry),
         Playbook::new("labtwo_hashicorp_packer", labtwo_hashicorp_packer_entry),
         Playbook::new("labtwo_h11ssl_reboot_fix", labtwo_h11ssl_reboot_fix_entry),
+        Playbook::new("labtwo_cuda", labtwo_cuda_entry),
     ]
 }
 
@@ -73,4 +75,14 @@ fn labtwo_h11ssl_reboot_fix_entry(h: Host<Vars>) -> PlaybookFuture {
 /// `playbooks/labtwo.yml:9-12`, the `H11SSL_motherboards` play: its one role.
 async fn labtwo_h11ssl_reboot_fix(h: &Host<Vars>) -> Result<(), TraceError> {
     h11ssl_reboot_fix(h).await
+}
+
+fn labtwo_cuda_entry(h: Host<Vars>) -> PlaybookFuture {
+    Box::pin(async move { labtwo_cuda(&h).await })
+}
+
+/// `playbooks/labtwo.yml`, the `gpu_servers` play: its one role. No reboot
+/// barrier here: the playbook step (T157) places `h.reboot().if_pending()`.
+async fn labtwo_cuda(h: &Host<Vars>) -> Result<(), TraceError> {
+    cuda(h).await
 }

@@ -128,6 +128,61 @@ impl Default for HashicorpPackerVars {
     }
 }
 
+/// `roles/cuda` (`roles/cuda/vars/main.yml`, the Ubuntu 24.04 values; the
+/// 22.04 branches are dropped). The Ansible names are kept, so a top-level
+/// key of a vars file reaches this role as it reached the YAML.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct CudaVars {
+    /// The `cuda-keyring` package, NVIDIA's `ubuntu2404` repository. The
+    /// package version is read from the file name in this URL.
+    pub cuda_keyring_url: String,
+    /// The sha256 of that file, from the repository's `Packages` index.
+    pub cuda_keyring_sha256: String,
+    /// The driver packages. Empty: no op (and no reboot mark).
+    pub nvidia_driver_packages: Vec<String>,
+    /// The CUDA packages (toolkit, libraries, cuDNN, GDS, nvtop).
+    pub cuda_packages: Vec<String>,
+    /// The container-toolkit package names, each pinned to
+    /// `nvidia_container_toolkit_version`.
+    pub nvidia_container_toolkit_packages: Vec<String>,
+    /// The apt version of every toolkit package.
+    pub nvidia_container_toolkit_version: String,
+    /// Where the CUDA toolkit lives; `/etc/profile.d/cuda.sh` points at it.
+    pub cuda_install_path: String,
+}
+
+impl Default for CudaVars {
+    fn default() -> Self {
+        let list = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect();
+        CudaVars {
+            cuda_keyring_url: "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb".to_string(),
+            cuda_keyring_sha256: "d2a6b11c096396d868758b86dab1823b25e14d70333f1dfa74da5ddaf6a06dba".to_string(),
+            nvidia_driver_packages: list(&["nvidia-driver-580", "nvidia-dkms-580", "cuda-drivers-580"]),
+            cuda_packages: list(&[
+                "cuda-toolkit-13-2",
+                "cuda-tools-13-2",
+                "cuda-compiler-13-2",
+                "cuda-libraries-13-2",
+                "cuda-libraries-dev-13-2",
+                "libcudnn9-cuda-13",
+                "libcudnn9-dev-cuda-13",
+                "libcudnn9-headers-cuda-13",
+                "nvidia-gds-13-2",
+                "nvtop",
+            ]),
+            nvidia_container_toolkit_packages: list(&[
+                "nvidia-container-toolkit",
+                "nvidia-container-toolkit-base",
+                "libnvidia-container-tools",
+                "libnvidia-container1",
+            ]),
+            nvidia_container_toolkit_version: "1.19.0-1".to_string(),
+            cuda_install_path: "/usr/local/cuda-13.2".to_string(),
+        }
+    }
+}
+
 /// `roles/systemd_time`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
@@ -202,6 +257,7 @@ pub struct Vars {
     pub rust_kernel: RustKernelVars,
     pub rust_build: RustBuildVars,
     pub hashicorp_packer: HashicorpPackerVars,
+    pub cuda: CudaVars,
     pub systemd_time: SystemdTimeVars,
     pub services_vm: ServicesVmVars,
     pub reboot_vm: RebootVmVars,

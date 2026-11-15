@@ -168,3 +168,42 @@ fn labtwo_hashicorp_packer_vars_name_the_login_user_for_both_roles() {
     assert_eq!(v.vm_server.admin_users, users(&["bot"]));
     assert_eq!(v.hashicorp_packer.admin_users, users(&["bot"]));
 }
+
+#[test]
+fn cuda_vars_default_to_the_ubuntu_2404_values_and_follow_the_top_level_keys() {
+    let d = Vars::default().cuda;
+    assert_eq!(d.nvidia_driver_packages.len(), 3);
+    assert_eq!(d.cuda_packages.len(), 10);
+    assert_eq!(d.nvidia_container_toolkit_packages.len(), 4);
+    assert_eq!(d.nvidia_container_toolkit_version, "1.19.0-1");
+    assert_eq!(d.cuda_install_path, "/usr/local/cuda-13.2");
+    assert!(
+        d.cuda_keyring_url
+            .contains("/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb")
+    );
+    assert_eq!(d.cuda_keyring_sha256.len(), 64);
+    // the shipped container file is the defaults
+    assert_eq!(shipped("container").cuda, d);
+    let v: Vars = load("v", "cuda_packages = [\"nvtop\"]\n", "").unwrap();
+    assert_eq!(v.cuda.cuda_packages, users(&["nvtop"]));
+}
+
+/// The oracle case's vars file: the same small lists as the Ansible side's
+/// `-e` overrides (scripts/test-vm-oracle.sh, case labtwo_cuda).
+#[test]
+fn labtwo_cuda_vars_are_the_small_lists_and_nothing_else() {
+    let v = shipped("labtwo_cuda").cuda;
+    assert!(v.nvidia_driver_packages.is_empty());
+    assert_eq!(v.cuda_packages, users(&["nvtop"]));
+    let d = Vars::default().cuda;
+    assert_eq!(v.cuda_keyring_url, d.cuda_keyring_url);
+    assert_eq!(
+        v.nvidia_container_toolkit_packages,
+        d.nvidia_container_toolkit_packages
+    );
+    assert_eq!(
+        v.nvidia_container_toolkit_version,
+        d.nvidia_container_toolkit_version
+    );
+    assert_eq!(v.cuda_install_path, d.cuda_install_path);
+}
