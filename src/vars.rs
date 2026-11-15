@@ -112,6 +112,23 @@ impl Default for RustBuildVars {
     }
 }
 
+/// `roles/systemd_time`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SystemdTimeVars {
+    /// The host's time zone, an IANA name (`group_vars/all` of
+    /// `ansible_labtwo_2`: `America/Los_Angeles`).
+    pub iana_tz: String,
+}
+
+impl Default for SystemdTimeVars {
+    fn default() -> Self {
+        SystemdTimeVars {
+            iana_tz: "America/Los_Angeles".to_string(),
+        }
+    }
+}
+
 /// `playbooks/desktop.rs` `services_vm` (test-only, not a role): the vars
 /// `scripts/test-vm.sh` changes. `probe_description` between runs 2 and 3
 /// (the unit file); `probe_conf` on run 4 (the conf file, not the unit).
@@ -168,6 +185,7 @@ pub struct Vars {
     pub vm_server: VmServerVars,
     pub rust_kernel: RustKernelVars,
     pub rust_build: RustBuildVars,
+    pub systemd_time: SystemdTimeVars,
     pub services_vm: ServicesVmVars,
     pub reboot_vm: RebootVmVars,
 }

@@ -1,0 +1,6 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host debian13 (os: Debian/Debian 13)
+blocking reads: 0

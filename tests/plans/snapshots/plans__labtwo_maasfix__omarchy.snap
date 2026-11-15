@@ -1,0 +1,6 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host omarchy (os: Arch/Arch rolling)
+blocking reads: 0

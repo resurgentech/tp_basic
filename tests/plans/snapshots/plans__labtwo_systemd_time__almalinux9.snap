@@ -1,0 +1,48 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host almalinux9 (os: RedHat/Alma 9.8)
+blocking reads: 0
+shell helpers: undo fe76955f
+
+window 1 (final)
+role systemd_time
+  #1 pkg as shell:root reads [] writes [pkg:tzdata] post [pkg:tzdata=Installed]
+      | rc=0; changed=0; installed=()
+      | tp_want=('tzdata')
+      | tp_missing=()
+      | for tp_n in "${tp_want[@]}"; do
+      |   case "$tp_n" in
+      |     @*) dnf group list --installed 2>/dev/null | grep -qF -- "${tp_n#@}" || tp_missing+=("$tp_n");;
+      |     *) rpm -q --whatprovides "$tp_n" >/dev/null 2>&1 || tp_missing+=("$tp_n");;
+      |   esac
+      | done
+      | if [ "${#tp_missing[@]}" -gt 0 ]; then
+      |   dnf install -y "${tp_missing[@]}"
+      |   rc=$?
+      |   if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
+      | fi
+  #2 timezone as shell:root reads [pkg:tzdata] writes [file:/etc/localtime, timezone] post [file:/etc/localtime=Exists(true), timezone="America/Los_Angeles"]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | tp_r="${TP_TZ_ROOT-}"
+      | tp_cur() { local l; l=$(readlink -- "$tp_r/etc/localtime" 2>/dev/null) || return 0; case $l in */zoneinfo/*) printf '%s' "${l#*/zoneinfo/}";; esac; }
+      | tp_z='America/Los_Angeles'
+      | tp_deb=0
+      | tp_set() {
+      |   tp_sbx "$tp_r/etc/localtime" "$tp_r/etc/timezone" "$tp_r/usr/share/zoneinfo" || return 1
+      |   if [ ! -f "$tp_r/usr/share/zoneinfo/$tp_z" ]; then
+      |     echo "telepatch: timezone $tp_z: no zoneinfo (install tzdata)" >&2
+      |     return 1
+      |   fi
+      |   tp_wz=$(tp_cur)
+      |   [ "$tp_wz" != "$tp_z" ] || return 0
+      |   if [ -d "${TP_SVC_RUNDIR:-/run/systemd/system}" ] && command -v timedatectl >/dev/null 2>&1; then
+      |     timedatectl set-timezone "$tp_z" || return 1
+      |   else
+      |     ln -sf -- "/usr/share/zoneinfo/$tp_z" "$tp_r/etc/localtime" || return 1
+      |   fi
+      |   if [ "$tp_deb" = 1 ]; then printf '%s\n' "$tp_z" > "$tp_r/etc/timezone" || return 1; fi
+      |   changed=1
+      | }
+      | tp_set || rc=1

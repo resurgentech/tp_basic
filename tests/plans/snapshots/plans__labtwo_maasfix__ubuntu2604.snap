@@ -1,0 +1,92 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host ubuntu2604 (os: Debian/Ubuntu 26.04)
+blocking reads: 1
+shell helpers: undo fe76955f
+
+window 2 (final)
+role maasfix
+  #2 file as shell:root reads [] writes [file:/etc/apt/sources.list] post [file:/etc/apt/sources.list=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/apt/sources.list'
+      | tp_was "$tp_p"
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | tp_b='IyBVYnVudHUgc291cmNlcyBoYXZlIG1vdmVkIHRvIC9ldGMvYXB0L3NvdXJjZXMubGlzdC5kL3VidW50dS5zb3VyY2VzCg=='
+      | if [ "$rc" -eq 0 ] && ! { [ -f "$tp_p" ] && [ "$(printf %s "$tp_b" | base64 -d | sha256sum | cut -d' ' -f1)" = "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |   if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then tp_save "$tp_p" || rc=1; fi
+      |   if [ "$rc" -eq 0 ]; then tp_t=$(mktemp "$tp_p.tpXXXXXX") || rc=$?; fi
+      |   if [ "$rc" -eq 0 ]; then
+      |     if printf %s "$tp_b" | base64 -d > "$tp_t"; then
+      |       if [ -e "$tp_p" ]; then
+      |         chmod --reference="$tp_p" "$tp_t"; chown --reference="$tp_p" "$tp_t" 2>/dev/null
+      |       else
+      |         chmod 644 "$tp_t"
+      |       fi
+      |       mv -f "$tp_t" "$tp_p"; rc=$?
+      |     else
+      |       rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then changed=1; else rm -f "$tp_t"; fi
+      |   fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c %a "$tp_p")" != '644' ]; then
+      |   if chmod 644 "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+      | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U' "$tp_p")" != 'root' ]; then
+      |   if chown 'root' "$tp_p"; then changed=1; else rc=$?; fi
+      | fi
+  #3 unit as shell:root reads [] writes [file:/etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf, svc:systemd-networkd-wait-online.service] post [file:/etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | tp_ud="${TP_UNIT_DIR:-/etc/systemd/system}"
+      | rc=0; changed=0
+      | tp_p="$tp_ud"/'systemd-networkd-wait-online.service.d/override.conf'
+      | tp_was "$tp_p"
+      | [ -d "$tp_ud"/'systemd-networkd-wait-online.service.d' ] || { tp_mk "$tp_ud"/'systemd-networkd-wait-online.service.d' && tp_ct=$tp_cx; }
+      | if [ -d "$tp_p" ]; then echo "telepatch: $tp_p is a directory" >&2; rc=1; fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_c=$(mktemp "$tp_p.tpXXXXXX") || rc=$?
+      | fi
+      | if [ "$rc" -eq 0 ]; then
+      |   tp_b='W1NlcnZpY2VdCkV4ZWNTdGFydD0KRXhlY1N0YXJ0PS9saWIvc3lzdGVtZC9zeXN0ZW1kLW5ldHdvcmtkLXdhaXQtb25saW5lIC0tYW55IC0tdGltZW91dD0zMAo='
+      |   printf %s "$tp_b" | base64 -d > "$tp_c" || rc=$?
+      |   changed=0
+      |   if [ "$rc" -eq 0 ] && { [ ! -e "$tp_p" ] || [ "$(sha256sum < "$tp_c" | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ]; }; then
+      |     if [ -e "$tp_p" ]; then chmod --reference="$tp_p" "$tp_c" || rc=$?; else chmod 644 "$tp_c" || rc=$?; fi
+      |     if [ "$rc" -eq 0 ] && [ -e "$tp_p" ]; then chown --reference="$tp_p" "$tp_c" 2>/dev/null; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       tp_vc='if ! command -v systemd-analyze >/dev/null 2>&1; then
+      |   echo '\''telepatch: no systemd-analyze: systemd-networkd-wait-online.service.d/override.conf not verified'\'' >&2
+      |   exit 0
+      | fi
+      | tp_vf=--man=no
+      | if systemd-analyze --help 2>/dev/null | grep -q -- --recursive-errors; then tp_vf="$tp_vf --recursive-errors=no"; fi
+      | tp_vb=
+      | for tp_vx in "$tp_ud" /run/systemd/system /usr/local/lib/systemd/system /usr/lib/systemd/system /lib/systemd/system; do
+      |   for tp_vn in '\''systemd-networkd-wait-online.service'\''; do
+      |     if [ -f "$tp_vx/$tp_vn" ]; then tp_vb="$tp_vx/$tp_vn"; break 2; fi
+      |   done
+      | done
+      | if [ -z "$tp_vb" ]; then
+      |   echo '\''telepatch: unit systemd-networkd-wait-online.service not found: drop-in systemd-networkd-wait-online.service.d/override.conf not verified'\'' >&2
+      |   exit 0
+      | fi
+      | tp_vd=$(mktemp -d) || exit 1
+      | { mkdir -- "$tp_vd"/'\''systemd-networkd-wait-online.service.d'\'' && cp -- "$tp_vb" "$tp_vd"/'\''systemd-networkd-wait-online.service'\'' && cp -- "$tp_c" "$tp_vd"/'\''systemd-networkd-wait-online.service.d'\''/'\''override.conf'\''; } || { rm -rf -- "$tp_vd"; exit 1; }
+      | systemd-analyze verify $tp_vf "$tp_vd"/'\''systemd-networkd-wait-online.service'\''
+      | tp_vr=$?
+      | rm -rf -- "$tp_vd"
+      | exit "$tp_vr"
+      | '
+      |       ( eval "$tp_vc" ) || rc=$?
+      |     fi
+      |     if [ "$rc" -eq 0 ]; then tp_save "$tp_p" || rc=1; fi
+      |     if [ "$rc" -eq 0 ]; then
+      |       mv -f "$tp_c" "$tp_p"; rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |     fi
+      |   fi
+      |   rm -f "$tp_c"
+      | fi

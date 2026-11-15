@@ -1,0 +1,6 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host almalinux9 (os: RedHat/Alma 9.8)
+blocking reads: 0

@@ -129,3 +129,17 @@ fn only_the_test_playbooks_supply_defaults() {
         );
     }
 }
+
+#[test]
+fn systemd_time_zone_defaults_to_los_angeles_and_loads_from_a_section() {
+    // `group_vars/all` of ansible_labtwo_2: iana_tz
+    assert_eq!(Vars::default().systemd_time.iana_tz, "America/Los_Angeles");
+    assert_eq!(
+        shipped("container").systemd_time.iana_tz,
+        "America/Los_Angeles"
+    );
+    let v: Vars = load("v", "[systemd_time]\niana_tz = \"Europe/Berlin\"\n", "").unwrap();
+    assert_eq!(v.systemd_time.iana_tz, "Europe/Berlin");
+    let v: Vars = load("v", "iana_tz = \"Asia/Tokyo\"\n", "").unwrap();
+    assert_eq!(v.systemd_time.iana_tz, "Asia/Tokyo");
+}

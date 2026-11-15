@@ -65,10 +65,11 @@ Role docs:
 - Ported earlier, understanding in code comments: `admin_users`,
   `dev_common`, `src_repos`, `kernel_build`, `docker`, `vm_server`,
   `rust_build`, `tmux` (`src/roles/<role>.rs`).
-- To come, one per port step, `conversion/<role>.md`: `maasfix`
-  (T151), `systemd_time` (T152), `root_user` (T153),
-  `hashicorp_packer` (T154), `H11SSL_reboot_fix` (T155), `cuda`
-  (T156). None exists at this commit.
+- Ported in Goal 10, understanding in code comments: `maasfix` (T151),
+  `systemd_time` (T152). Their mirrors stay, cited here.
+- To come, one per port step, `conversion/<role>.md`: `root_user`
+  (T153), `hashicorp_packer` (T154), `H11SSL_reboot_fix` (T155),
+  `cuda` (T156).
 
 ## Outcomes
 

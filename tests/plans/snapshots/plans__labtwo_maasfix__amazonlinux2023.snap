@@ -1,0 +1,6 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host amazonlinux2023 (os: RedHat/Amazon 2023)
+blocking reads: 0

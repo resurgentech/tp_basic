@@ -1032,3 +1032,174 @@ fn kernel_build_requests_the_llvm_set_itself() {
         }
     }
 }
+
+// ---- T151: maasfix (labtwo_maasfix) ---------------------------------------
+
+const MAAS_SOURCES: &str = "/etc/apt/sources.list.d/ubuntu.sources";
+const MAAS_POINTER: &str = "# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources";
+
+/// The plan of `labtwo_maasfix` for an os-release text, with
+/// `/etc/apt/sources.list.d/ubuntu.sources` present or absent. The default
+/// fake answers every fact absent, so the present case is answered here.
+fn maasfix_plan_for_os(name: &str, os: telepatch::facts::os::Os, sources_exist: bool) -> String {
+    use telepatch::facts::query::Fact;
+    use telepatch::testing::{FakeExecutor, FixtureHost, plan_with};
+    use telepatch::{RunAs, Value};
+    let pbs = playbooks();
+    let pb = pbs
+        .iter()
+        .find(|p| p.name == "labtwo_maasfix")
+        .unwrap_or_else(|| panic!("no playbook labtwo_maasfix"));
+    let host = FixtureHost::new(name, os, std::rc::Rc::new(Vars::default()));
+    let fake = FakeExecutor::new().answer(
+        RunAs::root_shell(),
+        Fact::exists(MAAS_SOURCES),
+        Value::Exists(sources_exist),
+    );
+    plan_with(pb, &host, fake)
+}
+
+fn maasfix_plan(distro: &str, sources_exist: bool) -> String {
+    let os = telepatch::facts::os::Os::fixture(distro).unwrap();
+    maasfix_plan_for_os(distro, os, sources_exist)
+}
+
+/// A MAAS-deployed host has `ubuntu.sources`, so the snapshots are planned
+/// with it present.
+#[test]
+fn labtwo_maasfix_plans() {
+    for d in DISTROS {
+        let text = maasfix_plan(d, true);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("labtwo_maasfix__{d}"), text);
+        });
+    }
+}
+
+/// Ubuntu 24.04 and later: the pointer comment (one `file` op, content only)
+/// when `ubuntu.sources` exists, and the networkd drop-in; no `sh`.
+#[test]
+fn maasfix_writes_pointer_and_drop_in_on_ubuntu() {
+    for d in ["ubuntu2404", "ubuntu2604"] {
+        let text = maasfix_plan(d, true);
+        assert!(!text.contains(" sh as "), "{d}: {text}");
+        assert_eq!(
+            text.matches("file:/etc/apt/sources.list=").count(),
+            1,
+            "{d}: {text}"
+        );
+        assert!(
+            text.contains("unit systemd-networkd-wait-online.service"),
+            "{d}: {text}"
+        );
+        assert!(
+            text.contains("systemd-networkd-wait-online.service.d/override.conf"),
+            "{d}: {text}"
+        );
+    }
+    // The op carries exactly the pointer comment and a newline (the plan
+    // shows content base64-encoded; this is `MAAS_POINTER\n` encoded).
+    let text = maasfix_plan("ubuntu2404", true);
+    let want = "IyBVYnVudHUgc291cmNlcyBoYXZlIG1vdmVkIHRvIC9ldGMvYXB0L3NvdXJjZXMubGlzdC5kL3VidW50dS5zb3VyY2VzCg==";
+    assert!(text.contains(want), "{MAAS_POINTER}: {text}");
+}
+
+/// Without `ubuntu.sources` the sources.list op is not traced; the drop-in is.
+#[test]
+fn maasfix_leaves_sources_list_when_no_ubuntu_sources() {
+    let text = maasfix_plan("ubuntu2404", false);
+    assert!(!text.contains("file:/etc/apt/sources.list="), "{text}");
+    assert!(text.contains("systemd-networkd-wait-online"), "{text}");
+}
+
+/// Every other distro is a no-op, even with the file present.
+#[test]
+fn maasfix_is_a_no_op_off_ubuntu() {
+    for d in DISTROS.iter().filter(|d| !d.starts_with("ubuntu")) {
+        let text = maasfix_plan(d, true);
+        assert!(
+            !text.contains("systemd-networkd-wait-online"),
+            "{d}: {text}"
+        );
+        assert!(!text.contains("file:/etc/apt/sources.list"), "{d}: {text}");
+    }
+}
+
+/// Ubuntu before 24.04 is deprecated and has no branch; Pop!_OS follows the
+/// YAML's `ubuntu2404_based` flag, which names it, from 24.04 on.
+#[test]
+fn maasfix_gate_is_ubuntu_or_pop_from_2404() {
+    let os = |id: &str, ver: &str| {
+        telepatch::facts::os::Os::parse(&format!(
+            "ID={id}\nID_LIKE=\"ubuntu debian\"\nNAME=x\nVERSION_ID=\"{ver}\"\n"
+        ))
+        .unwrap()
+    };
+    for (id, ver, runs) in [
+        ("ubuntu", "22.04", false),
+        ("ubuntu", "24.04", true),
+        ("ubuntu", "26.04", true),
+        ("pop", "22.04", false),
+        ("pop", "24.04", true),
+    ] {
+        let text = maasfix_plan_for_os("t", os(id, ver), true);
+        assert_eq!(
+            text.contains("systemd-networkd-wait-online"),
+            runs,
+            "{id} {ver}: {text}"
+        );
+    }
+}
+
+// ---- T152: systemd_time (labtwo_systemd_time) -----------------------------
+
+/// The plan of `labtwo_systemd_time` for `distro` with the given vars.
+fn systemd_time_plan(distro: &str, vars: Vars) -> String {
+    use telepatch::testing::{FakeExecutor, FixtureHost, plan_with};
+    let pbs = playbooks();
+    let pb = pbs
+        .iter()
+        .find(|p| p.name == "labtwo_systemd_time")
+        .unwrap_or_else(|| panic!("no playbook labtwo_systemd_time"));
+    let os = telepatch::facts::os::Os::fixture(distro).unwrap();
+    let host = FixtureHost::new(distro, os, std::rc::Rc::new(vars));
+    plan_with(pb, &host, FakeExecutor::new())
+}
+
+#[test]
+fn labtwo_systemd_time_plans() {
+    for d in DISTROS {
+        let text = systemd_time_plan(d, Vars::default());
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("labtwo_systemd_time__{d}"), text);
+        });
+    }
+}
+
+/// Every family installs tzdata, then sets the zone; no `sh`, and the
+/// timezone op follows the pkg op (it reads `pkg:tzdata`).
+#[test]
+fn systemd_time_installs_tzdata_then_sets_the_zone() {
+    for d in DISTROS {
+        let text = systemd_time_plan(d, Vars::default());
+        assert!(!text.contains(" sh as "), "{d}: {text}");
+        let pkg = text
+            .find("pkg as shell:root reads [] writes [pkg:tzdata]")
+            .unwrap_or_else(|| panic!("{d}: no tzdata pkg: {text}"));
+        let tz = text
+            .find("timezone as shell:root reads [pkg:tzdata]")
+            .unwrap_or_else(|| panic!("{d}: no timezone: {text}"));
+        assert!(pkg < tz, "{d}: {text}");
+        assert!(text.contains("America/Los_Angeles"), "{d}: {text}");
+    }
+}
+
+/// The zone is the `iana_tz` var, not a literal.
+#[test]
+fn systemd_time_uses_the_iana_tz_var() {
+    let mut v = Vars::default();
+    v.systemd_time.iana_tz = "Europe/Berlin".to_string();
+    let text = systemd_time_plan("ubuntu2404", v);
+    assert!(text.contains("Europe/Berlin"), "{text}");
+    assert!(!text.contains("America/Los_Angeles"), "{text}");
+}

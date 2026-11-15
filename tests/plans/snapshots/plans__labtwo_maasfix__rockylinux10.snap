@@ -1,0 +1,6 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host rockylinux10 (os: RedHat/Rocky 10.2)
+blocking reads: 0

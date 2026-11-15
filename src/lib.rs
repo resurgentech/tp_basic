@@ -12,6 +12,7 @@ pub fn playbooks() -> Vec<Playbook<Vars>> {
     let mut all = playbooks::container::all();
     all.extend(playbooks::desktop::all());
     all.extend(playbooks::edge::all());
+    all.extend(playbooks::labtwo::all());
     all.extend(playbooks::local_user::all());
     all.extend(playbooks::reboot::all());
     all.extend(playbooks::undo::all());
