@@ -12,7 +12,7 @@ role dev_common
       | rc=0; changed=0; installed=()
       | tp_want=('python3-apt' 'python3-pip' 'build-essential' 'cmake' 'clang' 'llvm' 'lld' 'git' 'rsync' 'gcc' 'gnupg' 'rpm' 'cppcheck' 'autoconf' 'asciidoc' 'bc' 'cpio' 'bison' 'flex' 'gawk' 'gettext' 'gzip' 'hostname' 'm4' 'net-tools' 'openssl' 'xmlto' 'zstd' 'diffstat' 'sshpass' 'btop' 'acl' 'curl' 'python3-jinja2' 'python3-git' 'python3-yaml' 'python3-hvac')
       | tp_missing=()
-      | export DEBIAN_FRONTEND=noninteractive
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | tp_apt_present() {
       |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
       |   dpkg-query -W -f='${db:Status-Status} ${Provides}\n' 2>/dev/null | awk -v n="$1" '$1 != "installed" { next } { line=$0; sub(/^installed[[:space:]]+/, "", line); k=split(line, parts, /,/); for (i=1; i<=k; i++) { p=parts[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", p); sub(/[[:space:]].*/, "", p); if (p == n) found=1 } } END { exit (found ? 0 : 1) }'
@@ -220,7 +220,7 @@ role kernel_build
       | rc=0; changed=0; installed=()
       | tp_want=('libncurses-dev' 'libssl-dev' 'libelf-dev' 'libudev-dev' 'libpci-dev' 'libiberty-dev' 'equivs' 'dwarves' 'dkms')
       | tp_missing=()
-      | export DEBIAN_FRONTEND=noninteractive
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | apt-get -q update || rc=$?
       | tp_apt_present() {
       |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
@@ -240,7 +240,7 @@ role kernel_build
       | rc=0; changed=0; installed=()
       | tp_want=('linux')
       | tp_missing=()
-      | export DEBIAN_FRONTEND=noninteractive
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | if [ "$rc" -eq 0 ]; then
       |   :
       |   if ! find /var/lib/apt/lists -maxdepth 1 -type f ! -name lock 2>/dev/null | grep -q .; then apt-get -q update || rc=$?; fi
@@ -257,7 +257,7 @@ role rust_build
       | rc=0; changed=0; installed=()
       | tp_want=('g++' 'libssl-dev' 'pkg-config' 'clang' 'musl-tools')
       | tp_missing=()
-      | export DEBIAN_FRONTEND=noninteractive
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | tp_apt_present() {
       |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
       |   dpkg-query -W -f='${db:Status-Status} ${Provides}\n' 2>/dev/null | awk -v n="$1" '$1 != "installed" { next } { line=$0; sub(/^installed[[:space:]]+/, "", line); k=split(line, parts, /,/); for (i=1; i<=k; i++) { p=parts[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", p); sub(/[[:space:]].*/, "", p); if (p == n) found=1 } } END { exit (found ? 0 : 1) }'
@@ -382,7 +382,7 @@ role rust_kernel
       | rc=0; changed=0; installed=()
       | tp_want=('libclang-dev')
       | tp_missing=()
-      | export DEBIAN_FRONTEND=noninteractive
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | apt-get -q update || rc=$?
       | tp_apt_present() {
       |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0

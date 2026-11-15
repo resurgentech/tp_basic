@@ -12,7 +12,7 @@ role edge
       | rc=0; changed=0; installed=()
       | tp_want=('curl' 'ca-certificates' 'zlib1g-dev' 'libz-dev')
       | tp_missing=()
-      | export DEBIAN_FRONTEND=noninteractive
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | tp_apt_present() {
       |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
       |   dpkg-query -W -f='${db:Status-Status} ${Provides}\n' 2>/dev/null | awk -v n="$1" '$1 != "installed" { next } { line=$0; sub(/^installed[[:space:]]+/, "", line); k=split(line, parts, /,/); for (i=1; i<=k; i++) { p=parts[i]; gsub(/^[[:space:]]+|[[:space:]]+$/, "", p); sub(/[[:space:]].*/, "", p); if (p == n) found=1 } } END { exit (found ? 0 : 1) }'
@@ -78,7 +78,7 @@ role edge
       | rc=0; changed=0; installed=()
       | tp_want=('docker-ce-cli')
       | tp_missing=()
-      | export DEBIAN_FRONTEND=noninteractive
+      | export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
       | apt-get -q update || rc=$?
       | tp_apt_present() {
       |   [ "$(dpkg-query -W -f='${db:Status-Status}' "$1" 2>/dev/null)" = installed ] && return 0
