@@ -118,7 +118,8 @@ test-services distro:
 # or `just test-vm ubuntu2404 dev_desktop` (vars/desktop.toml, 30 GB disk;
 # per-user working checks for bot and tpdev gate after run 2), or the test-only
 # `services_vm` (units, five runs), `undo_fs` (backups on a second filesystem, one run),
-# `local_user` (as_user over --local, run inside the VM, three runs)
+# `local_user` (as_user over --local, run inside the VM, three runs),
+# `labtwo` (the labtwo playbook across its reboot), `labtwo_gpu` (cuda, small lists)
 # and `reboot_vm` (reboot marks and the barrier,
 # five runs, `--reboot never` on run 3).
 test-vm distro playbook:

@@ -1315,6 +1315,29 @@ labtwo_cmdline_problems() {
     return 0
 }
 
+# LABTWO_GRUB_IMAGE_FIX : a POSIX sh script (`sh -s -- <grub defaults file>`)
+# that takes the packer installer's `autoinstall` and `ds=nocloud*` tokens out
+# of GRUB_CMDLINE_LINUX and GRUB_CMDLINE_LINUX_DEFAULT, keeping everything else.
+# vmtool's ubuntu2404 image keeps `ds=nocloud-net;s=http://10.0.2.2:8557/` from
+# its build there; grub-mkconfig writes it unquoted onto the `linux` line, and
+# GRUB's script reads the `;` as the end of the command, so every argument
+# after it (kernel_args' reboot=efi among them) never reaches the kernel
+# (T158 attempt 5: /proc/cmdline ended at `ds=nocloud-net`). A MAAS-deployed
+# host has no such token. An environment step, like apt-get update; it is
+# applied before the pre-run capture and followed by update-grub.
+LABTWO_GRUB_IMAGE_FIX='f=$1
+awk '"'"'
+/^GRUB_CMDLINE_LINUX(_DEFAULT)?=/ {
+    i = index($0, "="); k = substr($0, 1, i); v = substr($0, i + 1); q = ""
+    c = substr(v, 1, 1)
+    if (c == "\"" || c == sprintf("%c", 39)) { q = c; v = substr(v, 2, length(v) - 2) }
+    n = split(v, a, " "); o = ""
+    for (j = 1; j <= n; j++) if (a[j] != "autoinstall" && a[j] !~ /^ds=nocloud/) o = o (o == "" ? "" : " ") a[j]
+    print k q o q; next
+}
+{ print }
+'"'"' "$f" >"$f.tp-new" && cat "$f.tp-new" >"$f" && rm -f "$f.tp-new"'
+
 # labtwo_self_test : the labtwo case's helpers on synthetic input.
 labtwo_self_test() {
     local t fails=0 got want c h='bot@192.0.2.9'
@@ -1353,7 +1376,18 @@ labtwo_self_test() {
         if [[ $got == "${c#*|}" ]]; then echo "ok   labtwo_cmdline_problems '${c%%|*}' -> '${got}'"
         else echo "FAIL labtwo_cmdline_problems '${c%%|*}' -> '$got', wanted '${c#*|}'"; fails=1; fi
     done
-    rm -f "$t"/inv.toml "$t"/check "$t"/check2 "$t"/check3
+    # the image fix: the installer's autoinstall and ds=nocloud tokens leave
+    # GRUB_CMDLINE_LINUX*; every other line and token is kept as it was
+    printf '%s\n' '# grub' 'GRUB_DEFAULT=0' 'GRUB_CMDLINE_LINUX_DEFAULT="autoinstall ds=nocloud-net;s=http://10.0.2.2:8557/ quiet"' \
+        "GRUB_CMDLINE_LINUX='console=ttyS0 autoinstall'" 'GRUB_TIMEOUT=0' 'X="autoinstall"' >"$t/grub"
+    want=$(printf '%s\n' '# grub' 'GRUB_DEFAULT=0' 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"' "GRUB_CMDLINE_LINUX='console=ttyS0'" 'GRUB_TIMEOUT=0' 'X="autoinstall"')
+    got=$(sh -c "$LABTWO_GRUB_IMAGE_FIX" sh "$t/grub" 2>&1; cat "$t/grub")
+    if [[ $got == "$want" ]]; then echo "ok   LABTWO_GRUB_IMAGE_FIX: autoinstall and ds=nocloud* (with its ;s=) leave GRUB_CMDLINE_LINUX*, the rest kept"
+    else echo "FAIL LABTWO_GRUB_IMAGE_FIX:"; diff <(echo "$want") <(echo "$got") | sed 's/^/     | /'; fails=1; fi
+    got=$(sh -c "$LABTWO_GRUB_IMAGE_FIX" sh "$t/grub" 2>&1; cat "$t/grub")
+    if [[ $got == "$want" ]]; then echo "ok   LABTWO_GRUB_IMAGE_FIX: a second pass changes nothing"
+    else echo "FAIL LABTWO_GRUB_IMAGE_FIX second pass:"; diff <(echo "$want") <(echo "$got") | sed 's/^/     | /'; fails=1; fi
+    rm -f "$t"/inv.toml "$t"/check "$t"/check2 "$t"/check3 "$t"/grub "$t"/grub.tp-new
     rmdir "$t"
     return $fails
 }
@@ -1837,6 +1871,14 @@ if [[ $container == labtwo ]]; then
     for p in labtwo_maasfix labtwo_src_repos; do
         sshv 'sudo -n sh -s' <"$ROOT/scripts/oracle-preseed/$p.sh" || die "pre-seed $p failed"
     done
+    echo "=== image fix: the installer's autoinstall/ds=nocloud tokens out of /etc/default/grub, then update-grub ==="
+    sshv 'grep -E "^GRUB_CMDLINE_LINUX" /etc/default/grub' 2>&1 | sed 's/^/     before | /'
+    sshv "sudo -n sh -c $(printf %q "$LABTWO_GRUB_IMAGE_FIX") sh /etc/default/grub && sudo -n update-grub" >"$out/grub-image-fix.log" 2>&1 \
+        || { tail -5 "$out/grub-image-fix.log"; die "the grub image fix failed (log: $out/grub-image-fix.log)"; }
+    sshv 'grep -E "^GRUB_CMDLINE_LINUX" /etc/default/grub' 2>&1 | sed 's/^/     after  | /'
+    gl=$(sshv 'sudo -n awk '"'"'$1 == "linux"'"'"' /boot/grub/grub.cfg' 2>&1) || die "cannot read /boot/grub/grub.cfg"
+    if grep -q ';' <<<"$gl"; then echo "FAIL: a linux line of grub.cfg still holds ';' after the image fix:"; echo "$gl"; exit 1; fi
+    ok "image fix: no ';' on grub.cfg's linux lines"
     sshv 'sudo -n apt-get -q update' >"$out/preseed-update.log" 2>&1 || die "apt-get update after the pre-seeds failed (log: $out/preseed-update.log)"
     sshv_cmd='sudo -n sshd -T 2>/dev/null | grep -E "^(permitrootlogin|passwordauthentication) " | sort'
     sshd0=$(sshv "$sshv_cmd" 2>&1) || true

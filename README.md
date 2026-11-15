@@ -71,6 +71,22 @@ runs that must not contact OpenBao. The plan snapshots
 (`tests/plans/snapshots/labtwo__*`) cover four group sets on ubuntu2404 and
 ubuntu2604 and the `servers` set on the other eleven distros.
 
+On a VM (1 GiB, 40 GB disk), `just test-vm ubuntu2404 labtwo` proves the
+playbook over SSH. The VM is in `servers`, `maas_installs` and
+`H11SSL_motherboards`, with the login user as its admin user. It is pre-seeded
+with a MAAS-style `sources.list` and the old `ubuntu-src.sources`. The image's
+installer tokens (`autoinstall ds=nocloud-net;s=…`) are taken out of
+`/etc/default/grub`, because GRUB reads that `;` as the end of the `linux` line.
+The case then checks:
+- `--check` lists the expected changes;
+- run 1 (`--reboot auto`) crosses one reboot, and afterwards `reboot=efi` is
+  in `/proc/cmdline`, the time zone, sources and drop-ins are as wanted,
+  `sshd -T` is unchanged, and a fresh login and sudo work;
+- run 2 is CHANGED 0, with no reboot.
+
+`just test-vm ubuntu2404 labtwo_gpu` runs the same playbook in `servers` and
+`gpu_servers`, with cuda's small lists (`vars/labtwo_gpu_vm.toml`).
+
 The same binary builds images (bind-mounted into a `docker build`, see
 `../docker_images/Dockerfiles/telepatch.*`), provisions a machine it is copied to, or provisions hosts
 over SSH from wherever it runs.
