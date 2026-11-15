@@ -976,3 +976,37 @@ fn local_user_plans_run_in_the_users_login_shell() {
         );
     }
 }
+
+/// T144: src_repos is the `distro_repos` primitive, with no `sh!`. On
+/// Ubuntu it first removes the old labtwo role's `ubuntu-src.sources`, a
+/// deb-src-only copy of `ubuntu.sources`; on Debian there is no such file.
+#[test]
+fn src_repos_is_the_distro_repos_op() {
+    for (d, path, legacy) in [
+        ("ubuntu2404", "/etc/apt/sources.list.d/ubuntu.sources", true),
+        ("ubuntu2604", "/etc/apt/sources.list.d/ubuntu.sources", true),
+        ("debian12", "/etc/apt/sources.list.d/debian.sources", false),
+        ("debian13", "/etc/apt/sources.list.d/debian.sources", false),
+    ] {
+        let text = plan("container/kernel_build", d);
+        let role = role_section(&text, "src_repos");
+        assert!(!role.contains(" sh as "), "{d}: {role}");
+        assert!(
+            !text.contains("src/roles/src_repos.rs"),
+            "{d}: a sh! warning"
+        );
+        let op = role
+            .find("distro_repos")
+            .unwrap_or_else(|| panic!("{d}: no distro_repos op: {role}"));
+        assert!(role.contains(&format!("file:{path}")), "{d}: {role}");
+        let old = role.find("file:/etc/apt/sources.list.d/ubuntu-src.sources");
+        assert_eq!(old.is_some(), legacy, "{d}: {role}");
+        if let Some(o) = old {
+            assert!(o < op, "{d}: the removal runs first: {role}");
+        }
+    }
+    for d in ["fedora43", "arch"] {
+        let text = plan("container/kernel_build", d);
+        assert!(!text.contains("distro_repos"), "{d}: {text}");
+    }
+}

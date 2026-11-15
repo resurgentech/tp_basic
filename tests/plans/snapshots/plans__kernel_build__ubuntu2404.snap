@@ -201,22 +201,41 @@ role dev_common
       |   fi
       | fi
 role src_repos
-  #10 sh as shell:root reads [] writes [file:/etc/apt/sources.list.d/*.sources]
-      | rc=0; changed=0; skipped=0
-      | if { ! ls /etc/apt/sources.list.d/*.sources >/dev/null 2>&1 || grep -qs '^Types:.*deb-src' /etc/apt/sources.list.d/*.sources; } >/dev/null 2>&1; then
-      |   skipped=1
-      | else
-      | tp_out=$(mktemp)
-      | {
-      | sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/*.sources
-      | echo SOURCES_CHANGED
-      | } 2>&1 | tee "$tp_out"
-      | rc=${PIPESTATUS[0]}
-      | if [ "$rc" -eq 0 ] && grep -Eq 'SOURCES_CHANGED' "$tp_out"; then changed=1; fi
-      | rm -f "$tp_out"
+  #10 file as shell:root reads [] writes [file:/etc/apt/sources.list.d/ubuntu-src.sources] post [file:/etc/apt/sources.list.d/ubuntu-src.sources=Exists(false)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/apt/sources.list.d/ubuntu-src.sources'
+      | tp_was "$tp_p"
+      | if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   tp_gate "$tp_p" || rc=1
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -n "$tp_bd" ]; then tp_try "$tp_p" "$tp_bd/old" mv -- "$tp_p" "$tp_bd/old"; else rm -rf -- "$tp_p"; fi
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; else tp_bk=; fi
+      |   fi
       | fi
+  #11 distro_repos as shell:root reads [] writes [file:/etc/apt/sources.list.d/ubuntu.sources, repo:distro_repos] post [file:/etc/apt/sources.list.d/ubuntu.sources=Exists(true), repo:distro_repos=Exists(true)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | tp_p='/etc/apt/sources.list.d/ubuntu.sources'
+      | tp_render() { sed -E '/^[Tt][Yy][Pp][Ee][Ss]:/{/[[:blank:]:]deb-src([[:blank:]]|\r?$)/!s/[[:blank:]]*(\r?)$/ deb-src\1/}' -- "$1"; }
+      | tp_enable() {
+      |   if [ ! -f "$tp_p" ]; then
+      |     echo "telepatch: distro_repos: no $tp_p (one-line sources.list layout is not supported)" >&2
+      |     return 1
+      |   fi
+      |   [ "$(tp_render "$tp_p" | sha256sum | cut -d' ' -f1)" != "$(sha256sum < "$tp_p" | cut -d' ' -f1)" ] || return 0
+      |   tp_was "$tp_p"; tp_save "$tp_p" || return 1
+      |   tp_t=$(mktemp "$tp_p.XXXXXX") || return 1
+      |   if tp_render "$tp_p" > "$tp_t" && chmod --reference="$tp_p" -- "$tp_t" && chown --reference="$tp_p" -- "$tp_t" && mv -f -- "$tp_t" "$tp_p"; then
+      |     changed=1
+      |     return 0
+      |   fi
+      |   rm -f -- "$tp_t"
+      |   return 1
+      | }
+      | tp_enable || rc=1
 role kernel_build
-  #13 pkg as shell:root reads [] writes [*]
+  #14 pkg as shell:root reads [] writes [*]
       | rc=0; changed=0; installed=()
       | tp_want=('linux')
       | tp_missing=()
@@ -232,7 +251,7 @@ role kernel_build
       |   if [ "$rc" -eq 0 ] && grep -Eq '[1-9][0-9]* newly installed' "$tp_out"; then changed=1; fi
       |   rm -f "$tp_out"
       | fi
-  #14 pkg as shell:root reads [] writes [pkg:binutils-dev, pkg:dwarves, pkg:equivs, pkg:libbabeltrace-dev, pkg:libperl-dev, pkg:libpython3-dev, pkg:libzstd-dev, pkg:python3-lxml, pkg:systemtap-sdt-dev] post [pkg:binutils-dev=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:libbabeltrace-dev=Installed, pkg:libperl-dev=Installed, pkg:libpython3-dev=Installed, pkg:libzstd-dev=Installed, pkg:python3-lxml=Installed, pkg:systemtap-sdt-dev=Installed]
+  #15 pkg as shell:root reads [] writes [pkg:binutils-dev, pkg:dwarves, pkg:equivs, pkg:libbabeltrace-dev, pkg:libperl-dev, pkg:libpython3-dev, pkg:libzstd-dev, pkg:python3-lxml, pkg:systemtap-sdt-dev] post [pkg:binutils-dev=Installed, pkg:dwarves=Installed, pkg:equivs=Installed, pkg:libbabeltrace-dev=Installed, pkg:libperl-dev=Installed, pkg:libpython3-dev=Installed, pkg:libzstd-dev=Installed, pkg:python3-lxml=Installed, pkg:systemtap-sdt-dev=Installed]
       | rc=0; changed=0; installed=()
       | tp_want=('libperl-dev' 'libzstd-dev' 'libpython3-dev' 'binutils-dev' 'equivs' 'dwarves' 'systemtap-sdt-dev' 'libbabeltrace-dev' 'python3-lxml')
       | tp_missing=()
@@ -252,5 +271,3 @@ role kernel_build
       |     if [ "$rc" -eq 0 ]; then changed=1; installed=("${tp_missing[@]}"); fi
       |   fi
       | fi
-
-warning: sh! in a role body at src/roles/src_repos.rs:100

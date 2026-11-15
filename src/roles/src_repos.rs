@@ -14,13 +14,25 @@
 //! images (debian12/13, ubuntu2404/2604) use deb822; both of each image's
 //! stanzas (main and security) are edited.
 //!
-//! The edit is guarded and exact. It does nothing if any `*.sources` file
-//! already has a `Types:` line mentioning `deb-src` (one file with it skips
-//! all files), and it rewrites only lines that are exactly `Types: deb`: a
-//! stanza that reads `Types: deb` plus other text, or lists the types in
-//! another order, is left alone. It leaves no backup file. The YAML prints
-//! `SOURCES_CHANGED` after a change, and that is the only thing its apt cache
-//! update waited for.
+//! The edit is the engine's `h.distro_repos().source_packages()` (T143):
+//! `deb-src` is added to every stanza of the distro's own deb822 file
+//! (`ubuntu.sources`, `debian.sources`) that lacks it, and nothing else in
+//! that file changes. Unlike the YAML's `sed` over `*.sources`, third-party
+//! sources (docker's, written by `repo`) are never touched: a repository
+//! that publishes no sources would make `apt-get update` fail. The YAML
+//! skipped every file once any had `deb-src`; the primitive settles per
+//! stanza, so a half-enabled file is finished. The op writes the file's key,
+//! so the next apt op refreshes the cache, as the YAML's
+//! `SOURCES_CHANGED` did; the original is backed up before the rewrite.
+//!
+//! Converging the old labtwo result: the labtwo copy of this role
+//! (`ansible_labtwo_2/roles/src_repos/tasks/apt_sources_list_d.yml:3-15`)
+//! wrote `/etc/apt/sources.list.d/ubuntu-src.sources`, a second copy of
+//! `ubuntu.sources` with `Types: deb-src` only. With deb-src now on
+//! `ubuntu.sources` itself, that copy makes apt warn that every source is
+//! configured multiple times, on every update. So on Ubuntu the role
+//! removes it first (the user's 2026-11-14 ruling: the role converges those
+//! hosts; nothing is done by hand).
 //!
 //! The deb822 format is current: apt's `sources.list(5)` says the one-line
 //! format "is deprecated and may eventually be removed, but not before
@@ -43,9 +55,10 @@
 //! does it work, by uncommenting them. Nobody should port its sed as if it
 //! worked. It also ran no apt cache update, so a host that took it would run
 //! `build-dep` against lists lacking the source indexes. Consequence: on a
-//! host with a one-line layout (an older Debian or Ubuntu workstation, or a
-//! Pop!_OS host with no `*.sources` file) this role does nothing and
-//! `build-dep` fails for lack of `deb-src` lines.
+//! host with a one-line layout (no `ubuntu.sources`/`debian.sources`) the
+//! op fails with `telepatch: distro_repos: no <path> (one-line sources.list
+//! layout is not supported)`, where the old port skipped and let
+//! `build-dep` fail later.
 //!
 //! Equivalence (2026-10-30): the docker oracle reported ubuntu2404 and
 //! rockylinux10 identical on `kernel_build` (gating and versions) against
@@ -54,17 +67,18 @@
 //! run as a gate; debian12/13 and ubuntu2604 follow the same code path, and
 //! their plan snapshots were read against the YAML.
 //!
-//! Open: whether a Pop!_OS workstation uses deb822 files
-//! (`ls /etc/apt/sources.list.d/*.sources` on one). If it prints nothing the
-//! host takes the dropped legacy branch.
+//! Pop!_OS keeps its sources in `system.sources`, which the primitive does
+//! not know (no recording), so on Pop!_OS the op is a trace error naming the
+//! distro: loud, where a silent skip would let `build-dep` fail later. No
+//! playbook in this repo targets Pop!_OS with this role today.
 
 use telepatch::facts::os::Distro;
-use telepatch::{Host, Key, TraceError, role, sh};
+use telepatch::{Host, TraceError, role};
 
 use crate::vars::Vars;
 
-/// The deb822 sources files the edit works on.
-const SOURCES_GLOB: &str = "/etc/apt/sources.list.d/*.sources";
+/// The old labtwo role's deb-src-only copy of `ubuntu.sources`.
+const LEGACY_SRC: &str = "/etc/apt/sources.list.d/ubuntu-src.sources";
 
 #[role]
 pub async fn src_repos(h: &Host<Vars>) -> Result<(), TraceError> {
@@ -73,40 +87,20 @@ pub async fn src_repos(h: &Host<Vars>) -> Result<(), TraceError> {
     if !matches!(h.os.distro, Distro::Debian | Distro::Ubuntu | Distro::PopOs) {
         return Ok(());
     }
-
-    // main.yml:4-12 and apt_sources_deb822.yml:7-15. The YAML finds
-    // `*.sources` files first and takes the deb822 branch when any exist;
-    // there is no glob fact, so the guard sits in the op: skip when no
-    // `*.sources` file exists, or when any already has a `deb-src` type
-    // (apt_sources_deb822.yml:9-11, one file with it skips all). Only lines
-    // that are exactly `Types: deb` are rewritten (:12).
-    //
-    // The legacy sources.list branch (main.yml:14-15,
-    // apt_sources_list.yml) is not ported: no image reaches it and it is
-    // broken as written (its `.ansible-src` file is never created, :8-10).
-    //
-    // The op declares the sources files as its writes, not `*`: that still
-    // makes the next apt op refresh the cache (apt_sources_deb822.yml:17-22,
-    // "Update apt package cache again" is that rule) and does not fence the
-    // package installs around it. The refresh matters: the source indexes
-    // exist only after it, the Dockerfile's own `apt-get update` ran against
-    // the old sources, and the layer that built `dev_base` deleted the lists.
-    // The `build-dep` after this role must stay after the edit and its
-    // refresh (a barrier() on the role if a merge ever hoists it). The rule
-    // is static, so the refresh runs on every play, not only when the sed
-    // changed something as in the YAML (cost: one oracle-invisible
-    // `apt-get update`).
-    // HACK(repo: deb-src on the distro's own sources): no primitive edits the distro's .sources files
-    sh!(
-        h,
-        "sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/*.sources\necho SOURCES_CHANGED",
-        unless = "! ls /etc/apt/sources.list.d/*.sources >/dev/null 2>&1 || grep -qs '^Types:.*deb-src' /etc/apt/sources.list.d/*.sources",
-        changed_if = "SOURCES_CHANGED"
-    )
-    .writes([Key::file(SOURCES_GLOB)]);
+    // Converge the old labtwo result before the edit (module comment).
+    if h.os.distro == Distro::Ubuntu {
+        h.file(LEGACY_SRC).absent();
+    }
+    // apt_sources_deb822.yml:7-22: deb-src on the distro's own sources, and
+    // the cache refresh the next apt op runs because the file's key is
+    // written. The `build-dep` after this role must stay after the edit and
+    // its refresh; the op writes a `repo:` key, so no distro pkg op is
+    // hoisted across it.
+    h.distro_repos().source_packages();
     Ok(())
 }
 
-// Intended differences: none. Open choices: none.
-// Replace the `sh!` with the `repo` primitive when it is built (a sed over a
-// glob has no primitive today).
+// Intended differences: third-party `.sources` files keep their types (the
+// YAML's sed gave them deb-src too); the old labtwo `ubuntu-src.sources` is
+// removed. Neither is visible to the oracle's images, which hold only the
+// distro's file. Open choices: none.
