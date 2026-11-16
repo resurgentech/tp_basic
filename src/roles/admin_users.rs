@@ -5,7 +5,7 @@
 //!
 //! Purpose: `dev_desktop` applies it first, as root. It makes two lines of
 //! `/etc/sudoers` right, then for each name in `admin_users` makes sure the
-//! account exists with `/bin/bash`, is in the group sudo's policy grants,
+//! account exists (created with `/bin/bash`), is in the group sudo's policy grants,
 //! has a `~/.ssh` directory and has its own drop-in in `/etc/sudoers.d`.
 //! The later roles that loop over `admin_users` rely on the accounts
 //! existing by then: `docker` (`roles/docker/vars/main.yml:2`), `golang`
@@ -202,9 +202,14 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
     let group = sudo_group(&h.os);
     for u in &h.vars.admin_users.admin_users {
         // `per_user.yml:3-24`, three tasks as one op. The YAML set the shell
-        // and the password only when the first task created the account, so
-        // an existing user kept a wrong shell; the op enforces the shell and
-        // applies the hash only on creation. An empty `default_password`
+        // and the password only when the first task created the account
+        // (`when: add_users.changed`, `per_user.yml:11-18`), and so does the
+        // op: `.shell_on_create` and `.password_hash` apply only on the
+        // `useradd` path. An existing account keeps its shell and nothing
+        // manages it. Ruled by the user 2026-11-16: "Leave existing
+        // accounts' shells alone: the role sets the shell only on accounts
+        // it creates, as Ansible did. The hosts keep zsh, and nothing
+        // manages it any more." An empty `default_password`
         // leaves the new account locked, which is also what the YAML did
         // (bug 3, not a bug to fix): observed 2026-11-03 that `password: ""`
         // (`per_user.yml:17`, `default_password` is `""`) does not give an
@@ -213,10 +218,9 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
         // letter `L`); ansible-core 2.15.13 on rockylinux:9 on an existing
         // user reported `changed: false`, field `!!` (`LK`). A plain
         // `usermod -p ""` does give `NP`, so the difference is in the
-        // module. The YAML set shell and password only when the first task
-        // created the account (`per_user.yml:12-18`). The group is added
-        // with `append`, never replacing the user's others (`groups_add`).
-        let user = h.user(u).shell("/bin/bash").groups_add([group]);
+        // module. The group is added with `append`, never replacing the
+        // user's others (`groups_add`).
+        let user = h.user(u).shell_on_create("/bin/bash").groups_add([group]);
         // `None` (no value in the vars file) leaves a new account locked,
         // which is what an empty `default_password` did.
         if let Some(pw) = &h.vars.admin_users.default_password {

@@ -129,12 +129,6 @@ role admin_users
       |   fi
       | else
       |   :
-      |   tp_cur=$(getent passwd "$tp_u" | cut -d: -f7)
-      |   if [ "$tp_cur" != '/bin/bash' ]; then
-      |     usermod -s '/bin/bash' -- "$tp_u"
-      |     rc=$?
-      |     if [ "$rc" -eq 0 ]; then changed=1; tp_wsj="\"$(__tp_esc "$tp_cur")\""; fi
-      |   fi
       |   if [ "$rc" -eq 0 ]; then
       |     tp_have=" $(id -nG "$tp_u") "
       |     tp_add=
