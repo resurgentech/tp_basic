@@ -26,12 +26,14 @@ role admin_users
       | if [ "$rc" -eq 0 ]; then
       |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
       |   tp_l='@includedir /etc/sudoers.d'
-      |   tp_n=$(grep -nE -- '^[#@]includedir\s+/etc/sudoers\.d' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   tp_ns=$(grep -nE -- '^[#@]includedir\s+/etc/sudoers\.d/?\s*$' "$tp_c" | cut -d: -f1)
+      |   tp_n=$(printf '%s\n' "$tp_ns" | tail -n 1)
+      |   tp_d=$(printf '%s\n' "$tp_ns" | sed '$d')
       |   if [ "$rc" -ne 0 ]; then :
       |   elif [ -z "$tp_n" ]; then
       |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
-      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
-      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |   elif [ -n "$tp_d" ] || [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" TP_D="$tp_d" awk -v n="$tp_n" 'BEGIN { k = split(ENVIRON["TP_D"], a); for (i = 1; i <= k; i++) d[a[i]] = 1 } NR==n { print ENVIRON["TP_L"]; next } (NR in d) { next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
       |     rc=$?
       |     rm -f "$tp_t"
       |     if [ "$rc" -eq 0 ]; then changed=1; fi
@@ -239,12 +241,14 @@ role root_user
       | if [ "$rc" -eq 0 ]; then
       |   if [ ! -e "$tp_c" ]; then (umask 022; : > "$tp_c") && changed=1 || rc=$?; fi
       |   tp_l='@includedir /etc/sudoers.d'
-      |   tp_n=$(grep -nE -- '^[#@]includedir' "$tp_c" | tail -n 1 | cut -d: -f1)
+      |   tp_ns=$(grep -nE -- '^[#@]includedir\s+/etc/sudoers\.d/?\s*$' "$tp_c" | cut -d: -f1)
+      |   tp_n=$(printf '%s\n' "$tp_ns" | tail -n 1)
+      |   tp_d=$(printf '%s\n' "$tp_ns" | sed '$d')
       |   if [ "$rc" -ne 0 ]; then :
       |   elif [ -z "$tp_n" ]; then
       |     if tp_append "$tp_c" "$tp_l"; then changed=1; else rc=$?; fi
-      |   elif [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
-      |     tp_t=$(mktemp) && TP_L="$tp_l" awk -v n="$tp_n" 'NR==n { print ENVIRON["TP_L"]; next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
+      |   elif [ -n "$tp_d" ] || [ "$(sed -n "${tp_n}p" "$tp_c")" != "$tp_l" ]; then
+      |     tp_t=$(mktemp) && TP_L="$tp_l" TP_D="$tp_d" awk -v n="$tp_n" 'BEGIN { k = split(ENVIRON["TP_D"], a); for (i = 1; i <= k; i++) d[a[i]] = 1 } NR==n { print ENVIRON["TP_L"]; next } (NR in d) { next } { print }' "$tp_c" > "$tp_t" && cat "$tp_t" > "$tp_c"
       |     rc=$?
       |     rm -f "$tp_t"
       |     if [ "$rc" -eq 0 ]; then changed=1; fi

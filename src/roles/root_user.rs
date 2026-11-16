@@ -15,14 +15,21 @@
 //!    `@includedir /etc/sudoers.d` (sudo 1.9.1 and later accept both
 //!    spellings), the regexp `^#includedir` misses it, and the YAML appends a
 //!    second include, so every drop-in is read twice. The port matches
-//!    `^[#@]includedir` and sets the line to `@includedir /etc/sudoers.d`: a
-//!    stock Ubuntu or Debian line is equal to it and is kept (no rewrite, no
-//!    change on run 2). On a host whose sudoers carries `#includedir` (the
-//!    RedHat family) the line is rewritten once to the `@` spelling, which
-//!    the sudo of every supported RedHat release (1.9.x) reads, and is equal
-//!    on the next run. The fix is named: the same one `admin_users` made for
-//!    the same line (`src/roles/admin_users.rs`, same directive, a narrower
-//!    regexp there).
+//!    `^[#@]includedir\s+/etc/sudoers\.d/?\s*$` and leaves exactly one line,
+//!    `@includedir /etc/sudoers.d` (`.line_re_unique`): a stock Ubuntu or
+//!    Debian line is equal to it and is kept (no rewrite, no change on run
+//!    2). On a host whose sudoers carries `#includedir` (the RedHat family)
+//!    the line is rewritten once to the `@` spelling, which the sudo of every
+//!    supported RedHat release (1.9.x) reads, and is equal on the next run.
+//!    A host Ansible already doubled (the veritech hosts: line 57
+//!    `@includedir /etc/sudoers.d`, line 58 `#includedir /etc/sudoers.d`)
+//!    converges to one `@includedir` line, the other match deleted (T166);
+//!    `.line_re` would have rewritten only the last and left two equal
+//!    lines. The regexp is anchored because every other match is deleted:
+//!    the YAML's broader `^[#@]includedir` would also remove an unrelated
+//!    `@includedir /some/other/dir`. The fix is shared: the regexp and the
+//!    line are `admin_users`' (`admin_users::INCLUDEDIR_RE`, `INCLUDEDIR`),
+//!    the same edit of the same line.
 //! 3. `/etc/sudoers` carries a `secure_path` (`:36-42`), matched with the
 //!    YAML's regexp `^Defaults\s*secure_path`. The line is not the YAML's
 //!    (`/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/bin:/usr/local/sbin`) but
@@ -90,16 +97,11 @@
 
 use telepatch::{Host, TraceError, role};
 
-use crate::roles::admin_users::secure_path_line;
+use crate::roles::admin_users::{INCLUDEDIR, INCLUDEDIR_RE, secure_path_line};
 use crate::vars::Vars;
 
 /// `main.yml:34,42`.
 const VISUDO: &str = "/usr/sbin/visudo -cf %s";
-
-/// `main.yml:31-32`, spelled with `@` so the line Ubuntu ships is kept; a
-/// `#includedir` line is rewritten to it.
-const INCLUDEDIR_RE: &str = "^[#@]includedir";
-const INCLUDEDIR: &str = "@includedir /etc/sudoers.d";
 
 /// `main.yml:40`, the YAML's regexp verbatim; the line is `admin_users`'.
 const SECURE_PATH_RE: &str = r"^Defaults\s*secure_path";
@@ -108,9 +110,10 @@ const SECURE_PATH_RE: &str = r"^Defaults\s*secure_path";
 pub async fn root_user(h: &Host<Vars>) -> Result<(), TraceError> {
     // main.yml:20-26.
     h.file("/root/.ssh").dir().mode(0o700).owner("root:root");
-    // main.yml:28-34.
+    // main.yml:28-34 (`:31-32` spelled with `@`), with admin_users' pair
+    // and one line left (module comment, item 2).
     h.file("/etc/sudoers")
-        .line_re(INCLUDEDIR_RE, INCLUDEDIR)
+        .line_re_unique(INCLUDEDIR_RE, INCLUDEDIR)
         .validate(VISUDO);
     // main.yml:36-42, with admin_users' line (module comment, item 3).
     if let Some(line) = secure_path_line(&h.os) {

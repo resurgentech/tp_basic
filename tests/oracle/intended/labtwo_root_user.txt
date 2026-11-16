@@ -4,8 +4,10 @@
 #
 # Bug: Ansible's lineinfile regexp `^#includedir` misses Ubuntu's stock
 # `@includedir /etc/sudoers.d`, so it appends a second, old-style include and
-# every drop-in is read twice. The port matches `^[#@]includedir` and keeps
-# the stock line, so telepatch lacks the appended line.
+# every drop-in is read twice. The port matches
+# `^[#@]includedir\s+/etc/sudoers\.d/?\s*$` (admin_users' INCLUDEDIR_RE, T166)
+# with `.line_re_unique` and keeps the stock line, so telepatch lacks the
+# appended line.
 -sudoers|#includedir /etc/sudoers.d
 # secure_path: the port writes admin_users' per-distro line (Ubuntu's stock
 # line, /usr/local first, /snap/bin kept) so the two roles of the play agree on

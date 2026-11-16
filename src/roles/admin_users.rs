@@ -69,6 +69,13 @@ use crate::vars::Vars;
 /// holds only through this check.
 const VISUDO: &str = "visudo -cf %s";
 
+/// The sudoers include of `/etc/sudoers.d`, either spelling, and nothing
+/// else: anchored at both ends because `.line_re_unique` deletes every match
+/// but the last. Shared with `root_user`, as `secure_path_line` is.
+pub(crate) const INCLUDEDIR_RE: &str = r"^[#@]includedir\s+/etc/sudoers\.d/?\s*$";
+/// The line both roles leave, once: the spelling every supported sudo reads.
+pub(crate) const INCLUDEDIR: &str = "@includedir /etc/sudoers.d";
+
 /// `roles/admin_users/templates/sudoers_template.j2:1-3`, byte for byte,
 /// including the seven spaces after `(ALL)` and the final newline. The
 /// password-free line, `requiretty` off, and `env_reset` off so the user's
@@ -161,9 +168,17 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
     // (bug 1; observed 2026-11-03, ansible-core 2.21.6, ubuntu:24.04:
     // `/etc/sudoers` held `57:@includedir /etc/sudoers.d` and
     // `58:#includedir /etc/sudoers.d`, `"msg": "line added"`; both lines are
-    // valid, so nothing broke). `^[#@]includedir` matches either spelling,
+    // valid, so nothing broke). `INCLUDEDIR_RE` matches either spelling,
     // so a stock Debian-family or Arch host is unchanged and the EL
-    // family's `#includedir` is rewritten once, never doubled. `#includedir`
+    // family's `#includedir` is rewritten once, never doubled. A host
+    // Ansible already doubled (the veritech hosts carry exactly the lines
+    // 57/58 above) converges to one `@includedir` line: `.line_re_unique`
+    // sets the last match and deletes the others, where `.line_re` would
+    // rewrite only the last and leave two equal lines (T166). Deletion is
+    // why the regexp is anchored to this one directive: an unrelated
+    // `@includedir /some/other/dir` is not matched. `root_user` makes the
+    // same edit with the same pair (`INCLUDEDIR_RE`, `INCLUDEDIR`), so the
+    // fix is shared and the two roles agree on the line. `#includedir`
     // is a directive, not a comment: sudo treats `#include` and
     // `#includedir` as directives and accepts them for sudo before 1.9.1;
     // the old spelling must not be lost where `@includedir` is absent.
@@ -173,10 +188,7 @@ pub async fn admin_users(h: &Host<Vars>) -> Result<(), TraceError> {
     // matching line is replaced, so a second run added no third line.
     // Source: https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/lineinfile_module.html (accessed 2026-11-03)
     h.file("/etc/sudoers")
-        .line_re(
-            r"^[#@]includedir\s+/etc/sudoers\.d",
-            "@includedir /etc/sudoers.d",
-        )
+        .line_re_unique(INCLUDEDIR_RE, INCLUDEDIR)
         .validate(VISUDO);
 
     // `main.yml:11-17`; see `secure_path_line` for bug 2 and for which

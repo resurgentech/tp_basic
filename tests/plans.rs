@@ -282,7 +282,9 @@ fn dev_desktop_admin_users_focus() {
     };
     for d in DISTROS {
         let text = role(d);
-        assert!(text.contains("^[#@]includedir"), "{d}: {text}");
+        // T166: the anchored regexp, through `.line_re_unique`, so a host
+        // Ansible already doubled converges to one line.
+        assert!(text.contains(INCLUDEDIR_RE_QUOTED), "{d}: {text}");
         assert!(text.contains("@includedir /etc/sudoers.d"), "{d}: {text}");
         assert!(text.contains("visudo -cf"), "{d}: {text}");
         assert!(!text.contains("$6$"), "{d}: a hash in the plan");
@@ -1220,6 +1222,9 @@ fn labtwo_root_user_plans() {
     }
 }
 
+/// The sudoers include regexp both roles share (T166), as the plan quotes it.
+const INCLUDEDIR_RE_QUOTED: &str = r"'^[#@]includedir\s+/etc/sudoers\.d/?\s*$'";
+
 /// `/root/.ssh` as a 0700 root dir and the two sudoers edits, each checked by
 /// visudo; the includedir line is the `@` spelling so a stock Ubuntu line is
 /// kept and the secure_path line is the YAML's.
@@ -1237,6 +1242,10 @@ fn root_user_makes_ssh_dir_and_two_validated_sudoers_edits() {
         );
         assert!(text.contains("visudo -cf"), "{d}: {text}");
         assert!(text.contains("includedir"), "{d}: {text}");
+        // T166: admin_users' anchored regexp, not the broader
+        // `^[#@]includedir`, which would delete an unrelated include.
+        assert!(text.contains(INCLUDEDIR_RE_QUOTED), "{d}: {text}");
+        assert!(!text.contains("'^[#@]includedir'"), "{d}: {text}");
         assert!(text.contains("@includedir /etc/sudoers.d"), "{d}: {text}");
         assert!(
             !text.contains("\n#includedir /etc/sudoers.d"),
