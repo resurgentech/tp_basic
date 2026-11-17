@@ -6,6 +6,43 @@
 //!
 //! The `labtwo` playbook itself (T157) is the YAML as one function: the
 //! per-group plays of `playbooks/labtwo.yml`, then one reboot barrier.
+//!
+//! What the port kept from the playbook (its understanding doc left
+//! `conversion/` in T162; the roles' own facts are in `src/roles/<role>.rs`):
+//!
+//! - Source. `playbooks/labtwo.yml` exists only in `ansible_labtwo_2`, taken
+//!   from the working tree of 67988b9 (it modifies the committed file), sha256
+//!   `f81a5d4f510c5c4d8d71053a88fe850c2187c7aef3964c229eefc30fad6b4f61`. Its six
+//!   newly ported roles (maasfix, H11SSL_reboot_fix, root_user,
+//!   hashicorp_packer, systemd_time, cuda) are byte-identical to the ansible
+//!   repo at 79d1ca1, which the oracle runs; the tree hashes that showed it
+//!   are in git history (`conversion/SOURCE` before T162).
+//! - Purpose: it configures lab two's bare-metal servers, MAAS deploys of the
+//!   Ubuntu 24.04 cloud image. Two plays exist only to undo quirks of those
+//!   installs (maasfix) and of one motherboard's EFI reboot
+//!   (H11SSL_reboot_fix).
+//! - Groups: every lab server is in `servers`, `maas_installs` and
+//!   `H11SSL_motherboards`; one is also the only `gpu_servers` member.
+//!   `storage_servers` holds one storage host that is not a lab server; it
+//!   stays in the third play's condition so the playbook matches the YAML.
+//!   Every host logs in as a non-root user with sudo (`sudo -n`).
+//! - The third play's vars `vault_addr` and `vault_token` (from the
+//!   controller environment) are read by no role, so they map to nothing in
+//!   `Vars`; `telepatch-openbao` reads `BAO_*`/`VAULT_*` itself when a secret
+//!   reference needs it.
+//! - Left out: `zsh` (user ruling, 2026-11-14); anything for Ubuntu 22.04
+//!   (deprecated, same day); the commented-out roles `golang`, `rust_tools`,
+//!   `cockpit`, `aptly_cli`, `xterm_ghostty` and `networkd_wait_fix` (the
+//!   YAML's comment asks whether it is redundant; maasfix carries the same
+//!   wait-online drop-in), and the commented-out "Client tools" play.
+//! - Order: `hashicorp_packer` follows `vm_server`, which creates the `kvm`
+//!   and `libvirt` groups it adds the admin users to.
+//! - Reboot: the YAML reboots in cuda's handler; here `H11SSL_reboot_fix`
+//!   (kernel_args) and cuda's driver op mark, and the one barrier at the end
+//!   crosses it.
+//! - One server carries a third-party apt source that no labtwo role writes;
+//!   no role acts on it.
+//! - What is proved and what is not: the README's "The labtwo playbook".
 
 use telepatch::{Host, Playbook, PlaybookFuture, TraceError};
 

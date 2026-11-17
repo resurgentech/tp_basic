@@ -13,11 +13,14 @@ repo relates to Ansible itself. It compiles to one static binary,
 ```
 src/playbooks/container.rs   container/dev_base, container/kernel_build, container/rust, container/latest_kernel_build
 src/playbooks/desktop.rs     dev_desktop, dev_desktop_kept (the VM oracle subset: admin_users, tmux), desktop_services (docker, vm_server: the svc proofs)
+src/playbooks/labtwo.rs      labtwo (the lab servers, by inventory group) and labtwo_<role>, the VM oracle's one-role cases
 src/roles/                   dev_common, kernel_build, rust_build, rust_kernel, src_repos,
-                             admin_users, docker, vm_server, node, golang, tmux
+                             admin_users, docker, vm_server, node, golang, tmux,
+                             maasfix, h11ssl_reboot_fix, root_user, hashicorp_packer, systemd_time, cuda
 src/vars.rs                  the typed vars every playbook reads (loaded from TOML)
 vars/container.toml          vars for image builds: admin_users = ["root"], tool versions
 vars/desktop.toml            vars for dev_desktop: admin_users = ["bot", "tpdev"]
+vars/labtwo*.toml            vars for labtwo: the real run, the VM runs, and the oracle's one-role cases
 scripts/                     the equivalence oracles and the VM harness (below)
 conversion/SOURCE            the ansible repo and commit the ports were made from; a role being ported keeps its YAML and understanding doc in conversion/ until it lands
 tests/plans.rs               plan snapshots: every playbook on every supported distro
@@ -27,10 +30,10 @@ Each role carries its understanding as comments: what the playbook is for,
 which branches were kept, dropped or fixed, and why. The YAML it replaced is
 gone; `conversion/SOURCE` records the ansible commit the ports were made
 from, and `just check-conversion` verifies the directory against it (with
-no port in progress it holds only that header). A second source,
-`ansible_labtwo_2` (`playbooks/labtwo.yml`, a working tree of 67988b9, by
-sha256), is recorded below it, with the role dirs' tree hashes that tie its
-copies to the 79d1ca1 mirror.
+no port in progress it holds only that header, as now). The labtwo playbook
+came from a second source, `ansible_labtwo_2` (`playbooks/labtwo.yml`, a
+working tree of 67988b9); its sha256 is in `src/playbooks/labtwo.rs`, and the
+tree hashes that tied that checkout's role dirs to 79d1ca1 are in git history.
 
 ## Build and run
 
@@ -86,6 +89,32 @@ The case then checks:
 
 `just test-vm ubuntu2404 labtwo_gpu` runs the same playbook in `servers` and
 `gpu_servers`, with cuda's small lists (`vars/labtwo_gpu_vm.toml`).
+
+What has been proved (Goal 10, closed 2026-11-16), per new role:
+
+| Role | Plan snapshots | VM oracle vs Ansible (ubuntu2404, 1 GiB) | VM run of `labtwo` | Real hosts (run, rerun CHANGED 0) | Reboot crossed on a real host |
+|---|---|---|---|---|---|
+| maasfix | 13 distros | equal | yes | veritech02, 03, 01 (no change of its own named) | no |
+| systemd_time | 13 | equal | yes | veritech02, 03, 01 (zone already set) | no |
+| root_user | 13 | equal but the declared sudoers and sshd lines | yes; `sshd -T` unchanged, fresh login | veritech02, 03, 01; sshd untouched | no |
+| hashicorp_packer | 13 | equal but the declared apt sources | yes | veritech02, 03, 01 (legacy list and key replaced) | no |
+| H11SSL_reboot_fix | 13 | equal (no reboot there) | yes; after the reboot `/proc/cmdline` has one `reboot=efi` | veritech02, 03, 01 (already in effect, no reboot marked) | no |
+| cuda | 13 | equal with small lists, but the declared apt sources | `labtwo_gpu`, small lists, no GPU | veritech01 with the full lists, already installed | no |
+
+The eight roles ported earlier ran in the same real-host runs. What is NOT
+proved:
+- any reboot crossed on a real host: `/proc/cmdline` after a real boot, the
+  GPU after a reboot, a rerun after a boot (that step is held);
+- veritech04, at all: it was never run, and never rebooted, because vt-* VMs
+  were on it;
+- a from-scratch NVIDIA driver and CUDA install on real hardware: veritech01
+  already had them, so the real run proved convergence only;
+- the H11SSL board's reboot behaviour, under the fault or otherwise: a hang
+  was seen on veritech02 after a by-hand reboot with `reboot=efi` in effect,
+  cause unknown;
+- veritech03's state before the port: it was unreachable for the survey, so
+  it has none (it answered later, and its real run went through);
+- Pop!_OS, which the roles accept but nothing ran.
 
 The same binary builds images (bind-mounted into a `docker build`, see
 `../docker_images/Dockerfiles/telepatch.*`), provisions a machine it is copied to, or provisions hosts
@@ -312,12 +341,12 @@ adds. Any user's login shell then runs `just` from
 
 ## Neighbours
 
-The harnesses read, and never write, three sibling checkouts:
+The harnesses read, and never write, these neighbours (`../ansible_labtwo_2`
+is listed for provenance only):
 
 - `../ansible`: the originals, at the commit in `conversion/SOURCE`.
-- `../ansible_labtwo_2`: only `playbooks/labtwo.yml` is taken from it (copied
-  into `conversion/`); `check-conversion` also compares its role dirs' tree
-  hashes when the checkout is there.
+- `../ansible_labtwo_2`: only `playbooks/labtwo.yml` was taken from it (its
+  sha256 is in `src/playbooks/labtwo.rs`); nothing reads it now.
 - `../docker_images`: the pinned base images; the Ansible-side Dockerfiles
   (from the pinned commit) and the telepatch Dockerfiles (its working
   tree, run with `build/dist`), which the docker oracle reuses unmodified.
