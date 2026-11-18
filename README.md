@@ -94,18 +94,22 @@ What has been proved (Goal 10, closed 2026-11-16), per new role:
 
 | Role | Plan snapshots | VM oracle vs Ansible (ubuntu2404, 1 GiB) | VM run of `labtwo` | Real hosts (run, rerun CHANGED 0) | Reboot crossed on a real host |
 |---|---|---|---|---|---|
-| maasfix | 13 distros | equal | yes | veritech02, 03, 01 (no change of its own named) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
-| systemd_time | 13 | equal | yes | veritech02, 03, 01 (zone already set) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
-| root_user | 13 | equal but the declared sudoers and sshd lines | yes; `sshd -T` unchanged, fresh login | veritech02, 03, 01; sshd untouched | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
-| hashicorp_packer | 13 | equal but the declared apt sources | yes | veritech02, 03, 01 (legacy list and key replaced) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
-| H11SSL_reboot_fix | 13 | equal (no reboot there) | yes; after the reboot `/proc/cmdline` has one `reboot=efi` | veritech02, 03, 01 (already in effect, no reboot marked) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; `/proc/cmdline` has one `reboot=efi` after that boot; the rerun after it CHANGED 0 |
+| maasfix | 13 distros | equal | yes | veritech02, 03, 01 (no change of its own named) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0. veritech03: one reboot crossed through telepatch's barrier (`reboot_vm`, `--reboot auto`, the user standing by); labtwo rerun after it CHANGED 0 |
+| systemd_time | 13 | equal | yes | veritech02, 03, 01 (zone already set) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0. veritech03: one reboot crossed through telepatch's barrier (`reboot_vm`, `--reboot auto`, the user standing by); labtwo rerun after it CHANGED 0 |
+| root_user | 13 | equal but the declared sudoers and sshd lines | yes; `sshd -T` unchanged, fresh login | veritech02, 03, 01; sshd untouched | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0. veritech03: one reboot crossed through telepatch's barrier (`reboot_vm`, `--reboot auto`, the user standing by); labtwo rerun after it CHANGED 0 |
+| hashicorp_packer | 13 | equal but the declared apt sources | yes | veritech02, 03, 01 (legacy list and key replaced) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0. veritech03: one reboot crossed through telepatch's barrier (`reboot_vm`, `--reboot auto`, the user standing by); labtwo rerun after it CHANGED 0 |
+| H11SSL_reboot_fix | 13 | equal (no reboot there) | yes; after the reboot `/proc/cmdline` has one `reboot=efi` | veritech02, 03, 01 (already in effect, no reboot marked) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; `/proc/cmdline` has one `reboot=efi` after that boot; the rerun after it CHANGED 0. veritech03: one reboot crossed through telepatch's barrier (`reboot_vm`, `--reboot auto`, the user standing by); `/proc/cmdline` has one `reboot=efi` after that boot; the board was back within telepatch's wait (down 566 s of 600 s); labtwo rerun after it CHANGED 0 |
 | cuda | 13 | equal with small lists, but the declared apt sources | `labtwo_gpu`, small lists, no GPU | veritech01 with the full lists, already installed | no |
 
 The eight roles ported earlier ran in the same real-host runs. What is NOT
 proved:
-- a reboot crossed through telepatch's barrier (`--reboot auto`) on a real
-  host; the GPU after a reboot; any boot on veritech03 or veritech01. What
-  is proved instead: veritech02 booted once after its run (2026-11-18, by
+- a reboot crossed through labtwo's own barrier on a real host
+  (veritech03's crossing went through the `reboot_vm` test playbook's
+  barrier, the same engine routine); the GPU after a reboot; any boot on
+  veritech01. What is proved instead: veritech03 crossed one reboot
+  through telepatch's barrier (2026-11-18, `reboot_vm`, `--reboot auto`,
+  the user standing by, down 566 s), and the labtwo rerun after it was
+  CHANGED 0; veritech02 booted once after its run (2026-11-18, by
   the user's own recovery, not by telepatch), `/proc/cmdline` then had one
   `reboot=efi`, and the rerun after that boot was CHANGED 0;
 - veritech04, at all: it was never run in Goal 10; vt-* VMs were on it, and
