@@ -766,6 +766,40 @@ fn reboot_vm_plans() {
     }
 }
 
+/// `reboot_vm_clean` (test-only, see `playbooks/reboot.rs`): exactly two
+/// ops, each removing one of `reboot_vm`'s two files, in the order
+/// `reboot_vm` writes them; nothing marks a reboot and there is no barrier.
+#[test]
+fn reboot_vm_clean_plan_removes_both_files_and_marks_nothing() {
+    for d in DISTROS {
+        let text = plan("reboot_vm_clean", d);
+        let ops: Vec<&str> = text.lines().filter(|l| l.starts_with("  #")).collect();
+        assert_eq!(ops.len(), 2, "{d}: two ops\n{text}");
+        for (op, p) in ops
+            .iter()
+            .zip(["/etc/tp-reboot-marked", "/etc/tp-reboot-after"])
+        {
+            assert!(
+                op.contains(&format!("writes [file:{p}]"))
+                    && op.contains(&format!("post [file:{p}=Exists(false)]")),
+                "{d}: {op}"
+            );
+            assert!(!op.contains("needs_reboot"), "{d}: {op}");
+        }
+        assert!(!text.contains("reboot if pending"), "{d}: barrier\n{text}");
+    }
+}
+
+#[test]
+fn reboot_vm_clean_plans() {
+    for d in DISTROS {
+        let text = plan("reboot_vm_clean", d);
+        insta::with_settings!({snapshot_path => "plans/snapshots"}, {
+            insta::assert_snapshot!(format!("reboot_vm_clean__{d}"), text);
+        });
+    }
+}
+
 /// Every registered playbook, planned twice on every distro, is the same
 /// text. The plan has no per-process token (T86c).
 #[test]

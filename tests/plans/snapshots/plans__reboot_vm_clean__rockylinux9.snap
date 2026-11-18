@@ -1,0 +1,36 @@
+---
+source: tests/plans.rs
+expression: text
+---
+host rockylinux9 (os: RedHat/Rocky 9.8)
+blocking reads: 0
+shell helpers: undo fe76955f
+
+window 1 (final)
+role (none)
+  #0 file as shell:root reads [] writes [file:/etc/tp-reboot-marked] post [file:/etc/tp-reboot-marked=Exists(false)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/tp-reboot-marked'
+      | tp_was "$tp_p"
+      | if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   tp_gate "$tp_p" || rc=1
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -n "$tp_bd" ]; then tp_try "$tp_p" "$tp_bd/old" mv -- "$tp_p" "$tp_bd/old"; else rm -rf -- "$tp_p"; fi
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; else tp_bk=; fi
+      |   fi
+      | fi
+  #1 file as shell:root reads [] writes [file:/etc/tp-reboot-after] post [file:/etc/tp-reboot-after=Exists(false)]
+      | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
+      | rc=0; changed=0
+      | tp_p='/etc/tp-reboot-after'
+      | tp_was "$tp_p"
+      | if [ -e "$tp_p" ] || [ -L "$tp_p" ]; then
+      |   tp_gate "$tp_p" || rc=1
+      |   if [ "$rc" -eq 0 ]; then
+      |     if [ -n "$tp_bd" ]; then tp_try "$tp_p" "$tp_bd/old" mv -- "$tp_p" "$tp_bd/old"; else rm -rf -- "$tp_p"; fi
+      |     rc=$?
+      |     if [ "$rc" -eq 0 ]; then changed=1; else tp_bk=; fi
+      |   fi
+      | fi
