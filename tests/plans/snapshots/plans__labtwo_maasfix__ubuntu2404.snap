@@ -3,12 +3,12 @@ source: tests/plans.rs
 expression: text
 ---
 host ubuntu2404 (os: Debian/Ubuntu 24.04)
-blocking reads: 1
+blocking reads: 3
 shell helpers: undo fe76955f
 
-window 2 (final)
+window 4 (final)
 role maasfix
-  #2 file as shell:root reads [] writes [file:/etc/apt/sources.list] post [file:/etc/apt/sources.list=Exists(true)]
+  #4 file as shell:root reads [] writes [file:/etc/apt/sources.list] post [file:/etc/apt/sources.list=Exists(true)]
       | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
       | rc=0; changed=0
       | tp_p='/etc/apt/sources.list'
@@ -38,7 +38,7 @@ role maasfix
       | if [ "$rc" -eq 0 ] && [ "$(stat -L -c '%U' "$tp_p")" != 'root' ]; then
       |   if chown 'root' "$tp_p"; then changed=1; else rc=$?; fi
       | fi
-  #3 unit as shell:root reads [] writes [file:/etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf, svc:systemd-networkd-wait-online.service] post [file:/etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf=Exists(true)]
+  #5 unit as shell:root reads [] writes [file:/etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf, svc:systemd-networkd-wait-online.service] post [file:/etc/systemd/system/systemd-networkd-wait-online.service.d/override.conf=Exists(true)]
       | [ "${__tp_hv-}" = fe76955f7a14ddf7 ] && declare -F tp_save >/dev/null || { echo "telepatch: shell helpers missing or stale (want fe76955f7a14ddf7)" >&2; exit 125; }
       | tp_ud="${TP_UNIT_DIR:-/etc/systemd/system}"
       | rc=0; changed=0
@@ -89,4 +89,20 @@ role maasfix
       |     fi
       |   fi
       |   rm -f "$tp_c"
+      | fi
+  #6 svc as shell:root reads [] writes [svc:systemd-networkd-wait-online.service] post [svc:systemd-networkd-wait-online.service=Exists(true)]
+      | tp_u='systemd-networkd-wait-online.service'
+      | tp_run="${TP_SVC_RUNDIR:-/run/systemd/system}"
+      | tp_skip=0
+      | if ! command -v systemctl >/dev/null 2>&1; then
+      |   skipped=1
+      | else
+      |   case "$(systemctl is-enabled -- "$tp_u" 2>/dev/null)" in
+      |     enabled|enabled-runtime|static|alias) ;;
+      |     *)
+      |       systemctl enable -- "$tp_u"
+      |       rc=$?
+      |       if [ "$rc" -eq 0 ]; then changed=1; fi
+      |       ;;
+      |   esac
       | fi

@@ -1074,10 +1074,27 @@ fn kernel_build_requests_the_llvm_set_itself() {
 const MAAS_SOURCES: &str = "/etc/apt/sources.list.d/ubuntu.sources";
 const MAAS_POINTER: &str = "# Ubuntu sources have moved to /etc/apt/sources.list.d/ubuntu.sources";
 
+/// The three directories maasfix globs for `*.network` (T173).
+const NETWORKD_DIRS: [&str; 3] = [
+    "/etc/systemd/network",
+    "/run/systemd/network",
+    "/usr/local/lib/systemd/network",
+];
+
+/// What netplan writes on the VM image and on a networkd-managed MAAS host.
+const NETPLAN_NETWORK: &str = "/run/systemd/network/10-netplan-x.network";
+
 /// The plan of `labtwo_maasfix` for an os-release text, with
-/// `/etc/apt/sources.list.d/ubuntu.sources` present or absent. The default
-/// fake answers every fact absent, so the present case is answered here.
-fn maasfix_plan_for_os(name: &str, os: telepatch::facts::os::Os, sources_exist: bool) -> String {
+/// `/etc/apt/sources.list.d/ubuntu.sources` present or absent, and the given
+/// `.network` files on the host (each answers the glob of its directory).
+/// The default fake answers every fact absent (a glob: no match), so the
+/// present cases are answered here.
+fn maasfix_plan_with(
+    name: &str,
+    os: telepatch::facts::os::Os,
+    sources_exist: bool,
+    network_files: &[&str],
+) -> String {
     use telepatch::facts::query::Fact;
     use telepatch::testing::{FakeExecutor, FixtureHost, plan_with};
     use telepatch::{RunAs, Value};
@@ -1087,17 +1104,120 @@ fn maasfix_plan_for_os(name: &str, os: telepatch::facts::os::Os, sources_exist: 
         .find(|p| p.name == "labtwo_maasfix")
         .unwrap_or_else(|| panic!("no playbook labtwo_maasfix"));
     let host = FixtureHost::new(name, os, std::rc::Rc::new(Vars::default()));
-    let fake = FakeExecutor::new().answer(
+    let mut fake = FakeExecutor::new().answer(
         RunAs::root_shell(),
         Fact::exists(MAAS_SOURCES),
         Value::Exists(sources_exist),
     );
+    let mut dirs: Vec<String> = network_files
+        .iter()
+        .map(|f| f.rsplit_once('/').expect("absolute").0.to_string())
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    for d in dirs {
+        let mut hits: Vec<String> = network_files
+            .iter()
+            .filter(|f| f.rsplit_once('/').map(|(p, _)| p) == Some(d.as_str()))
+            .map(|f| f.to_string())
+            .collect();
+        hits.sort();
+        fake = fake.answer(
+            RunAs::root_shell(),
+            Fact::glob(format!("{d}/*.network")),
+            Value::Paths(hits),
+        );
+    }
     plan_with(pb, &host, fake)
+}
+
+/// A networkd-managed host (netplan's file in `/run/systemd/network`).
+fn maasfix_plan_for_os(name: &str, os: telepatch::facts::os::Os, sources_exist: bool) -> String {
+    maasfix_plan_with(name, os, sources_exist, &[NETPLAN_NETWORK])
 }
 
 fn maasfix_plan(distro: &str, sources_exist: bool) -> String {
     let os = telepatch::facts::os::Os::fixture(distro).unwrap();
     maasfix_plan_for_os(distro, os, sources_exist)
+}
+
+/// The svc op for systemd-networkd-wait-online in `text` (its header line
+/// and script lines), if any, reduced to what it wants: `"enabled"` when the
+/// script runs `systemctl enable` and not `disable`, `"disabled"` for the
+/// reverse, anything else verbatim.
+fn wait_online_svc(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    lines.find(|l| {
+        l.contains(" svc as ") && l.contains("writes [svc:systemd-networkd-wait-online.service]")
+    })?;
+    let script: Vec<&str> = lines.take_while(|l| l.starts_with("      |")).collect();
+    let script = script.join("\n");
+    let en = script.contains("systemctl enable --");
+    let dis = script.contains("systemctl disable --");
+    Some(match (en, dis) {
+        (true, false) => "enabled".to_string(),
+        (false, true) => "disabled".to_string(),
+        _ => script,
+    })
+}
+
+fn maasfix_ubuntu(distro: &str, network_files: &[&str]) -> String {
+    let os = telepatch::facts::os::Os::fixture(distro).unwrap();
+    maasfix_plan_with(distro, os, true, network_files)
+}
+
+/// T173: no `.network` file in any of the three directories: the waiter is
+/// disabled, and the drop-in is written as before.
+#[test]
+fn maasfix_disables_wait_online_where_networkd_manages_nothing() {
+    for d in ["ubuntu2404", "ubuntu2604"] {
+        let text = maasfix_ubuntu(d, &[]);
+        let svc = wait_online_svc(&text).unwrap_or_else(|| panic!("{d}: no svc op: {text}"));
+        assert_eq!(svc, "disabled", "{d}: {text}");
+        assert!(
+            text.contains("systemd-networkd-wait-online.service.d/override.conf"),
+            "{d}: {text}"
+        );
+        assert!(!text.contains(" sh as "), "{d}: {text}");
+    }
+}
+
+/// A vendor file in `/usr/lib/systemd/network` is not read: still disabled.
+#[test]
+fn maasfix_ignores_vendor_network_files() {
+    let text = maasfix_ubuntu(
+        "ubuntu2404",
+        &["/usr/lib/systemd/network/80-container-ve.network"],
+    );
+    let svc = wait_online_svc(&text).unwrap_or_else(|| panic!("no svc op: {text}"));
+    assert_eq!(svc, "disabled", "{text}");
+}
+
+/// A `.network` file in any one of the three directories: enabled.
+#[test]
+fn maasfix_enables_wait_online_where_networkd_manages_a_link() {
+    for dir in NETWORKD_DIRS {
+        let f = format!("{dir}/10-x.network");
+        let text = maasfix_ubuntu("ubuntu2404", &[f.as_str()]);
+        let svc = wait_online_svc(&text).unwrap_or_else(|| panic!("{dir}: no svc op: {text}"));
+        assert_eq!(svc, "enabled", "{dir}: {text}");
+        assert!(
+            text.contains("systemd-networkd-wait-online.service.d/override.conf"),
+            "{dir}: {text}"
+        );
+    }
+}
+
+/// Off Ubuntu/Pop no svc op, managed or not.
+#[test]
+fn maasfix_has_no_svc_op_off_ubuntu() {
+    for d in DISTROS.iter().filter(|d| !d.starts_with("ubuntu")) {
+        for files in [&[][..], &[NETPLAN_NETWORK][..]] {
+            let os = telepatch::facts::os::Os::fixture(d).unwrap();
+            let text = maasfix_plan_with(d, os, true, files);
+            assert!(wait_online_svc(&text).is_none(), "{d}: {text}");
+        }
+    }
 }
 
 /// A MAAS-deployed host has `ubuntu.sources`, so the snapshots are planned
