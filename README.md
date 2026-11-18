@@ -113,6 +113,11 @@ proved:
   run (2026-11-18, by the user's own recovery, not by telepatch),
   `/proc/cmdline` then had one `reboot=efi`, and the rerun after that boot
   was CHANGED 0;
+- maasfix's boot effect: on veritech02 (2026-11-18) it disabled
+  `systemd-networkd-wait-online.service` (networkd manages no link there)
+  and the rerun was CHANGED 0, but the 30 s wait gone and the unit no
+  longer failed are seen only at veritech02's next boot; veritech01 and 03
+  were not run with it;
 - a reboot that completes without the user's help on this board: on
   veritech03 the board hung after the OS shut down (IPMI showed it powered
   on, but it did not answer), as veritech02's did on 2026-11-16, and it
