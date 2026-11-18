@@ -94,24 +94,27 @@ What has been proved (Goal 10, closed 2026-11-16), per new role:
 
 | Role | Plan snapshots | VM oracle vs Ansible (ubuntu2404, 1 GiB) | VM run of `labtwo` | Real hosts (run, rerun CHANGED 0) | Reboot crossed on a real host |
 |---|---|---|---|---|---|
-| maasfix | 13 distros | equal | yes | veritech02, 03, 01 (no change of its own named) | no |
-| systemd_time | 13 | equal | yes | veritech02, 03, 01 (zone already set) | no |
-| root_user | 13 | equal but the declared sudoers and sshd lines | yes; `sshd -T` unchanged, fresh login | veritech02, 03, 01; sshd untouched | no |
-| hashicorp_packer | 13 | equal but the declared apt sources | yes | veritech02, 03, 01 (legacy list and key replaced) | no |
-| H11SSL_reboot_fix | 13 | equal (no reboot there) | yes; after the reboot `/proc/cmdline` has one `reboot=efi` | veritech02, 03, 01 (already in effect, no reboot marked) | no |
+| maasfix | 13 distros | equal | yes | veritech02, 03, 01 (no change of its own named) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
+| systemd_time | 13 | equal | yes | veritech02, 03, 01 (zone already set) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
+| root_user | 13 | equal but the declared sudoers and sshd lines | yes; `sshd -T` unchanged, fresh login | veritech02, 03, 01; sshd untouched | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
+| hashicorp_packer | 13 | equal but the declared apt sources | yes | veritech02, 03, 01 (legacy list and key replaced) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; the rerun after it CHANGED 0 |
+| H11SSL_reboot_fix | 13 | equal (no reboot there) | yes; after the reboot `/proc/cmdline` has one `reboot=efi` | veritech02, 03, 01 (already in effect, no reboot marked) | veritech02: one boot crossed after the run, by the user's own recovery, not telepatch's barrier; `/proc/cmdline` has one `reboot=efi` after that boot; the rerun after it CHANGED 0 |
 | cuda | 13 | equal with small lists, but the declared apt sources | `labtwo_gpu`, small lists, no GPU | veritech01 with the full lists, already installed | no |
 
 The eight roles ported earlier ran in the same real-host runs. What is NOT
 proved:
-- any reboot crossed on a real host: `/proc/cmdline` after a real boot, the
-  GPU after a reboot, a rerun after a boot (that step is held);
-- veritech04, at all: it was never run, and never rebooted, because vt-* VMs
-  were on it;
+- a reboot crossed through telepatch's barrier (`--reboot auto`) on a real
+  host; the GPU after a reboot; any boot on veritech03 or veritech01. What
+  is proved instead: veritech02 booted once after its run (2026-11-18, by
+  the user's own recovery, not by telepatch), `/proc/cmdline` then had one
+  `reboot=efi`, and the rerun after that boot was CHANGED 0;
+- veritech04, at all: it was never run in Goal 10; vt-* VMs were on it, and
+  the user dropped it from the goal on 2026-11-18;
 - a from-scratch NVIDIA driver and CUDA install on real hardware: veritech01
   already had them, so the real run proved convergence only;
 - the H11SSL board's reboot behaviour, under the fault or otherwise: a hang
   was seen on veritech02 after a by-hand reboot with `reboot=efi` in effect,
-  cause unknown;
+  cause unknown, and veritech02 came back only by the user's recovery;
 - veritech03's state before the port: it was unreachable for the survey, so
   it has none (it answered later, and its real run went through);
 - Pop!_OS, which the roles accept but nothing ran.
