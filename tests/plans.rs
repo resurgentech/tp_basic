@@ -1862,17 +1862,16 @@ mod labtwo_pb {
         );
     }
 
-    /// With the real vars the plan sets the accounts' password from the
-    /// reference (the plan shows only `<secret>`); the VM vars leave
-    /// accounts locked, so their plan has no password step.
+    /// Neither labtwo vars file sets `default_password` (user ruling,
+    /// 2026-11-18: the OpenBao reference left `vars/labtwo.toml`), so an
+    /// account a run creates stays locked and no plan has a password step.
     #[test]
-    fn vm_vars_have_no_password_step() {
-        let real = plan_with_groups("gpu", "ubuntu2404", "labtwo");
-        let vm = plan_with_groups("gpu", "ubuntu2404", "labtwo_vm");
-        assert!(real.contains("chpasswd -e"), "{real}");
-        assert!(real.contains("<secret>"), "{real}");
-        assert!(!vm.contains("chpasswd"), "{vm}");
-        assert!(!vm.contains("<secret>"), "{vm}");
+    fn labtwo_vars_have_no_password_step() {
+        for vars in ["labtwo", "labtwo_vm"] {
+            let text = plan_with_groups("gpu", "ubuntu2404", vars);
+            assert!(!text.contains("chpasswd"), "{vars}: {text}");
+            assert!(!text.contains("<secret>"), "{vars}: {text}");
+        }
     }
 
     #[test]

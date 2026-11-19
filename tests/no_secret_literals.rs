@@ -39,31 +39,32 @@ fn tracked_vars_and_inventory_have_no_secret_literals() {
 }
 
 /// The labtwo vars files are checked by name, so they are covered before
-/// `git ls-files` lists them. The real file holds a `bao` reference and the
-/// VM file none; neither holds a literal.
+/// `git ls-files` lists them. Neither holds a literal, and neither sets
+/// `default_password` or names a `bao` reference (user ruling, 2026-11-18:
+/// the reference left `vars/labtwo.toml`), so no labtwo run reads a secret
+/// store.
 #[test]
-fn labtwo_vars_files_hold_a_reference_or_nothing() {
+fn labtwo_vars_files_hold_no_secret_and_no_reference() {
     let files = [
         PathBuf::from("vars/labtwo.toml"),
         PathBuf::from("vars/labtwo_vm.toml"),
     ];
     let hits = vars::secret_literals::<Vars>(&files).unwrap_or_else(|e| panic!("{e}"));
     assert!(hits.is_empty(), "secret literals: {hits:?}");
-    let real = std::fs::read_to_string("vars/labtwo.toml").unwrap();
-    assert!(
-        real.contains(
-            r#"default_password = { bao = "kv/infra/labtwo/default_password", field = "hash" }"#
-        ),
-        "the real vars file names the bao reference"
-    );
     let inv =
         inventory::secret_literals::<Vars>(&[PathBuf::from("inventories/labtwo.example.toml")])
             .unwrap_or_else(|e| panic!("{e}"));
     assert!(inv.is_empty(), "secret literals: {inv:?}");
-    let vm = std::fs::read_to_string("vars/labtwo_vm.toml").unwrap();
-    for line in vm.lines().filter(|l| !l.trim_start().starts_with('#')) {
-        assert!(!line.contains("bao"), "{line}");
-        assert!(!line.contains("default_password"), "{line}");
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap();
+        for line in text.lines().filter(|l| !l.trim_start().starts_with('#')) {
+            assert!(!line.contains("bao"), "{}: {line}", f.display());
+            assert!(
+                !line.contains("default_password"),
+                "{}: {line}",
+                f.display()
+            );
+        }
     }
 }
 

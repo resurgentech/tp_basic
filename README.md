@@ -64,13 +64,11 @@ build/tp-basic run labtwo --inventory inventories/labtwo.local.toml --vars vars/
 
 `inventories/labtwo.example.toml` has placeholder hosts in the five groups; the
 real inventory is `inventories/labtwo.local.toml` (gitignored). `vars/labtwo.toml`
-holds the non-secret values the roles read and `default_password` as a
-reference into OpenBao (`kv/infra/labtwo/default_password`, field `hash`),
-resolved only by a real run; `plan` and the tests never read it. (`tp-basic
-plan labtwo` has no inventory, so no groups and an empty plan; the group sets
-are traced by `tests/plans.rs`.)
-`vars/labtwo_vm.toml` has the same values with no `default_password`, for VM
-runs that must not contact OpenBao. The plan snapshots
+holds the values the roles read. It sets no `default_password` (since
+2026-11-18), so an account a run creates stays locked and a labtwo run reads
+no secret store. (`tp-basic plan labtwo` has no inventory, so no groups and an
+empty plan; the group sets are traced by `tests/plans.rs`.)
+`vars/labtwo_vm.toml` has the same values, for the VM cases. The plan snapshots
 (`tests/plans/snapshots/labtwo__*`) cover four group sets on ubuntu2404 and
 ubuntu2604 and the `servers` set on the other eleven distros.
 

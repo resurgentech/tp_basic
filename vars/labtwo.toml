@@ -10,6 +10,7 @@ iana_tz = "America/Los_Angeles"
 # nothing and no longer exist as vars; `rustc_version` is the one kept.
 rustc_version = "1.94.0"
 
-# The accounts' crypt(3) hash is a reference into OpenBao, resolved by the
-# run (never by a test or by `plan`), never a value in this file.
-default_password = { bao = "kv/infra/labtwo/default_password", field = "hash" }
+# `default_password` is unset (user ruling, 2026-11-18): an account a run
+# creates stays locked, as the Ansible role's empty default left it, and a
+# labtwo run reads no secret store. To set one, use a reference, never a
+# value: `default_password = { bao = "<path>", field = "<field>" }`.

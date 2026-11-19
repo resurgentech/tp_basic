@@ -1,6 +1,6 @@
 # The labtwo playbook's VM cases (`scripts/test-vm*.sh`): the values of
-# vars/labtwo.toml, but `default_password` is unset (accounts a run creates
-# stay locked) and there is no `bao` reference, so no VM run contacts OpenBao.
+# vars/labtwo.toml. `default_password` is unset (accounts a run creates stay
+# locked) and there is no `bao` reference, so no VM run contacts OpenBao.
 admin_users = ["ubuntu"]
 iana_tz = "America/Los_Angeles"
 rustc_version = "1.94.0"
